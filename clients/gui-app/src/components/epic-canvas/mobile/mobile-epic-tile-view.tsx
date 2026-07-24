@@ -1,13 +1,15 @@
-import { useCallback, useMemo } from "react";
+import { useMemo, useState } from "react";
 import { ActiveTabBody } from "@/components/epic-canvas/canvas/tab-group-view";
 import { TabBodySelectedContext } from "@/components/epic-canvas/canvas/tab-body-selected-context";
 import { PaneOpener } from "@/components/epic-canvas/canvas/pane-opener";
 import { MobileCurrentTileBar } from "@/components/epic-canvas/mobile/mobile-current-tile-bar";
+import { TabSwitcherSheet } from "@/components/epic-canvas/mobile/tab-switcher-sheet";
 import { selectMobileTile } from "@/components/epic-canvas/mobile/mobile-tile-selection";
 import { usePaneVisible } from "@/components/epic-tabs/pane-visibility-context";
 import { useEpicCanvas } from "@/stores/epics/canvas/store";
 import { firstPaneId } from "@/stores/epics/canvas/tile-tree";
 import type { TileLayoutNode } from "@/stores/epics/canvas/types";
+import "@/components/layout/shell/mobile-shell-touch-targets.css";
 
 interface MobileEpicTileViewProps {
   readonly epicId: string;
@@ -37,11 +39,10 @@ export function MobileEpicTileView(props: MobileEpicTileViewProps) {
   const { epicId, tabId } = props;
   const canvas = useEpicCanvas(tabId);
   const selection = useMemo(() => selectMobileTile(canvas), [canvas]);
-  // Phase-1 placeholder: Phase 2 replaces this no-op with opening the "Switch
-  // tab" bottom sheet (which consumes `useMobileEpicTiles(tabId)` for the tile
-  // list + `selectTile`). Wired now so the bar's affordance and tap target ship
-  // in Phase 1.
-  const handleOpenSwitcher = useCallback(() => undefined, []);
+  // The current-tile bar chevron opens the "Switch tab" bottom sheet (P2.1).
+  // Local view state: the sheet is a leaf of this one view, so no store is
+  // warranted (per ticket).
+  const [switcherOpen, setSwitcherOpen] = useState(false);
 
   // Non-null root with no resolvable tile = an empty pane (e.g. the user closed
   // the last tab). Desktop renders the inline `PaneOpener` for this; do the
@@ -59,7 +60,7 @@ export function MobileEpicTileView(props: MobileEpicTileViewProps) {
       <MobileCurrentTileBar
         epicId={epicId}
         tile={selection.ref}
-        onOpenSwitcher={handleOpenSwitcher}
+        onOpenSwitcher={() => setSwitcherOpen(true)}
       />
       <div className="relative min-h-0 flex-1">
         <TabBodySelectedContext.Provider value>
@@ -79,6 +80,12 @@ export function MobileEpicTileView(props: MobileEpicTileViewProps) {
           />
         </TabBodySelectedContext.Provider>
       </div>
+      <TabSwitcherSheet
+        epicId={epicId}
+        tabId={tabId}
+        open={switcherOpen}
+        onOpenChange={setSwitcherOpen}
+      />
     </div>
   );
 }
@@ -97,6 +104,7 @@ function MobileEmptyEpicPane(props: MobileEmptyEpicPaneProps) {
   if (root === null) return null;
   return (
     <div
+      data-mobile-shell-touch-scope=""
       className="flex h-full min-h-0 w-full flex-col bg-canvas"
       data-testid="mobile-epic-empty-pane"
     >

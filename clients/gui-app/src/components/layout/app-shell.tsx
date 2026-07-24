@@ -5,9 +5,11 @@ import { TileFindOwnerBridge } from "@/components/epic-canvas/tile-find/tile-fin
 import { QuitInterceptBridge } from "@/components/layout/bridges/quit-intercept-bridge";
 import { MigrationBlockingModalHost } from "@/components/layout/dialogs/migration-blocking-modal-host";
 import { AppHeader } from "@/components/layout/header/app-header";
+import { MobileNavDrawer } from "@/components/layout/shell/mobile-nav-drawer";
 import { MigrationRunController } from "@/components/migration/migration-run-controller";
 import { OpenFolderDialog } from "@/components/open-folder-dialog";
 import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
+import { useIsMobile } from "@/hooks/ui/use-mobile";
 
 interface AppShellProps {
   children: ReactNode;
@@ -21,12 +23,15 @@ interface AppShellProps {
 export function AppShell(props: AppShellProps) {
   const { children } = props;
   const activeHostId = useReactiveActiveHostId();
+  // Phones get the hamburger navigation drawer; it is only mounted below md so
+  // desktop mounts nothing extra and stays unchanged.
+  const isMobile = useIsMobile();
 
   return (
     <DiffWorkerPoolProvider>
-      <div className="min-h-screen bg-canvas text-canvas-foreground">
+      <div className="min-h-dvh bg-canvas text-canvas-foreground">
         <RootDndProvider>
-          <div className="relative flex h-screen w-full flex-col">
+          <div className="relative flex h-dvh w-full flex-col">
             <AppHeader variant="app" />
             <main className="relative flex min-h-0 flex-1 flex-col">
               {children}
@@ -36,6 +41,7 @@ export function AppShell(props: AppShellProps) {
             <QuitInterceptBridge />
             <MigrationRunController />
             <MigrationBlockingModalHost />
+            {isMobile ? <MobileNavDrawer /> : null}
             {/* Test-only probe: binds the active hostId to a hidden DOM
                 attribute so the mobile-cardinality integration tests can
                 assert the runner-host auto-bind machinery without depending

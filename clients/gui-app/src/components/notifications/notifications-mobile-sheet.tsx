@@ -1,4 +1,4 @@
-import { type ReactNode } from "react";
+import { useCallback, useRef, type ReactNode } from "react";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -22,6 +22,15 @@ export function NotificationsMobileSheet(): ReactNode {
   const isMobile = useIsMobile();
   const open = useNotificationsPopoverStore((state) => state.open);
   const setOpen = useNotificationsPopoverStore((state) => state.setOpen);
+  // main's popover is purely presentational: the caller owns outer sizing via
+  // `shellRef`/`shellStyle` and supplies `headingRef`. On mobile there is no
+  // anchored Radix popover, so we hand it plain refs and an inline style that
+  // overrides the popover's fixed desktop width to fill the full-screen sheet.
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const shellRef = useRef<HTMLDivElement>(null);
+  // No ancestor popover to keep open here, so the filter menu's open state is
+  // irrelevant - the sheet owns its own dismissal.
+  const handleFilterMenuOpenChange = useCallback(() => undefined, []);
   if (!isMobile) return null;
   return (
     <DialogPrimitive.Root open={open} onOpenChange={setOpen}>
@@ -60,7 +69,10 @@ export function NotificationsMobileSheet(): ReactNode {
           <div className="flex min-h-0 flex-1 overflow-hidden">
             <NotificationsPopover
               onNavigate={() => setOpen(false)}
-              frameClassName="h-full w-full"
+              headingRef={headingRef}
+              shellRef={shellRef}
+              shellStyle={{ width: "100%", height: "100%" }}
+              onFilterMenuOpenChange={handleFilterMenuOpenChange}
             />
           </div>
         </DialogPrimitive.Content>

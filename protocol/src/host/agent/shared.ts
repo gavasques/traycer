@@ -65,6 +65,7 @@ export const guiHarnessIdSchema = harnessIdSchema.extract([
   "amp",
   "devin",
   "pi",
+  "hermes",
 ]);
 export type GuiHarnessId = z.infer<typeof guiHarnessIdSchema>;
 
@@ -112,10 +113,9 @@ export type GuiHarnessIdV20 = z.infer<typeof guiHarnessIdSchemaV20>;
 /**
  * Frozen harness id set as shipped in protocol v3.0 (with Amp, before Devin/Pi).
  * Used only by the frozen v3.0 response schema of `agent.gui.listHarnesses` so
- * already-shipped v3.0 clients never receive post-v3.0 ids; the v4.0 line adds
- * them and v4→v3 / v4→v2 / v4→v1 bridges filter them for older callers. Do NOT
- * add new harnesses here - extend the latest `guiHarnessIdSchema` and use the
- * existing v4 bridge instead.
+ * already-shipped v3.0 clients never receive post-v3.0 ids. Do NOT add new
+ * harnesses here - extend the latest `guiHarnessIdSchema` and use the
+ * existing version bridges instead.
  */
 export const guiHarnessIdSchemaV30 = harnessIdSchema.extract([
   "claude",
@@ -134,6 +134,35 @@ export const guiHarnessIdSchemaV30 = harnessIdSchema.extract([
   "amp",
 ]);
 export type GuiHarnessIdV30 = z.infer<typeof guiHarnessIdSchemaV30>;
+
+/**
+ * Frozen harness id set as shipped in protocol v4.0 (with Devin/Pi, before
+ * Hermes). Used only by the frozen v4.0 response schema of
+ * `agent.gui.listHarnesses` so already-shipped v4.0 clients never receive
+ * post-v4.0 ids; the v5.0 line adds them and v5→v4 / v5→v3 / v5→v2 / v5→v1
+ * bridges filter them for older callers. Do NOT add new harnesses here -
+ * extend the latest `guiHarnessIdSchema` and use the existing v5 bridge
+ * instead.
+ */
+export const guiHarnessIdSchemaV40 = harnessIdSchema.extract([
+  "claude",
+  "codex",
+  "opencode",
+  "traycer",
+  "cursor",
+  "grok",
+  "qwen",
+  "kiro",
+  "droid",
+  "kimi",
+  "copilot",
+  "kilocode",
+  "openrouter",
+  "amp",
+  "devin",
+  "pi",
+]);
+export type GuiHarnessIdV40 = z.infer<typeof guiHarnessIdSchemaV40>;
 
 export const tuiHarnessIdSchema = harnessIdSchema.extract([
   "claude",
@@ -197,6 +226,7 @@ export const AGENT_FACING_HARNESS_IDS = [
   "amp",
   "devin",
   "pi",
+  "hermes",
 ] as const;
 
 export const AGENT_FACING_HARNESS_ID_LIST = AGENT_FACING_HARNESS_IDS.join(", ");
@@ -393,13 +423,12 @@ export type AgentSelectionGuideRequest = z.infer<
   typeof agentSelectionGuideRequestSchema
 >;
 
-// A single contributing guide file. The host resolves every non-empty guide
-// and hands the formatter everything it needs to render without parsing:
-//   - `workspacePath` (workspace scope only) is the workspace root the guide
-//     governs, used for the section header — no path stripping at render time.
-//   - `priority` orders the layered output (higher = more specific; wins on
-//     conflict), so the formatter never relies on array order.
-//   - `path` is the absolute guide file, kept for attribution.
+// A single contributing guide file. Current hosts emit exactly one `global`
+// source (`~/.traycer/agent-selection-guide.md`, `priority` fixed at 1, `path`
+// kept for attribution). The `workspace` variant is legacy wire shape: older
+// hosts still emit per-workspace `.traycer/agent-selection-guide.md` sources,
+// and released 1.0 responses must keep parsing, but current clients ignore
+// workspace entries instead of layering them over the global guide.
 export const agentSelectionGuideSourceSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("workspace"),
@@ -437,10 +466,10 @@ export type AgentSelectionGuideResponse = z.infer<
 >;
 
 // Settings/onboarding surface for the global guide file (~/.traycer/...).
-// Distinct from `agent.selectionGuide`, which resolves the full
-// workspace+global hierarchy for an agent. These are default-host scoped and
-// carry no epic. Provider choices are already host state, so the host computes
-// the generated default from its current provider configuration.
+// Distinct from `agent.selectionGuide`, which serves the guide to an agent.
+// These are default-host scoped and carry no epic. Provider choices are
+// already host state, so the host computes the generated default from its
+// current provider configuration.
 export const agentSelectionGuideGlobalGetRequestSchema = z.object({});
 export type AgentSelectionGuideGlobalGetRequest = z.infer<
   typeof agentSelectionGuideGlobalGetRequestSchema
@@ -643,9 +672,8 @@ export type ListAgentsResponseV20 = z.infer<typeof listAgentsResponseSchemaV20>;
 // `agent.list` enumerates every agent in the epic - including Devin/Pi GUI
 // harness chats a newer client created - so an already-shipped v3.0 client
 // would hit a strict enum on those rows. v3.0 is frozen here as actually
-// shipped (with Amp); the v4.0 line carries Devin/Pi rows and v4→v3 / v4→v2 /
-// v4→v1 bridges drop them for older callers. Do not add new harnesses here -
-// use the existing v4 bridge.
+// shipped (with Amp). Do not add new harnesses here - use the existing
+// version bridges.
 export const agentSummarySchemaV30 = agentSummarySchema.extend({
   harnessId: guiHarnessIdSchemaV30.nullable(),
 });
@@ -653,6 +681,21 @@ export const listAgentsResponseSchemaV30 = listAgentsResponseSchema.extend({
   agents: z.array(agentSummarySchemaV30),
 });
 export type ListAgentsResponseV30 = z.infer<typeof listAgentsResponseSchemaV30>;
+
+// ── Frozen protocol-v4.0 agent.list response (with Devin/Pi, before Hermes) ─
+// `agent.list` enumerates every agent in the epic - including Hermes GUI
+// harness chats a newer client created - so an already-shipped v4.0 client
+// would hit a strict enum on those rows. v4.0 is frozen here as actually
+// shipped (with Devin/Pi); the v5.0 line carries Hermes rows and v5→v4 /
+// v5→v3 / v5→v2 / v5→v1 bridges drop them for older callers. Do not add new
+// harnesses here - use the existing v5 bridge.
+export const agentSummarySchemaV40 = agentSummarySchema.extend({
+  harnessId: guiHarnessIdSchemaV40.nullable(),
+});
+export const listAgentsResponseSchemaV40 = listAgentsResponseSchema.extend({
+  agents: z.array(agentSummarySchemaV40),
+});
+export type ListAgentsResponseV40 = z.infer<typeof listAgentsResponseSchemaV40>;
 
 /**
  * `agent.sendMessage@1.0` - fire-and-forget enqueue from one agent to

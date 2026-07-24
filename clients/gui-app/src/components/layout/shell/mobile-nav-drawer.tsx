@@ -20,7 +20,11 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import "@/components/layout/shell/mobile-shell-touch-targets.css";
-import { Analytics, AnalyticsEvent } from "@/lib/analytics";
+import {
+  Analytics,
+  AnalyticsEvent,
+  analyticsCountBucket,
+} from "@/lib/analytics";
 import { computeInitials } from "@/lib/auth/compute-initials";
 import { resolveManageSubscriptionUrl } from "@/lib/auth/manage-subscription-url";
 import { useAuthService } from "@/lib/host";
@@ -30,7 +34,11 @@ import { draftTabIntent, navigateToTabIntent } from "@/lib/tab-navigation";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth/auth-store";
 import { useMobileNavStore } from "@/stores/layout/mobile-nav-store";
-import { useMergedNotificationUnreadCount } from "@/stores/notifications/merged-notifications";
+import {
+  useMergedNotificationUnreadCount,
+  useNotificationBellState,
+  useNotificationCenterHostState,
+} from "@/stores/notifications/merged-notifications";
 import { useNotificationsPopoverStore } from "@/stores/notifications/notifications-popover-store";
 import { useSystemTabModalActions } from "@/stores/tabs/use-system-tab-modal";
 
@@ -54,6 +62,8 @@ export function MobileNavDrawer(): ReactNode {
     (state) => state.setOpen,
   );
   const unread = useMergedNotificationUnreadCount();
+  const bellState = useNotificationBellState();
+  const hostState = useNotificationCenterHostState();
   const runnerHost = useRunnerHost();
   const auth = useAuthService();
 
@@ -81,8 +91,23 @@ export function MobileNavDrawer(): ReactNode {
   };
   const handleNotifications = () => {
     close();
-    // Mirror the desktop bell's open telemetry (notifications-bell.tsx).
-    Analytics.getInstance().track(AnalyticsEvent.NotificationCenterOpened, null);
+    // Mirror the desktop bell's open telemetry (notifications-bell.tsx). The
+    // bell isn't mounted on mobile, so its edge-triggered open effect never
+    // fires - this drawer row is the sole open path here, and it's a direct UI
+    // interaction, hence entry_point "direct_ui".
+    const attentionCount = bellState.kind === "attention" ? bellState.count : 0;
+    Analytics.getInstance().track(AnalyticsEvent.NotificationCenterOpened, {
+      entry_point: "direct_ui",
+      host_state: hostState.isPartial ? "unknown" : "exact",
+      attention_bucket:
+        bellState.kind === "unknown"
+          ? "unknown"
+          : analyticsCountBucket(attentionCount),
+      unread_bucket:
+        bellState.kind === "unknown"
+          ? "unknown"
+          : analyticsCountBucket(unread),
+    });
     setNotificationsOpen(true);
   };
   const handleSwitchHost = () => {

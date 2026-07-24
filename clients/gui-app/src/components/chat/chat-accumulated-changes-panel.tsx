@@ -362,7 +362,7 @@ function AccumulatedChangeRow(props: AccumulatedChangeRowProps) {
         sideOffset={undefined}
         align={undefined}
       >
-        <span className="inline-flex opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+        <span className="inline-flex opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 pointer-coarse:opacity-100">
           <Button
             type="button"
             variant="ghost"

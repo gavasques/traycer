@@ -9,6 +9,7 @@ const nativeMocks = vi.hoisted(() => ({
   storageGet: vi.fn(),
   storageSet: vi.fn(),
   storageRemove: vi.fn(),
+  storage: new Map<string, string>(),
 }));
 
 vi.mock("@capacitor/browser", () => ({
@@ -38,7 +39,31 @@ function runner(): MobileRunnerHost {
 describe("MobileRunnerHost", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    nativeMocks.storageKeys.mockResolvedValue({ value: [] });
+    nativeMocks.storage.clear();
+    nativeMocks.storageKeys.mockImplementation(async () => ({
+      value: [...nativeMocks.storage.keys()],
+    }));
+    nativeMocks.storageGet.mockImplementation(
+      async ({ key }: { readonly key: string }) => ({
+        value: nativeMocks.storage.get(key) ?? "",
+      }),
+    );
+    nativeMocks.storageSet.mockImplementation(
+      async ({
+        key,
+        value,
+      }: {
+        readonly key: string;
+        readonly value: string;
+      }) => {
+        nativeMocks.storage.set(key, value);
+      },
+    );
+    nativeMocks.storageRemove.mockImplementation(
+      async ({ key }: { readonly key: string }) => {
+        nativeMocks.storage.delete(key);
+      },
+    );
     nativeMocks.browserOpen.mockResolvedValue(undefined);
     nativeMocks.browserClose.mockResolvedValue(undefined);
   });
@@ -52,6 +77,52 @@ describe("MobileRunnerHost", () => {
 
     await expect(host.tokenStore.get()).resolves.toBeNull();
     expect(nativeMocks.storageGet).not.toHaveBeenCalled();
+  });
+
+  it("persists and rotates the full credential record", async () => {
+    const host = runner();
+    const changes: unknown[] = [];
+    host.tokenStore.subscribe((change) => changes.push(change));
+
+    await host.tokenStore.signIn(
+      { token: "access-token", refreshToken: "refresh-token" },
+      { id: "user-1", email: "user@example.com", name: "User" },
+    );
+
+    await expect(host.tokenStore.get()).resolves.toMatchObject({
+      token: "access-token",
+      refreshToken: "refresh-token",
+      authnBaseUrl: "http://localhost:32350",
+      savedAt: expect.any(String),
+      user: { id: "user-1", email: "user@example.com", name: "User" },
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValue(
+        Response.json({
+          token: "rotated-access-token",
+          refreshToken: "rotated-refresh-token",
+        }),
+      ),
+    );
+
+    await expect(
+      host.tokenStore.rotate({
+        userId: "user-1",
+        token: "access-token",
+      }),
+    ).resolves.toMatchObject({
+      outcome: "applied",
+      pair: {
+        token: "rotated-access-token",
+        refreshToken: "rotated-refresh-token",
+      },
+    });
+    expect(changes).toEqual([
+      { present: true, userId: "user-1", revision: 1 },
+      { present: true, userId: "user-1", revision: 2 },
+    ]);
   });
 
   it("publishes a null local-host snapshot synchronously", () => {

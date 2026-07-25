@@ -12,13 +12,13 @@ import {
 } from "@traycer-clients/shared/auth/device-auth";
 import type { AuthIdentityValidationResult } from "@traycer-clients/shared/auth/auth-validation-types";
 import {
-  refreshAuthTokenViaHttp,
-  validateAuthTokenIdentityViaHttp,
-  validateAuthTokenViaHttp,
+  credentialsIdentityFromAuthenticatedUser,
+  refreshOnceAbortable,
+  validateAuthTokenIdentityAccessOnceAbortable,
+  validateAuthTokenIdentityAccessOnly,
 } from "@traycer-clients/shared/auth/auth-validation";
 import type {
-  AuthTokenRefreshResult,
-  AuthTokenValidationResult,
+  CredentialsMigrationOutcome,
   DeviceFlowAuthorization,
   DeviceFlowResult,
   DeviceFlowSession,
@@ -32,6 +32,10 @@ import type {
   IWorkspaceFoldersHost,
   LocalHostSnapshot,
   StoredAuthTokens,
+  StoredCredentials,
+  StoredCredentialsIdentity,
+  TokenRotateResult,
+  TokenStoreChange,
   TrayEpic,
   TrayIndicatorState,
 } from "@traycer-clients/shared/platform/runner-host";
@@ -48,7 +52,7 @@ export class MobileRunnerHost implements IRunnerHost {
   readonly authnBaseUrl: string;
   readonly hasLocalHost = false;
   readonly secureStorage: ISecureStorage = buildSecureStorage();
-  readonly tokenStore: ITokenStore = buildTokenStore(this.secureStorage);
+  readonly tokenStore: ITokenStore;
   readonly notifications: INotificationHost = buildNotifications();
   readonly tray: ITrayState = new MobileNoopTrayState();
   readonly hostPicker: IHostPicker = new MobileHostPicker();
@@ -78,6 +82,10 @@ export class MobileRunnerHost implements IRunnerHost {
   constructor(options: MobileRunnerHostOptions) {
     this.signInUrl = options.signInUrl;
     this.authnBaseUrl = options.authnBaseUrl;
+    this.tokenStore = buildTokenStore(
+      this.secureStorage,
+      options.authnBaseUrl,
+    );
     this.deviceFlow = new MobileDeviceFlowHost(
       options.authnBaseUrl,
       options.hostLabel,
@@ -89,29 +97,10 @@ export class MobileRunnerHost implements IRunnerHost {
     // payload or attempt-specific URL state in the mobile shell.
   }
 
-  validateAuthToken(
-    token: string,
-    refreshToken: string,
-  ): Promise<AuthTokenValidationResult> {
-    return validateAuthTokenViaHttp(this.authnBaseUrl, token, refreshToken);
-  }
-
   validateAuthTokenIdentity(
     token: string,
-    refreshToken: string,
   ): Promise<AuthIdentityValidationResult> {
-    return validateAuthTokenIdentityViaHttp(
-      this.authnBaseUrl,
-      token,
-      refreshToken,
-    );
-  }
-
-  refreshAuthToken(
-    token: string,
-    refreshToken: string,
-  ): Promise<AuthTokenRefreshResult> {
-    return refreshAuthTokenViaHttp(this.authnBaseUrl, token, refreshToken);
+    return validateAuthTokenIdentityAccessOnly(this.authnBaseUrl, token);
   }
 
   async openExternalLink(url: string): Promise<void> {
@@ -304,7 +293,7 @@ class MobileDeviceFlowSession implements DeviceFlowSession {
   }
 }
 
-const MOBILE_TOKEN_STORE_KEY = "traycer.token";
+const MOBILE_TOKEN_STORE_KEY = "traycer.credentials";
 const MISSING_STORAGE_ITEM = "Item with given key does not exist";
 
 function buildSecureStorage(): ISecureStorage {
@@ -338,20 +327,127 @@ function isMissingStorageItem(error: unknown): boolean {
   );
 }
 
-function buildTokenStore(secureStorage: ISecureStorage): ITokenStore {
+function buildTokenStore(
+  secureStorage: ISecureStorage,
+  authnBaseUrl: string,
+): ITokenStore {
+  const listeners = new Set<(change: TokenStoreChange) => void>();
+  let revision = 0;
+
+  const get = async (): Promise<StoredCredentials | null> =>
+    parseStoredCredentials(await secureStorage.get(MOBILE_TOKEN_STORE_KEY));
+
+  const set = async (credentials: StoredCredentials): Promise<void> => {
+    await secureStorage.set(
+      MOBILE_TOKEN_STORE_KEY,
+      JSON.stringify(credentials),
+    );
+    revision += 1;
+    const change: TokenStoreChange = {
+      present: true,
+      userId: credentials.user.id,
+      revision,
+    };
+    for (const listener of listeners) listener(change);
+  };
+
   return {
-    get: async () =>
-      parseStoredAuthTokens(await secureStorage.get(MOBILE_TOKEN_STORE_KEY)),
-    set: async (tokens) => {
-      await secureStorage.set(MOBILE_TOKEN_STORE_KEY, JSON.stringify(tokens));
+    get,
+    signIn: async (
+      tokens: StoredAuthTokens,
+      identity: StoredCredentialsIdentity,
+    ): Promise<void> => {
+      await set({
+        token: tokens.token,
+        refreshToken: tokens.refreshToken,
+        authnBaseUrl,
+        savedAt: new Date().toISOString(),
+        user: identity,
+      });
+    },
+    rotate: async (expected: {
+      readonly userId: string;
+      readonly token: string;
+    }): Promise<TokenRotateResult> => {
+      const stored = await get();
+      if (stored === null) return { outcome: "deleted", pair: null };
+      if (stored.user.id !== expected.userId) {
+        return { outcome: "user-mismatch", pair: stored };
+      }
+      if (stored.token !== expected.token) {
+        return { outcome: "superseded", pair: stored };
+      }
+      const refreshed = await refreshOnceAbortable({
+        authnBaseUrl,
+        token: stored.token,
+        refreshToken: stored.refreshToken,
+        signal: null,
+      });
+      if (refreshed.kind === "network-error") {
+        return { outcome: "refresh-network", pair: null };
+      }
+      if (refreshed.kind === "rejected") {
+        return { outcome: "refresh-rejected", pair: null };
+      }
+      const next: StoredCredentials = {
+        ...stored,
+        token: refreshed.token,
+        refreshToken: refreshed.refreshToken,
+        savedAt: new Date().toISOString(),
+      };
+      await set(next);
+      return { outcome: "applied", pair: next };
     },
     delete: async () => {
       await secureStorage.delete(MOBILE_TOKEN_STORE_KEY);
+      revision += 1;
+      const change: TokenStoreChange = {
+        present: false,
+        userId: null,
+        revision,
+      };
+      for (const listener of listeners) listener(change);
+    },
+    subscribe: (listener: (change: TokenStoreChange) => void): Disposable => {
+      listeners.add(listener);
+      return {
+        dispose: () => {
+          listeners.delete(listener);
+        },
+      };
+    },
+    migrateLegacyCredentials: async (
+      legacy: StoredAuthTokens,
+    ): Promise<CredentialsMigrationOutcome> => {
+      if ((await get()) !== null) return "file-wins";
+      const identity = await validateAuthTokenIdentityAccessOnceAbortable({
+        authnBaseUrl,
+        token: legacy.token,
+        signal: null,
+      });
+      if (identity.kind === "network-error") return "retryable";
+      if (identity.kind !== "valid") return "identity-unknown";
+      const refreshed = await refreshOnceAbortable({
+        authnBaseUrl,
+        token: legacy.token,
+        refreshToken: legacy.refreshToken,
+        signal: null,
+      });
+      if (refreshed.kind === "network-error") return "retryable";
+      if (refreshed.kind === "rejected") return "terminal-dead";
+      await set({
+        token: refreshed.token,
+        refreshToken: refreshed.refreshToken,
+        authnBaseUrl,
+        savedAt: new Date().toISOString(),
+        user: credentialsIdentityFromAuthenticatedUser(identity.user),
+      });
+      return "committed";
     },
   };
 }
 
-function parseStoredAuthTokens(raw: string | null): StoredAuthTokens | null {
+function parseStoredCredentials(raw: string | null): StoredCredentials | null {
   if (raw === null) return null;
   let parsed: unknown;
   try {
@@ -361,14 +457,37 @@ function parseStoredAuthTokens(raw: string | null): StoredAuthTokens | null {
   }
   if (parsed === null || typeof parsed !== "object") return null;
   const record = parsed as Record<string, unknown>;
+  const user = record.user;
   if (
     typeof record.token !== "string" ||
     record.token.length === 0 ||
-    typeof record.refreshToken !== "string"
+    typeof record.refreshToken !== "string" ||
+    typeof record.authnBaseUrl !== "string" ||
+    typeof record.savedAt !== "string" ||
+    user === null ||
+    typeof user !== "object"
   ) {
     return null;
   }
-  return { token: record.token, refreshToken: record.refreshToken };
+  const userRecord = user as Record<string, unknown>;
+  if (
+    typeof userRecord.id !== "string" ||
+    typeof userRecord.email !== "string" ||
+    typeof userRecord.name !== "string"
+  ) {
+    return null;
+  }
+  return {
+    token: record.token,
+    refreshToken: record.refreshToken,
+    authnBaseUrl: record.authnBaseUrl,
+    savedAt: record.savedAt,
+    user: {
+      id: userRecord.id,
+      email: userRecord.email,
+      name: userRecord.name,
+    },
+  };
 }
 
 function buildNotifications(): INotificationHost {

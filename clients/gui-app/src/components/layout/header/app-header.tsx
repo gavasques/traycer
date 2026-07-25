@@ -5,6 +5,7 @@ import { TabStrip } from "@/components/layout/tabs/tab-strip";
 import { AppUpdateHeaderButton } from "@/components/layout/header/app-update-button";
 import { HistoryButton } from "@/components/layout/header/history-button";
 import { HistoryNavButtons } from "@/components/layout/header/history-nav-buttons";
+import { WindowsMenuBar } from "@/components/layout/header/windows-menu-bar";
 import { RateLimitIconButton } from "@/components/layout/header/rate-limit-icon";
 import { ResourceMonitorPopover } from "@/components/resources/resource-monitor-popover";
 import { SignInButton } from "@/components/layout/header/sign-in-button";
@@ -99,6 +100,7 @@ function DesktopAppHeader(props: AppHeaderProps): ReactNode {
           : "px-3",
       )}
     >
+      <WindowsMenuBar />
       {showTabStrip ? <HistoryNavButtons /> : null}
       {/* Left drag handle: breathing room beside the traffic lights +
           back/forward arrows so the window can be grabbed from the left end

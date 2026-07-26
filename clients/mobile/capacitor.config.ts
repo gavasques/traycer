@@ -18,9 +18,6 @@ const config: CapacitorConfig = {
   appId: "com.traycer.app",
   appName: "Traycer",
   webDir: "dist/web",
-  ios: {
-    contentInset: "always",
-  },
   server: {
     iosScheme: "http",
   },

@@ -2,9 +2,13 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!-- maximum-scale=1 disables iOS's automatic zoom-in when a sub-16px
+         input gains focus (the page never zooms back out on blur). Browsers
+         ignore the cap for user-initiated pinch zoom, so accessibility zoom
+         still works. -->
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1, viewport-fit=cover"
     />
     <meta name="color-scheme" content="dark light" />
     <title>Traycer</title>

@@ -102,6 +102,11 @@ function readDevRunUrls(slot: string): DevRunUrls {
     slot,
     "run.json",
   );
+  if (!existsSync(runMetadataPath)) {
+    throw new Error(
+      `No active GUI App dev run found for ${slot}; start make dev-gui-app in the internal repository`,
+    );
+  }
   const parsed: unknown = JSON.parse(readFileSync(runMetadataPath, "utf8"));
   if (parsed === null || typeof parsed !== "object") {
     throw new Error(`Invalid dev run metadata at ${runMetadataPath}`);
@@ -110,7 +115,7 @@ function readDevRunUrls(slot: string): DevRunUrls {
   const urls = metadata.urls;
   if (urls === null || typeof urls !== "object") {
     throw new Error(
-      `Dev run ${slot} does not publish a GUI App URL; restart make dev-desktop`,
+      `Dev run ${slot} does not publish a GUI App URL; restart make dev-gui-app`,
     );
   }
   const urlRecord = urls as Record<string, unknown>;
@@ -123,7 +128,7 @@ function readDevRunUrls(slot: string): DevRunUrls {
     typeof guiAppBaseUrl !== "string"
   ) {
     throw new Error(
-      `Dev run ${slot} does not publish GUI App development URLs; restart make dev-desktop`,
+      `Dev run ${slot} does not publish GUI App development URLs; restart make dev-gui-app`,
     );
   }
   const url = new URL(guiAppBaseUrl);

@@ -12,7 +12,7 @@ This workspace may:
 
 - mount `<TraycerApp />` with a mobile `IRunnerHost`;
 - bridge browser, secure-storage, and native HTTP capabilities;
-- consume an existing `make dev-desktop` slot;
+- consume an existing `make dev-gui-app` or `make dev-desktop` slot;
 - adapt the shared GUI for phone safe areas and touch layout in mobile-only
   CSS.
 
@@ -63,11 +63,14 @@ bun run --cwd clients/mobile dev:ios -- \
   --slot <slot>
 ```
 
-`make dev-desktop` owns the per-worktree GUI App Vite server. The iOS launcher
-reads that server's URL from the slot's `run.json`, builds/installs the native
-app, creates ignored web assets when they are absent, and connects Capacitor
-live reload to it. React/CSS changes reload without reinstalling; Capacitor
-config, plugin, Swift, or Xcode-project changes require a native rebuild.
+In the internal repository, `make dev-gui-app` owns the per-worktree GUI App
+Vite server and dev host without starting Electron. `make dev-ios` resolves
+that worktree's slot, then the iOS launcher reads the server URL from
+`run.json`, builds/installs the native app, creates ignored web assets when
+they are absent, and connects Capacitor live reload to it. React/CSS changes
+reload without reinstalling; Capacitor config, plugin, Swift, or Xcode-project
+changes require a native rebuild. `make dev-desktop` remains compatible when
+Electron testing is also needed.
 
 ## Working rules
 

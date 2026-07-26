@@ -184,7 +184,20 @@ export function MobileNavDrawer(): ReactNode {
                 {bellState.count > 99 ? "99+" : bellState.count}
               </span>
             )}
-            {bellState.kind === "quietDot" && (
+            {/* Unlike the desktop bell's quiet dot, show the unread count -
+                the drawer bell is the only notifications surface on phones,
+                so the count carries real signal here. Dot only when the
+                merged count hasn't resolved to a number yet. */}
+            {bellState.kind === "quietDot" && unread > 0 && (
+              <span
+                data-testid="mobile-nav-notifications-unread-count"
+                aria-hidden
+                className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-md bg-primary px-1 text-overline font-semibold leading-none text-primary-foreground tabular-nums shadow-sm ring-2 ring-background"
+              >
+                {unread > 99 ? "99+" : unread}
+              </span>
+            )}
+            {bellState.kind === "quietDot" && unread === 0 && (
               <span
                 data-testid="mobile-nav-notifications-quiet-dot"
                 aria-hidden

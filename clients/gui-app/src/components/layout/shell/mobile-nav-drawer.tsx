@@ -3,6 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import {
   Bell,
   History,
+  House,
   LogOut,
   Plus,
   Server,
@@ -30,6 +31,7 @@ import { resolveManageSubscriptionUrl } from "@/lib/auth/manage-subscription-url
 import { useAuthService } from "@/lib/host";
 import { useRunnerHost } from "@/providers/use-runner-host";
 import { openNewEpicDraft } from "@/lib/commands/actions/new-epic";
+import { LANDING_ROUTE } from "@/lib/routes";
 import { draftTabIntent, navigateToTabIntent } from "@/lib/tab-navigation";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth/auth-store";
@@ -69,6 +71,12 @@ export function MobileNavDrawer(): ReactNode {
 
   const close = () => {
     setOpen(false);
+  };
+  // Plain navigation to the landing page - unlike "New task" it mints no
+  // draft, so tapping it repeatedly to get back home accumulates nothing.
+  const handleHome = () => {
+    close();
+    void navigate(LANDING_ROUTE);
   };
   const handleNewTask = () => {
     close();
@@ -181,6 +189,16 @@ export function MobileNavDrawer(): ReactNode {
           </SheetClose>
         </div>
         <nav className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-2">
+          <Button
+            type="button"
+            variant="ghost"
+            className={ROW_CLASS}
+            data-testid="mobile-nav-home"
+            onClick={handleHome}
+          >
+            <House className="size-4" />
+            <span className="flex-1 text-left">Home</span>
+          </Button>
           <Button
             type="button"
             variant="ghost"

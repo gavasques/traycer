@@ -434,7 +434,7 @@ function BackgroundTreeRow(props: {
                 {backgroundKindLabel(item.kind)}
               </span>
             </button>
-            <span className="inline-flex opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+            <span className="inline-flex opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 pointer-coarse:opacity-100">
               <BackgroundStopButton
                 label={backgroundStopLabel(item.kind)}
                 iconOnly

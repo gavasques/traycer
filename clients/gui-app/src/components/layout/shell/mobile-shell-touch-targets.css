@@ -2,9 +2,8 @@
  * Mobile-shell-scoped touch-target enlargement, mirroring the settings/home
  * pattern (settings-touch-targets.css / home-touch-targets.css).
  *
- * The phone shell's icon-size controls - the header hamburger, the
- * drawer / notifications-sheet close buttons (Button icon-sm ~28px), and the
- * tab-switcher sheet's category tabs (tabs-trigger min-h-9 ~36px) - sit
+ * The phone shell's icon-size controls - e.g. the header hamburger and the
+ * drawer / notifications-sheet close buttons (Button icon-sm ~28px) - sit
  * below the 44px touch-target guideline. These rules extend each control's
  * *hit area* to >=44px via an invisible pseudo-element; visual size and layout
  * are unchanged on every device, and the scope attribute (set on the mobile

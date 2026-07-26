@@ -3,6 +3,8 @@
 interface TraycerGuiAppDevConfig {
   readonly authnBaseUrl: string;
   readonly signInUrl: string;
+  /** Dev-server endpoint returning the host's CURRENT pid.json contents. */
+  readonly devHostPath: string;
   readonly host: {
     readonly hostId: string;
     readonly label: string;

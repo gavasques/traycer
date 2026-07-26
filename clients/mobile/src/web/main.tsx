@@ -6,7 +6,32 @@ import "./index.css";
 import { MobileRunnerHost } from "../mobile-runner-host";
 
 const config = __TRAYCER_GUI_APP_DEV_CONFIG__;
-const remoteFetcher: RemoteHostFetcher = async () => [config.host];
+
+// The baked `config.host` captures the port as of Vite startup, which goes
+// stale whenever the dev host restarts; the dev-server endpoint re-reads the
+// host's pid.json per request, so each directory refresh gets the live port.
+// BROWSER-TESTING SCAFFOLDING (dev web entry only): superseded by real
+// remote-host discovery in the shipped mobile client.
+const remoteFetcher: RemoteHostFetcher = async () => {
+  try {
+    const response = await fetch(config.devHostPath);
+    if (!response.ok) return [config.host];
+    const parsed: unknown = await response.json();
+    if (parsed === null || typeof parsed !== "object") return [config.host];
+    const record = parsed as Record<string, unknown>;
+    const { hostId, version, websocketUrl } = record;
+    if (
+      typeof hostId !== "string" ||
+      typeof version !== "string" ||
+      typeof websocketUrl !== "string"
+    ) {
+      return [config.host];
+    }
+    return [{ ...config.host, hostId, version, websocketUrl }];
+  } catch {
+    return [config.host];
+  }
+};
 
 function bootstrap(): void {
   document.documentElement.classList.add("traycer-mobile-client");

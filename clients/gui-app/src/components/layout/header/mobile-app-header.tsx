@@ -1,7 +1,8 @@
 import { type ReactNode } from "react";
-import { Menu } from "lucide-react";
-import { useMatch, useRouterState } from "@tanstack/react-router";
+import { ChevronRight, Menu } from "lucide-react";
+import { Link, useMatch, useRouterState } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
+import { SETTINGS_SECTIONS } from "@/lib/settings-sections";
 import { RateLimitIconButton } from "@/components/layout/header/rate-limit-icon";
 import { ResourceMonitorPopover } from "@/components/resources/resource-monitor-popover";
 import "@/components/layout/shell/mobile-shell-touch-targets.css";
@@ -25,6 +26,7 @@ export function MobileAppHeader(): ReactNode {
     (state) => state.showGlobalResourceMonitor,
   );
   const title = useMobileHeaderTitle();
+  const settingsSection = useSettingsSectionLabel();
   return (
     <header
       data-testid="app-header"
@@ -43,12 +45,37 @@ export function MobileAppHeader(): ReactNode {
       >
         <Menu className="size-4" />
       </Button>
-      <span
-        className="min-w-0 flex-1 truncate font-medium text-foreground"
-        data-testid="mobile-header-title"
-      >
-        {title}
-      </span>
+      {settingsSection === null ? (
+        <span
+          className="min-w-0 flex-1 truncate font-medium text-foreground"
+          data-testid="mobile-header-title"
+        >
+          {title}
+        </span>
+      ) : (
+        // Drill-down breadcrumb for settings section routes: the parent crumb
+        // navigates back to the full-screen section list, replacing the
+        // dedicated back-link row the settings layout used to render.
+        // Unpadded crumbs so "Settings" sits exactly where the plain title
+        // does on the index route - no shift when the section crumb appears.
+        // The link's tap target comes from the full header-row height.
+        <span
+          className="flex h-full min-w-0 flex-1 items-center gap-1"
+          data-testid="mobile-header-title"
+        >
+          <Link
+            to="/settings"
+            data-testid="mobile-header-settings-crumb"
+            className="flex h-full shrink-0 items-center font-medium text-muted-foreground transition-colors active:text-foreground"
+          >
+            Settings
+          </Link>
+          <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 truncate font-medium text-foreground">
+            {settingsSection}
+          </span>
+        </span>
+      )}
       {/* Right cluster: global status controls sit parallel to the hamburger,
           mirroring the desktop header's rate-limit + resource-monitor gating
           (navDisabled never applies here - MobileAppHeader only renders for the
@@ -63,6 +90,18 @@ export function MobileAppHeader(): ReactNode {
       </div>
     </header>
   );
+}
+
+/**
+ * The active settings section's label when the route is a settings section
+ * (drill-down depth 1), null on the settings index and everywhere else.
+ */
+function useSettingsSectionLabel(): string | null {
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const section = SETTINGS_SECTIONS.find((s) =>
+    pathname.startsWith(`/settings/${s.id}`),
+  );
+  return section === undefined ? null : section.label;
 }
 
 /**

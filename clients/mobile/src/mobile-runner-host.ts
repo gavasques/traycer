@@ -12,13 +12,13 @@ import {
 } from "@traycer-clients/shared/auth/device-auth";
 import type { AuthIdentityValidationResult } from "@traycer-clients/shared/auth/auth-validation-types";
 import {
-  refreshAuthTokenViaHttp,
-  validateAuthTokenIdentityViaHttp,
-  validateAuthTokenViaHttp,
+  credentialsIdentityFromAuthenticatedUser,
+  refreshOnceAbortable,
+  validateAuthTokenIdentityAccessOnceAbortable,
+  validateAuthTokenIdentityAccessOnly,
 } from "@traycer-clients/shared/auth/auth-validation";
 import type {
-  AuthTokenRefreshResult,
-  AuthTokenValidationResult,
+  CredentialsMigrationOutcome,
   DeviceFlowAuthorization,
   DeviceFlowResult,
   DeviceFlowSession,
@@ -32,6 +32,10 @@ import type {
   IWorkspaceFoldersHost,
   LocalHostSnapshot,
   StoredAuthTokens,
+  StoredCredentials,
+  StoredCredentialsIdentity,
+  TokenRotateResult,
+  TokenStoreChange,
   TrayEpic,
   TrayIndicatorState,
 } from "@traycer-clients/shared/platform/runner-host";
@@ -48,7 +52,7 @@ export class MobileRunnerHost implements IRunnerHost {
   readonly authnBaseUrl: string;
   readonly hasLocalHost = false;
   readonly secureStorage: ISecureStorage = buildSecureStorage();
-  readonly tokenStore: ITokenStore = buildTokenStore(this.secureStorage);
+  readonly tokenStore: ITokenStore;
   readonly notifications: INotificationHost = buildNotifications();
   readonly tray: ITrayState = new MobileNoopTrayState();
   readonly hostPicker: IHostPicker = new MobileHostPicker();
@@ -78,6 +82,10 @@ export class MobileRunnerHost implements IRunnerHost {
   constructor(options: MobileRunnerHostOptions) {
     this.signInUrl = options.signInUrl;
     this.authnBaseUrl = options.authnBaseUrl;
+    this.tokenStore = new MobileTokenStore(
+      this.secureStorage,
+      options.authnBaseUrl,
+    );
     this.deviceFlow = new MobileDeviceFlowHost(
       options.authnBaseUrl,
       options.hostLabel,
@@ -89,29 +97,13 @@ export class MobileRunnerHost implements IRunnerHost {
     // payload or attempt-specific URL state in the mobile shell.
   }
 
-  validateAuthToken(
-    token: string,
-    refreshToken: string,
-  ): Promise<AuthTokenValidationResult> {
-    return validateAuthTokenViaHttp(this.authnBaseUrl, token, refreshToken);
-  }
-
   validateAuthTokenIdentity(
     token: string,
-    refreshToken: string,
   ): Promise<AuthIdentityValidationResult> {
-    return validateAuthTokenIdentityViaHttp(
-      this.authnBaseUrl,
-      token,
-      refreshToken,
-    );
-  }
-
-  refreshAuthToken(
-    token: string,
-    refreshToken: string,
-  ): Promise<AuthTokenRefreshResult> {
-    return refreshAuthTokenViaHttp(this.authnBaseUrl, token, refreshToken);
+    // Access-only (tech plan §3): a stale token comes back `rejected` and the
+    // caller routes the refresh spend through the locked `tokenStore.rotate`,
+    // so validation can never consume a refresh token.
+    return validateAuthTokenIdentityAccessOnly(this.authnBaseUrl, token);
   }
 
   async openExternalLink(url: string): Promise<void> {
@@ -304,7 +296,10 @@ class MobileDeviceFlowSession implements DeviceFlowSession {
   }
 }
 
-const MOBILE_TOKEN_STORE_KEY = "traycer.token";
+// Must not be "traycer.token"/"traycer.refresh-token": AuthService owns those
+// as the retired legacy per-window slots and wipes them at startup after its
+// migration pre-step, which would destroy this store's credentials.
+const MOBILE_TOKEN_STORE_KEY = "traycer.credentials";
 const MISSING_STORAGE_ITEM = "Item with given key does not exist";
 
 function buildSecureStorage(): ISecureStorage {
@@ -338,20 +333,154 @@ function isMissingStorageItem(error: unknown): boolean {
   );
 }
 
-function buildTokenStore(secureStorage: ISecureStorage): ITokenStore {
-  return {
-    get: async () =>
-      parseStoredAuthTokens(await secureStorage.get(MOBILE_TOKEN_STORE_KEY)),
-    set: async (tokens) => {
-      await secureStorage.set(MOBILE_TOKEN_STORE_KEY, JSON.stringify(tokens));
-    },
-    delete: async () => {
-      await secureStorage.delete(MOBILE_TOKEN_STORE_KEY);
-    },
-  };
+/**
+ * Secure-storage-backed `ITokenStore` holding the full `StoredCredentials`
+ * JSON under a single key. Mirrors the shared mock's rotate/migration
+ * semantics (same guards, real HTTP refresh) - mobile has a single JS runtime
+ * and no shared credentials file, so there is no cross-process lock; the
+ * sequential guards inside `rotate` are the whole protocol.
+ */
+class MobileTokenStore implements ITokenStore {
+  private readonly listeners = new Set<(change: TokenStoreChange) => void>();
+  private revision = 0;
+
+  constructor(
+    private readonly secureStorage: ISecureStorage,
+    private readonly authnBaseUrl: string,
+  ) {}
+
+  async get(): Promise<StoredCredentials | null> {
+    return parseStoredCredentials(
+      await this.secureStorage.get(MOBILE_TOKEN_STORE_KEY),
+    );
+  }
+
+  async signIn(
+    tokens: StoredAuthTokens,
+    identity: StoredCredentialsIdentity,
+  ): Promise<void> {
+    await this.write({
+      token: tokens.token,
+      refreshToken: tokens.refreshToken,
+      authnBaseUrl: this.authnBaseUrl,
+      savedAt: new Date().toISOString(),
+      user: identity,
+    });
+  }
+
+  async rotate(expected: {
+    readonly userId: string;
+    readonly token: string;
+  }): Promise<TokenRotateResult> {
+    const stored = await this.get();
+    if (stored === null) {
+      return { outcome: "deleted", pair: null };
+    }
+    if (stored.user.id !== expected.userId) {
+      return { outcome: "user-mismatch", pair: stored };
+    }
+    if (stored.token !== expected.token) {
+      return { outcome: "superseded", pair: stored };
+    }
+    const refreshed = await refreshOnceAbortable({
+      authnBaseUrl: this.authnBaseUrl,
+      token: stored.token,
+      refreshToken: stored.refreshToken,
+      signal: null,
+    });
+    if (refreshed.kind === "network-error") {
+      return { outcome: "refresh-network", pair: null };
+    }
+    if (refreshed.kind === "rejected") {
+      return { outcome: "refresh-rejected", pair: null };
+    }
+    const next: StoredCredentials = {
+      ...stored,
+      token: refreshed.token,
+      refreshToken: refreshed.refreshToken,
+      savedAt: new Date().toISOString(),
+    };
+    await this.write(next);
+    return { outcome: "applied", pair: next };
+  }
+
+  async delete(): Promise<void> {
+    await this.secureStorage.delete(MOBILE_TOKEN_STORE_KEY);
+    this.notifyAfterMutation();
+  }
+
+  subscribe(listener: (change: TokenStoreChange) => void): Disposable {
+    this.listeners.add(listener);
+    return {
+      dispose: () => {
+        this.listeners.delete(listener);
+      },
+    };
+  }
+
+  async migrateLegacyCredentials(
+    legacy: StoredAuthTokens,
+  ): Promise<CredentialsMigrationOutcome> {
+    // Same branches as the shared mock: an existing credential wins, an
+    // absent one adopts the spent legacy pair after a real probe + refresh.
+    const existing = await this.get();
+    if (existing !== null) {
+      return "file-wins";
+    }
+    const probe = await validateAuthTokenIdentityAccessOnceAbortable({
+      authnBaseUrl: this.authnBaseUrl,
+      token: legacy.token,
+      signal: null,
+    });
+    if (probe.kind === "network-error") return "retryable";
+    if (probe.kind !== "valid") return "identity-unknown";
+    const refreshed = await refreshOnceAbortable({
+      authnBaseUrl: this.authnBaseUrl,
+      token: legacy.token,
+      refreshToken: legacy.refreshToken,
+      signal: null,
+    });
+    if (refreshed.kind === "network-error") return "retryable";
+    if (refreshed.kind === "rejected") return "terminal-dead";
+    await this.write({
+      token: refreshed.token,
+      refreshToken: refreshed.refreshToken,
+      authnBaseUrl: this.authnBaseUrl,
+      savedAt: new Date().toISOString(),
+      user: credentialsIdentityFromAuthenticatedUser(probe.user),
+    });
+    return "committed";
+  }
+
+  private async write(credentials: StoredCredentials): Promise<void> {
+    await this.secureStorage.set(
+      MOBILE_TOKEN_STORE_KEY,
+      JSON.stringify(credentials),
+    );
+    this.notifyAfterMutation();
+  }
+
+  // Self-writes notify on a microtask so the caller's apply path finishes
+  // before the change event lands, matching the watcher-after-write ordering
+  // the shared AuthService expects (see mock-runner-host.ts).
+  private notifyAfterMutation(): void {
+    queueMicrotask(() => {
+      void this.get().then((stored) => {
+        this.revision += 1;
+        const change: TokenStoreChange = {
+          present: stored !== null,
+          userId: stored?.user.id ?? null,
+          revision: this.revision,
+        };
+        for (const listener of this.listeners) {
+          listener(change);
+        }
+      });
+    });
+  }
 }
 
-function parseStoredAuthTokens(raw: string | null): StoredAuthTokens | null {
+function parseStoredCredentials(raw: string | null): StoredCredentials | null {
   if (raw === null) return null;
   let parsed: unknown;
   try {
@@ -361,14 +490,36 @@ function parseStoredAuthTokens(raw: string | null): StoredAuthTokens | null {
   }
   if (parsed === null || typeof parsed !== "object") return null;
   const record = parsed as Record<string, unknown>;
+  const user = record.user;
+  if (user === null || user === undefined || typeof user !== "object") {
+    return null;
+  }
+  const userRecord = user as Record<string, unknown>;
   if (
     typeof record.token !== "string" ||
     record.token.length === 0 ||
-    typeof record.refreshToken !== "string"
+    typeof record.refreshToken !== "string" ||
+    typeof record.authnBaseUrl !== "string" ||
+    typeof record.savedAt !== "string" ||
+    typeof userRecord.id !== "string" ||
+    typeof userRecord.email !== "string" ||
+    typeof userRecord.name !== "string"
   ) {
+    // A pre-cutover `{token, refreshToken}` pair deliberately parses as
+    // invalid: it reads as signed out and the user re-auths via device flow.
     return null;
   }
-  return { token: record.token, refreshToken: record.refreshToken };
+  return {
+    token: record.token,
+    refreshToken: record.refreshToken,
+    authnBaseUrl: record.authnBaseUrl,
+    savedAt: record.savedAt,
+    user: {
+      id: userRecord.id,
+      email: userRecord.email,
+      name: userRecord.name,
+    },
+  };
 }
 
 function buildNotifications(): INotificationHost {

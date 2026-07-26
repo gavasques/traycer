@@ -1,14 +1,16 @@
 /**
- * Picker popover behind the Terminals panel "+" action. Top section picks
- * the host (machine); below it the shared worktree folder list shows
- * everything already bound to the epic. A default row is auto-selected on
- * open (primary workspace, skipping any the host disabled, falling back to the
- * first selectable row); selecting a folder stages it; the footer launch action
- * opens a raw terminal tab bound to that row's host, with the row's
- * `runningDir` persisted as the PTY working directory.
+ * Picker behind the Terminals panel "+" action (and the mobile epic header's
+ * "New terminal" dialog). Top section picks the host (machine); below it the
+ * shared worktree folder list shows everything already bound to the epic. A
+ * default row is auto-selected on open (primary workspace, skipping any the
+ * host disabled, falling back to the first selectable row); selecting a folder
+ * stages it; the footer launch action opens a raw terminal tab bound to that
+ * row's host, with the row's `runningDir` persisted as the PTY working
+ * directory.
  *
- * The bindings query is gated on the popover's open state so a closed "+"
- * button subscribes to nothing but its own open state.
+ * `NewTerminalPickerBody` owns all picker state and mounts only while its
+ * shell (popover or dialog) is open, so the bindings query runs only then and
+ * every open starts from a fresh default selection.
  */
 import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import { v4 as uuidv4 } from "uuid";
@@ -45,6 +47,63 @@ interface NewTerminalPickerProps {
 export function NewTerminalPicker(props: NewTerminalPickerProps) {
   const { onLaunched } = props;
   const [isOpen, setIsOpen] = useState(false);
+
+  const handleClose = useCallback(() => {
+    setIsOpen(false);
+  }, []);
+
+  return (
+    <Popover open={isOpen} onOpenChange={setIsOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label="New terminal"
+          data-testid="epic-terminals-panel-add"
+          className="text-muted-foreground hover:text-foreground"
+        >
+          <Plus className="size-4" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        className="w-[min(90vw,28rem)] gap-0 p-0"
+        data-testid="new-terminal-picker-popover"
+        // Keep Radix from focusing the first focusable element (a host row);
+        // the workspace search input auto-focuses itself instead so the user
+        // can immediately type/arrow through workspaces.
+        onOpenAutoFocus={(event) => event.preventDefault()}
+      >
+        {/* Radix mounts closed content nowhere, so the body (and its bindings
+            query) exists only while the popover is open. */}
+        <NewTerminalPickerBody
+          epicId={props.epicId}
+          tabId={props.tabId}
+          onLaunched={onLaunched}
+          onClose={handleClose}
+        />
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+interface NewTerminalPickerBodyProps {
+  readonly epicId: string;
+  readonly tabId: string;
+  readonly onLaunched: (() => void) | null;
+  /** Close the hosting shell (popover / dialog) after a launch. */
+  readonly onClose: () => void;
+}
+
+/**
+ * Shell-agnostic picker content: host section, folder list, and the launch
+ * footer. Mount only while the hosting surface is open - state (explicit row,
+ * launch latch) resets per open, and the bindings query costs nothing while
+ * closed.
+ */
+export function NewTerminalPickerBody(props: NewTerminalPickerBodyProps) {
+  const { epicId, tabId, onLaunched, onClose } = props;
   // The user's explicit pick. Null means "follow the auto-selected default";
   // the effective selection is derived below so a default never has to be
   // written into state via an effect.
@@ -56,11 +115,9 @@ export function NewTerminalPicker(props: NewTerminalPickerProps) {
     (s) => s.prepareOpenTileInTabFocusTarget,
   );
 
-  // Gated on `isOpen` so the "+" button costs no RPC while idle; the query
-  // becomes active only while the popover is open.
   const bindingsQuery = useWorktreeListBindingsForEpic({
-    epicId: props.epicId,
-    enabled: isOpen,
+    epicId,
+    enabled: true,
   });
   const rows = useMemo(
     () => bindingsQuery.data?.rows ?? [],
@@ -75,10 +132,7 @@ export function NewTerminalPicker(props: NewTerminalPickerProps) {
     [explicitRow, rows],
   );
   const hasLoadedNoRows =
-    isOpen &&
-    !bindingsQuery.isPending &&
-    !bindingsQuery.isError &&
-    rows.length === 0;
+    !bindingsQuery.isPending && !bindingsQuery.isError && rows.length === 0;
   // The fallback cwd for folderless launches rides the bindings response
   // (`worktree.listBindingsForEpic@1.1`). `null` means the host predates
   // folderless workspaces (bridged v1.0 response), so launch stays disabled.
@@ -96,23 +150,16 @@ export function NewTerminalPicker(props: NewTerminalPickerProps) {
     [activeHostId, folderlessCwd, hasLoadedNoRows, selectedRow],
   );
 
-  // A double-click on the launch action fires twice before `setIsOpen(false)`
-  // can unmount the popover, so each click would mint a fresh terminal id. This
+  // A double-click on the launch action fires twice before the shell can
+  // unmount this body, so each click would mint a fresh terminal id. This
   // synchronous latch collapses one open->launch session to a single terminal.
   const hasLaunchedRef = useRef(false);
-  const handleOpenChange = useCallback((open: boolean) => {
-    if (open) {
-      hasLaunchedRef.current = false;
-      setExplicitRow(null);
-    }
-    setIsOpen(open);
-  }, []);
 
   const handleLaunch = useCallback(() => {
     if (hasLaunchedRef.current || launchTarget === null) return;
     hasLaunchedRef.current = true;
-    navigateNested(props.epicId, props.tabId, () =>
-      prepareOpenTileInTabFocusTarget(props.tabId, {
+    navigateNested(epicId, tabId, () =>
+      prepareOpenTileInTabFocusTarget(tabId, {
         id: `term-${uuidv4()}`,
         instanceId: uuidv4(),
         type: "terminal",
@@ -122,14 +169,15 @@ export function NewTerminalPicker(props: NewTerminalPickerProps) {
         cwd: launchTarget.cwd,
       }),
     );
-    setIsOpen(false);
+    onClose();
     if (onLaunched !== null) onLaunched();
   }, [
     navigateNested,
     prepareOpenTileInTabFocusTarget,
-    props.epicId,
-    props.tabId,
+    epicId,
+    tabId,
     onLaunched,
+    onClose,
     launchTarget,
   ]);
 
@@ -161,53 +209,31 @@ export function NewTerminalPicker(props: NewTerminalPickerProps) {
   }
 
   return (
-    <Popover open={isOpen} onOpenChange={handleOpenChange}>
-      <PopoverTrigger asChild>
+    <>
+      <WorktreePickerHostSection />
+      <WorktreeFolderListBody
+        isPending={bindingsQuery.isPending}
+        isError={bindingsQuery.isError}
+        rows={rows}
+        selectedRow={selectedRow}
+        secondaryLabel={(row) => row.runningDir}
+        onSelect={handleSelectRow}
+        autoFocusSearch
+      />
+      <div className="flex items-center justify-between gap-3 border-t border-border/60 bg-muted/20 px-2.5 py-2.5">
+        <div className="min-w-0 text-xs text-muted-foreground">
+          {folderlessCwdStatus}
+        </div>
         <Button
           type="button"
-          variant="ghost"
-          size="icon-sm"
-          aria-label="New terminal"
-          data-testid="epic-terminals-panel-add"
-          className="text-muted-foreground hover:text-foreground"
+          size="sm"
+          disabled={launchDisabled}
+          onClick={handleLaunch}
         >
-          <Plus className="size-4" />
+          Launch
         </Button>
-      </PopoverTrigger>
-      <PopoverContent
-        align="start"
-        className="w-[min(90vw,28rem)] gap-0 p-0"
-        data-testid="new-terminal-picker-popover"
-        // Keep Radix from focusing the first focusable element (a host row);
-        // the workspace search input auto-focuses itself instead so the user
-        // can immediately type/arrow through workspaces.
-        onOpenAutoFocus={(event) => event.preventDefault()}
-      >
-        <WorktreePickerHostSection />
-        <WorktreeFolderListBody
-          isPending={bindingsQuery.isPending}
-          isError={bindingsQuery.isError}
-          rows={rows}
-          selectedRow={selectedRow}
-          secondaryLabel={(row) => row.runningDir}
-          onSelect={handleSelectRow}
-          autoFocusSearch
-        />
-        <div className="flex items-center justify-between gap-3 border-t border-border/60 bg-muted/20 px-2.5 py-2.5">
-          <div className="min-w-0 text-xs text-muted-foreground">
-            {folderlessCwdStatus}
-          </div>
-          <Button
-            type="button"
-            size="sm"
-            disabled={launchDisabled}
-            onClick={handleLaunch}
-          >
-            Launch
-          </Button>
-        </div>
-      </PopoverContent>
-    </Popover>
+      </div>
+    </>
   );
 }
 

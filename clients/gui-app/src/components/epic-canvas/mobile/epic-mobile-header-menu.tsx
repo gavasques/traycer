@@ -24,6 +24,7 @@ import {
   useRegisteredEpicTitle,
 } from "@/lib/epic-selectors";
 import { isEditableRole } from "@/lib/epic-permissions";
+import { NewTerminalPickerBody } from "@/components/epic-canvas/sidebar/new-terminal-picker";
 import { useNewConversationModalOpenStore } from "@/stores/epics/new-conversation-modal-open-store";
 import { useNewConversationModalStore } from "@/stores/epics/new-conversation-modal-store";
 import { ACTIVE_TILE_PLACEMENT } from "@/lib/canvas/conversation-tile-placement";
@@ -36,7 +37,7 @@ interface EpicHeaderIdentity {
 
 /**
  * Fills Phase 0's mobile-header right-actions slot on the epic route with a "⋮"
- * overflow menu: **New chat** and **Rename** (the two settled actions).
+ * overflow menu: **New chat**, **New terminal**, and **Rename**.
  *
  * Rendered by `MobileAppHeader` (inside the app provider stack, OUTSIDE the
  * epic session tree), so it derives epic state from app-global registries keyed
@@ -63,6 +64,7 @@ export function EpicMobileHeaderMenu(props: EpicHeaderIdentity) {
   const role = useRegisteredEpicPermissionRole(epicId);
   const canEdit = isEditableRole(role);
   const [renameOpen, setRenameOpen] = useState(false);
+  const [terminalPickerOpen, setTerminalPickerOpen] = useState(false);
 
   const handleNewChat = () => {
     // The exact desktop funnel (see NewConversationModalAction): force chat
@@ -98,6 +100,12 @@ export function EpicMobileHeaderMenu(props: EpicHeaderIdentity) {
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
           <DropdownMenuItem onSelect={handleNewChat}>New chat</DropdownMenuItem>
+          <DropdownMenuItem
+            data-testid="mobile-epic-new-terminal"
+            onSelect={() => setTerminalPickerOpen(true)}
+          >
+            New terminal
+          </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => setRenameOpen(true)}>
             Rename
           </DropdownMenuItem>
@@ -108,7 +116,57 @@ export function EpicMobileHeaderMenu(props: EpicHeaderIdentity) {
         open={renameOpen}
         onOpenChange={setRenameOpen}
       />
+      <NewTerminalDialog
+        epicId={epicId}
+        tabId={tabId}
+        open={terminalPickerOpen}
+        onOpenChange={setTerminalPickerOpen}
+      />
     </>
+  );
+}
+
+interface NewTerminalDialogProps {
+  readonly epicId: string;
+  readonly tabId: string;
+  readonly open: boolean;
+  readonly onOpenChange: (open: boolean) => void;
+}
+
+/**
+ * Dialog shell around the shared raw-terminal picker body (the same host +
+ * folder picker the Terminals panel "+" popover uses). A dropdown item can't
+ * anchor a popover - the menu unmounts on select - so the mobile entry hosts
+ * the body in a dialog instead. Mounted only while open, so picker state and
+ * its bindings query reset per open.
+ */
+function NewTerminalDialog(props: NewTerminalDialogProps) {
+  const { epicId, tabId, open, onOpenChange } = props;
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        className="w-[min(92vw,28rem)] max-w-[min(92vw,28rem)] gap-0 p-0"
+        data-testid="mobile-epic-new-terminal-dialog"
+        // The picker's workspace search input auto-focuses itself; keep Radix
+        // from grabbing focus for the first host row instead.
+        onOpenAutoFocus={(event) => event.preventDefault()}
+      >
+        <DialogHeader className="border-b border-border/60 px-4 py-3">
+          <DialogTitle>New terminal</DialogTitle>
+          <DialogDescription className="sr-only">
+            Pick a host and folder for the new terminal.
+          </DialogDescription>
+        </DialogHeader>
+        {open ? (
+          <NewTerminalPickerBody
+            epicId={epicId}
+            tabId={tabId}
+            onLaunched={null}
+            onClose={() => onOpenChange(false)}
+          />
+        ) : null}
+      </DialogContent>
+    </Dialog>
   );
 }
 

@@ -58,12 +58,13 @@ describe("<EpicMobileHeaderMenu />", () => {
   });
   afterEach(cleanup);
 
-  it("shows exactly New chat and Rename for an editor", () => {
+  it("shows exactly New chat, New terminal, and Rename for an editor", () => {
     renderMenu();
     openMenu();
     expect(screen.getByRole("menuitem", { name: "New chat" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "New terminal" })).toBeTruthy();
     expect(screen.getByRole("menuitem", { name: "Rename" })).toBeTruthy();
-    expect(screen.getAllByRole("menuitem")).toHaveLength(2);
+    expect(screen.getAllByRole("menuitem")).toHaveLength(3);
   });
 
   it("renders no trigger at all for a viewer (no editable actions)", () => {

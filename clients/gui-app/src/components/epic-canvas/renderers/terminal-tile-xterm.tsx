@@ -54,6 +54,8 @@ import {
 } from "@/components/epic-tabs/pane-visibility-context";
 import { markTerminalLoad } from "@/lib/perf/terminal-load-perf";
 import { registerTerminalFocus } from "@/lib/terminals/terminal-focus-registry";
+import { applyTerminalKeyBarLatchToTypedInput } from "@/lib/terminals/terminal-key-bar-latch";
+import { registerTerminalKeyInput } from "@/lib/terminals/terminal-key-input-registry";
 import {
   acquireXtermHost,
   adoptWarmSessionInstance,
@@ -436,6 +438,21 @@ export function TerminalXtermHost(props: TerminalXtermHostProps) {
       termRef.current?.focus();
     });
   }, [props.instanceId, props.registerImperativeFocus]);
+  // Input bridge for the mobile key bar. Registered unconditionally (unlike
+  // focus, which only some surfaces route imperatively): whichever tile hosts
+  // this engine on a phone is the one the bar targets. Injection goes through
+  // `term.input` so bar keys ride the ordinary onData -> writeInput path, and
+  // the cursor-key mode is read live so arrows encode the dialect (CSI vs
+  // SS3) the running program asked for via DECCKM.
+  useEffect(() => {
+    return registerTerminalKeyInput(props.instanceId, {
+      input: (data) => termRef.current?.input(data, true),
+      getCursorKeyMode: () =>
+        termRef.current?.modes.applicationCursorKeysMode === true
+          ? "application"
+          : "normal",
+    });
+  }, [props.instanceId]);
 
   const pastePaths = useCallback((paths: readonly string[]): void => {
     const input = terminalPathInput(uniquePaths(paths));
@@ -660,7 +677,10 @@ function createXtermEntry(
   let hasReceivedContent = false;
   const dataDisposable = term.onData((d) => {
     if (snapshotReplayDepth > 0) return;
-    live.onUserInput(d);
+    // A sticky modifier latched on the mobile key bar combines with the next
+    // typed character here. Desktop input takes the empty-latch fast path
+    // (only the bar ever sets a latch).
+    live.onUserInput(applyTerminalKeyBarLatchToTypedInput(d));
   });
   const searchResultsDisposable = searchAddon.onDidChangeResults((result) => {
     live.onSearchResults(result);

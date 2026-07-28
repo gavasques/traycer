@@ -3,6 +3,7 @@ import { ActiveTabBody } from "@/components/epic-canvas/canvas/tab-group-view";
 import { TabBodySelectedContext } from "@/components/epic-canvas/canvas/tab-body-selected-context";
 import { PaneOpener } from "@/components/epic-canvas/canvas/pane-opener";
 import { MobileCurrentTileBar } from "@/components/epic-canvas/mobile/mobile-current-tile-bar";
+import { MobileTerminalKeyBar } from "@/components/epic-canvas/mobile/mobile-terminal-key-bar";
 import { TabSwitcherSheet } from "@/components/epic-canvas/mobile/tab-switcher-sheet";
 import { selectMobileTile } from "@/components/epic-canvas/mobile/mobile-tile-selection";
 import { usePaneVisible } from "@/components/epic-tabs/pane-visibility-context";
@@ -80,6 +81,14 @@ export function MobileEpicTileView(props: MobileEpicTileViewProps) {
           />
         </TabBodySelectedContext.Provider>
       </div>
+      {/* Terminal TUIs are driven by keys phone keyboards don't have; the key
+          bar injects them. Rendered as a shrink-0 sibling so its height comes
+          out of the terminal box above, which drives the existing
+          ResizeObserver -> host resize sync automatically. */}
+      {selection.ref.type === "terminal" ||
+      selection.ref.type === "terminal-agent" ? (
+        <MobileTerminalKeyBar instanceId={selection.ref.instanceId} />
+      ) : null}
       <TabSwitcherSheet
         epicId={epicId}
         tabId={tabId}

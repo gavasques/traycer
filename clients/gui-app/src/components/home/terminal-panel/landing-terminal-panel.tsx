@@ -4,6 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type ReactNode,
   type TransitionEvent as ReactTransitionEvent,
 } from "react";
@@ -33,6 +34,8 @@ import {
 } from "@/components/epic-canvas/canvas/use-pointer-drag-commit";
 import { useHomeWorkspaceSource } from "@/components/home/host-workspace-selector/use-home-workspace-source";
 import { useIsMobile } from "@/hooks/ui/use-mobile";
+import { useVirtualKeyboardInset } from "@/hooks/ui/use-virtual-keyboard-inset";
+import { MobileTerminalKeyBar } from "@/components/epic-canvas/mobile/mobile-terminal-key-bar";
 import type { WorktreeStagingKey } from "@/stores/worktree/worktree-intent-staging-store";
 import { workspaceFolderName } from "@/lib/worktree/workspace-folder-name";
 import { isPanelResizeInteractionActive } from "@/lib/layout/panel-resizing-class";
@@ -399,6 +402,12 @@ function LandingTerminalPanelContents(
   const isMobile = useIsMobile();
   const fullOverlay = props.maximized || isMobile;
   const overlayActive = fullOverlay && props.panelOpen;
+  // Same touch-key treatment as the epic terminal tiles: at phone width the
+  // open panel is a full overlay, so the key bar mounts under the body and
+  // the keyboard inset pads the covered strip (0 wherever the platform
+  // resizes the layout itself). Desktop keeps its physical keyboard.
+  const keyboardInset = useVirtualKeyboardInset();
+  const keyBarActive = isMobile && props.panelOpen;
   const createDisabledReason = landingTerminalCreateDisabledReason(
     props.availability,
     props.primaryWorkspacePath,
@@ -421,9 +430,12 @@ function LandingTerminalPanelContents(
     onCloseTab: props.onCloseTab,
     onCloseAllTabs: props.onCloseAllTabs,
   });
-  const panelStyle = overlayActive
-    ? undefined
-    : { width: props.panelOpen ? `${props.panelWidthFraction * 100}%` : "0%" };
+  const panelStyle = landingTerminalPanelStyle({
+    overlayActive,
+    panelOpen: props.panelOpen,
+    panelWidthFraction: props.panelWidthFraction,
+    keyboardInsetPx: keyBarActive ? keyboardInset : 0,
+  });
   const handlePanelTransitionEnd = useCallback(
     (event: ReactTransitionEvent<HTMLElement>): void => {
       if (event.target !== event.currentTarget) return;
@@ -522,8 +534,52 @@ function LandingTerminalPanelContents(
           primaryWorkspacePath={props.primaryWorkspacePath}
           reconciledContext={props.reconciledContext}
         />
+        <LandingTerminalMobileKeyBar
+          active={keyBarActive}
+          instanceId={props.activeInstanceId}
+          keyboardOpen={keyboardInset > 0}
+        />
       </aside>
     </>
+  );
+}
+
+/**
+ * In-flow width for the docked split; in overlay mode (maximized / mobile)
+ * the panel is absolutely positioned instead, and at phone width the measured
+ * keyboard inset pads the covered strip so the key bar rides above the soft
+ * keyboard (0 wherever the platform resizes the layout itself).
+ */
+function landingTerminalPanelStyle(args: {
+  readonly overlayActive: boolean;
+  readonly panelOpen: boolean;
+  readonly panelWidthFraction: number;
+  readonly keyboardInsetPx: number;
+}): CSSProperties | undefined {
+  if (!args.overlayActive) {
+    return {
+      width: args.panelOpen ? `${args.panelWidthFraction * 100}%` : "0%",
+    };
+  }
+  if (args.keyboardInsetPx > 0) return { paddingBottom: args.keyboardInsetPx };
+  return undefined;
+}
+
+interface LandingTerminalMobileKeyBarProps {
+  readonly active: boolean;
+  readonly instanceId: string | null;
+  readonly keyboardOpen: boolean;
+}
+
+function LandingTerminalMobileKeyBar(
+  props: LandingTerminalMobileKeyBarProps,
+): ReactNode {
+  if (!props.active || props.instanceId === null) return null;
+  return (
+    <MobileTerminalKeyBar
+      instanceId={props.instanceId}
+      keyboardOpen={props.keyboardOpen}
+    />
   );
 }
 

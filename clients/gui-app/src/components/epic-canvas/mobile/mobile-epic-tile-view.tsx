@@ -7,6 +7,7 @@ import { MobileTerminalKeyBar } from "@/components/epic-canvas/mobile/mobile-ter
 import { TabSwitcherSheet } from "@/components/epic-canvas/mobile/tab-switcher-sheet";
 import { selectMobileTile } from "@/components/epic-canvas/mobile/mobile-tile-selection";
 import { usePaneVisible } from "@/components/epic-tabs/pane-visibility-context";
+import { useVirtualKeyboardInset } from "@/hooks/ui/use-virtual-keyboard-inset";
 import { useEpicCanvas } from "@/stores/epics/canvas/store";
 import { firstPaneId } from "@/stores/epics/canvas/tile-tree";
 import type { TileLayoutNode } from "@/stores/epics/canvas/types";
@@ -44,6 +45,9 @@ export function MobileEpicTileView(props: MobileEpicTileViewProps) {
   // Local view state: the sheet is a leaf of this one view, so no store is
   // warranted (per ticket).
   const [switcherOpen, setSwitcherOpen] = useState(false);
+  // Must be called before the empty-pane early return (hooks are
+  // unconditional); it is 0 everywhere except an overlay-keyboard browser.
+  const keyboardInset = useVirtualKeyboardInset();
 
   // Non-null root with no resolvable tile = an empty pane (e.g. the user closed
   // the last tab). Desktop renders the inline `PaneOpener` for this; do the
@@ -53,10 +57,24 @@ export function MobileEpicTileView(props: MobileEpicTileViewProps) {
     return <MobileEmptyEpicPane epicId={epicId} tabId={tabId} root={canvas.root} />;
   }
 
+  const isTerminalTile =
+    selection.ref.type === "terminal" ||
+    selection.ref.type === "terminal-agent";
+
   return (
     <div
       className="flex h-full min-h-0 w-full flex-col bg-canvas"
       data-testid="mobile-epic-tile-view"
+      // iOS Safari overlays the soft keyboard instead of resizing the page,
+      // which would hide the key bar behind it. The measured inset pads the
+      // covered strip, lifting the bar to the visible bottom and shrinking
+      // the terminal through the normal resize sync. Runtime-measured, hence
+      // an inline style; 0 (no style) wherever the platform resizes for us.
+      style={
+        isTerminalTile && keyboardInset > 0
+          ? { paddingBottom: keyboardInset }
+          : undefined
+      }
     >
       <MobileCurrentTileBar
         epicId={epicId}
@@ -85,9 +103,11 @@ export function MobileEpicTileView(props: MobileEpicTileViewProps) {
           bar injects them. Rendered as a shrink-0 sibling so its height comes
           out of the terminal box above, which drives the existing
           ResizeObserver -> host resize sync automatically. */}
-      {selection.ref.type === "terminal" ||
-      selection.ref.type === "terminal-agent" ? (
-        <MobileTerminalKeyBar instanceId={selection.ref.instanceId} />
+      {isTerminalTile ? (
+        <MobileTerminalKeyBar
+          instanceId={selection.ref.instanceId}
+          keyboardOpen={keyboardInset > 0}
+        />
       ) : null}
       <TabSwitcherSheet
         epicId={epicId}

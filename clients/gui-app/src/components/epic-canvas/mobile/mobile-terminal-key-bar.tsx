@@ -24,6 +24,14 @@ import "@/components/layout/shell/mobile-shell-touch-targets.css";
 
 interface MobileTerminalKeyBarProps {
   readonly instanceId: string;
+  /**
+   * True while the soft keyboard covers the bottom of the layout viewport
+   * (the view is already padding the bar above it). The bar then drops its
+   * safe-area bottom padding: the keyboard covers the home indicator, so
+   * keeping `env(safe-area-inset-bottom)` would leave a dead gap between the
+   * keys and the keyboard.
+   */
+  readonly keyboardOpen: boolean;
 }
 
 /**
@@ -39,11 +47,29 @@ interface MobileTerminalKeyBarProps {
  * keyboard.
  */
 export function MobileTerminalKeyBar(props: MobileTerminalKeyBarProps) {
-  const { instanceId } = props;
+  const { instanceId, keyboardOpen } = props;
   const latchedModifiers = useSyncExternalStore(
     subscribeTerminalKeyBarModifiers,
     getTerminalKeyBarModifiers,
   );
+
+  // iOS decides "tap outside the focused field -> blur it and dismiss the
+  // keyboard" from the TOUCH sequence, so the pointerdown preventDefault on
+  // each button (sufficient on desktop) doesn't stop it. React registers
+  // root touch listeners as passive, so this must be a native non-passive
+  // listener. Canceling touchstart suppresses the focus change and the
+  // compatibility mouse/click events; pointer events still fire, which is
+  // where all bar behavior lives.
+  const barRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const bar = barRef.current;
+    if (bar === null) return;
+    const cancelTouch = (event: TouchEvent): void => {
+      event.preventDefault();
+    };
+    bar.addEventListener("touchstart", cancelTouch, { passive: false });
+    return () => bar.removeEventListener("touchstart", cancelTouch);
+  }, []);
 
   const sendActionKey = useCallback(
     (key: TerminalKeyBarActionKey): void => {
@@ -121,9 +147,13 @@ export function MobileTerminalKeyBar(props: MobileTerminalKeyBarProps) {
 
   return (
     <div
+      ref={barRef}
       data-mobile-shell-touch-scope=""
       data-testid="mobile-terminal-key-bar"
-      className="shrink-0 border-t border-canvas-border/70 bg-canvas px-1 pt-1 pb-[max(0.25rem,env(safe-area-inset-bottom))]"
+      className={cn(
+        "shrink-0 border-t border-canvas-border/70 bg-canvas px-1 pt-1",
+        keyboardOpen ? "pb-1" : "pb-[max(0.25rem,env(safe-area-inset-bottom))]",
+      )}
     >
       <div className="grid grid-cols-6 gap-1">
         {KEY_ROWS.flat().map((def) =>

@@ -7,6 +7,7 @@ import {
   useState,
   type ClipboardEvent,
   type DragEvent,
+  type PointerEvent as ReactPointerEvent,
   type RefObject,
 } from "react";
 import { Terminal, type ITerminalOptions } from "@xterm/xterm";
@@ -89,6 +90,9 @@ const GRID_LATCH_WARN_STREAK = 5;
 // grid, which must never reach the host's shared min-size grid. No usable
 // terminal pane is this small, so the floor only ever rejects degenerate boxes.
 const MIN_FIT_CONTAINER_PX = 48;
+
+/** Finger travel beyond this is a scroll gesture, not a tap-to-focus. */
+const TOUCH_TAP_SLOP_PX = 10;
 
 interface XtermInitialOptions extends ITerminalOptions {
   readonly vtExtensions: {
@@ -461,6 +465,37 @@ export function TerminalXtermHost(props: TerminalXtermHostProps) {
     termRef.current?.focus();
   }, []);
 
+  // Tap-to-focus for touch devices. xterm's own click-to-focus rides the
+  // compatibility mouse events iOS synthesizes after a tap, which don't
+  // arrive reliably over the terminal (xterm's touch scrolling swallows
+  // them) - so on a phone, tapping the terminal never focused it and the
+  // soft keyboard could not come up. Focus explicitly on a touch TAP, with a
+  // movement slop so finger-scrolling the buffer doesn't yank the keyboard
+  // open. Mouse/pen still use xterm's native mousedown focus path.
+  const touchTapStartRef = useRef<{ x: number; y: number } | null>(null);
+  const handleTouchPointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>): void => {
+      if (event.pointerType !== "touch") return;
+      touchTapStartRef.current = { x: event.clientX, y: event.clientY };
+    },
+    [],
+  );
+  const handleTouchPointerUp = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>): void => {
+      if (event.pointerType !== "touch") return;
+      const start = touchTapStartRef.current;
+      touchTapStartRef.current = null;
+      if (start === null) return;
+      const movedPx = Math.hypot(
+        event.clientX - start.x,
+        event.clientY - start.y,
+      );
+      if (movedPx > TOUCH_TAP_SLOP_PX) return;
+      termRef.current?.focus();
+    },
+    [],
+  );
+
   const handleDragEnter = useCallback(
     (event: DragEvent<HTMLDivElement>): void => {
       if (!dataTransferHasFiles(event.dataTransfer)) return;
@@ -567,6 +602,8 @@ export function TerminalXtermHost(props: TerminalXtermHostProps) {
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         onPasteCapture={handlePaste}
+        onPointerDown={handleTouchPointerDown}
+        onPointerUp={handleTouchPointerUp}
       />
       {isDraggingFiles ? (
         <div

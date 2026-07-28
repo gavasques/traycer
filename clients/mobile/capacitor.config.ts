@@ -1,4 +1,5 @@
 import type { CapacitorConfig } from "@capacitor/cli";
+import { KeyboardResize } from "@capacitor/keyboard";
 
 /**
  * Capacitor configuration for the Traycer mobile runner.
@@ -24,6 +25,18 @@ const config: CapacitorConfig = {
   plugins: {
     CapacitorHttp: {
       enabled: true,
+    },
+    // Without the Keyboard plugin WKWebView leaves the webview full-height
+    // and overlays the soft keyboard, hiding the terminal key bar behind it.
+    // "native" resizes the whole webview on show/hide, so the h-dvh app shell
+    // (key bar included) tracks the visible area and the gui-app's
+    // visualViewport inset fallback measures 0 here.
+    Keyboard: {
+      resize: KeyboardResize.Native,
+      // Tint the strip iOS exposes behind the keyboard during show/hide from
+      // the DOM body background; the default ("off") flashes white against a
+      // dark theme on every keyboard animation.
+      autoBackdropColor: "dom",
     },
   },
 };

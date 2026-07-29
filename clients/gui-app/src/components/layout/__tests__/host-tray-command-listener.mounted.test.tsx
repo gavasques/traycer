@@ -223,6 +223,7 @@ function makeHost(tray: IHostTray, management: IHostManagement): IRunnerHost {
       onChange: () => ({ dispose: () => undefined }),
     },
     workspaceFolders: {
+      canPickNatively: true,
       pickFolders: () => Promise.resolve([]),
     },
     fileDrops: {

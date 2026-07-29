@@ -23,6 +23,7 @@ import {
   workspaceMutationKeys,
 } from "@/lib/query-keys";
 import { useRunnerHost } from "@/providers/use-runner-host";
+import { useRemoteFolderPickerStore } from "@/stores/workspace/remote-folder-picker-store";
 import type { WorkspaceFolderInfo } from "@/stores/workspace/workspace-folders-store";
 import { reportableErrorToast } from "@/lib/reportable-error-toast";
 
@@ -139,14 +140,47 @@ export function useWorkspaceFolderActionsForClient(
 
   const pickAndPrepareFolders = useCallback(async () => {
     const activeHost = client?.getActiveHost() ?? null;
-    if (!canAssociateLocalWorkspaces(activeHost)) {
-      reportableErrorToast("Select the local host to add folders.", undefined, {
+    if (client === null || activeHost === null) {
+      reportableErrorToast("Select a host to add folders.", undefined, {
         title: "Could not add workspace folders",
-        message: "The local host was not selected.",
+        message: "No host was selected.",
         code: null,
         source: "Workspace folders",
       });
       return null;
+    }
+
+    // Local/mock hosts share the client machine, so the native OS directory
+    // dialog picks real host paths. Every other host is remote from this
+    // client's point of view.
+    if (!canAssociateLocalWorkspaces(activeHost)) {
+      // The RPC-backed remote picker is a surface for shells WITHOUT a
+      // native folder dialog (mobile/browser). Desktop keeps its native
+      // dialog and the switch-to-local guidance for remote hosts.
+      if (runnerHost.workspaceFolders.canPickNatively) {
+        reportableErrorToast(
+          "Select the local host to add folders.",
+          undefined,
+          {
+            title: "Could not add workspace folders",
+            message: "The local host was not selected.",
+            code: null,
+            source: "Workspace folders",
+          },
+        );
+        return null;
+      }
+      // Hand the picker THIS client: in a tab it is host-bound for life, and
+      // the picked path is submitted through the same client below - the
+      // globally mounted dialog must browse that host, not whichever host is
+      // app-wide-active at the time.
+      const pickedPath = await useRemoteFolderPickerStore
+        .getState()
+        .requestPick(client);
+      if (pickedPath === null) return null;
+      return prepareFoldersAsync({ folderPaths: [pickedPath] }).catch(
+        () => null,
+      );
     }
 
     const folderPaths = await runnerHost.workspaceFolders.pickFolders();

@@ -8,6 +8,7 @@ import { AppHeader } from "@/components/layout/header/app-header";
 import { MobileNavDrawer } from "@/components/layout/shell/mobile-nav-drawer";
 import { MigrationRunController } from "@/components/migration/migration-run-controller";
 import { OpenFolderDialog } from "@/components/open-folder-dialog";
+import { RemoteFolderPickerDialog } from "@/components/remote-folder-picker-dialog";
 import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
 import { useIsMobile } from "@/hooks/ui/use-mobile";
 
@@ -38,6 +39,7 @@ export function AppShell(props: AppShellProps) {
               <TileFindOwnerBridge />
             </main>
             <OpenFolderDialog />
+            <RemoteFolderPickerDialog />
             <QuitInterceptBridge />
             <MigrationRunController />
             <MigrationBlockingModalHost />

@@ -57,6 +57,9 @@ export class MobileRunnerHost implements IRunnerHost {
   readonly tray: ITrayState = new MobileNoopTrayState();
   readonly hostPicker: IHostPicker = new MobileHostPicker();
   readonly workspaceFolders: IWorkspaceFoldersHost = {
+    // No native folder dialog on the phone - remote-host folder adds go
+    // through the RPC-backed remote folder picker in gui-app.
+    canPickNatively: false,
     pickFolders: async (): Promise<readonly string[]> => [],
   };
   readonly fileDrops = {
@@ -328,9 +331,7 @@ function buildSecureStorage(): ISecureStorage {
 }
 
 function isMissingStorageItem(error: unknown): boolean {
-  return (
-    error instanceof Error && error.message.includes(MISSING_STORAGE_ITEM)
-  );
+  return error instanceof Error && error.message.includes(MISSING_STORAGE_ITEM);
 }
 
 /**

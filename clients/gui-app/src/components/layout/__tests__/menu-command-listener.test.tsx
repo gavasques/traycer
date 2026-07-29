@@ -168,6 +168,7 @@ function createRunnerHost(menu: FakeDesktopMenu): FakeRunnerHost {
         onChange: () => ({ dispose: () => undefined }),
       },
       workspaceFolders: {
+        canPickNatively: true,
         pickFolders: () => Promise.resolve([]),
       },
       fileDrops: {

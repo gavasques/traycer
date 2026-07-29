@@ -392,6 +392,7 @@ export const HOST_METHOD_POLL_TABLE = {
   },
   "workspace.listFileTree": { ...LATEST_SCHEDULING, poll: null },
   "workspace.listDirectory": { ...LATEST_SCHEDULING, poll: null },
+  "workspace.browseFolders": { ...LATEST_SCHEDULING, poll: null },
   "workspace.readFile": { ...LATEST_SCHEDULING, poll: null },
   "workspace.mentionFiles": { ...LATEST_SCHEDULING, poll: null },
   "workspace.mentionFolders": { ...LATEST_SCHEDULING, poll: null },

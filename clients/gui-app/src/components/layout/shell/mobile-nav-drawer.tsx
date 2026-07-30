@@ -1,8 +1,7 @@
 import { type ReactNode } from "react";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import {
-  Bell,
-  Layers,
+  ChevronRight,
   LogOut,
   Plus,
   Settings,
@@ -11,18 +10,15 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
-  Sheet,
-  SheetContent,
-  SheetTitle,
-} from "@/components/ui/sheet";
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
 import "@/components/layout/shell/mobile-shell-touch-targets.css";
-import {
-  Analytics,
-  AnalyticsEvent,
-  analyticsCountBucket,
-} from "@/lib/analytics";
+import { Analytics, AnalyticsEvent } from "@/lib/analytics";
 import { computeInitials } from "@/lib/auth/compute-initials";
 import { resolveManageSubscriptionUrl } from "@/lib/auth/manage-subscription-url";
 import { useAuthService } from "@/lib/host";
@@ -34,26 +30,28 @@ import { draftTabIntent, navigateToTabIntent } from "@/lib/tab-navigation";
 import { cn } from "@/lib/utils";
 import { epicDisplayTitle } from "@/lib/display-title";
 import { DEFAULT_HISTORY_SEARCH } from "@/lib/history-search";
+import { formatRelativeTimestamp, useSampledNow } from "@/lib/relative-time";
 import type { HistoryItem } from "@/components/home/data/home-page.data";
 import { useHistoryQuery } from "@/hooks/home/use-history-query";
 import { useAuthStore } from "@/stores/auth/auth-store";
 import { useMobileNavStore } from "@/stores/layout/mobile-nav-store";
-import {
-  useMergedNotificationUnreadCount,
-  useNotificationBellState,
-  useNotificationCenterHostState,
-} from "@/stores/notifications/merged-notifications";
-import { useNotificationsPopoverStore } from "@/stores/notifications/notifications-popover-store";
 import { useSystemTabModalActions } from "@/stores/tabs/use-system-tab-modal";
 
 const ROW_CLASS = "h-11 w-full justify-start gap-3 px-3";
 
+// The task scroller fades its bottom edge rather than slicing a row against the
+// footer's border. The list carries matching bottom padding, so the gradient
+// only ever covers blank space - at full scroll the last row stays crisp.
+const LIST_FADE_CLASS =
+  "[-webkit-mask-image:linear-gradient(to_bottom,black_calc(100%-2rem),transparent)] [mask-image:linear-gradient(to_bottom,black_calc(100%-2rem),transparent)]";
+
 /**
  * Left hamburger drawer for the mobile shell. It re-homes the global controls
- * that the desktop header carries (Settings, notifications, identity /
- * account) into a single menu, plus a "New task" entry and an inline recent
- * task list (the same `useHistoryQuery` source the landing page renders),
- * since the tab strip and header right-cluster are hidden on phones. Every
+ * that the desktop header carries (Settings, identity / account) into a single
+ * menu, plus a "New task" entry and an inline recent task list (the same
+ * `useHistoryQuery` source the landing page renders), since the tab strip and
+ * header right-cluster are hidden on phones. Notifications stay in the header
+ * next to the other status controls (`MobileNotificationsButton`). Every
  * action reuses the same helper the desktop surfaces call. Mounted only on
  * mobile (see AppShell), so desktop is untouched.
  */
@@ -63,12 +61,6 @@ export function MobileNavDrawer(): ReactNode {
   const navigate = useNavigate();
   const profile = useAuthStore((state) => state.profile);
   const { openSettings } = useSystemTabModalActions();
-  const setNotificationsOpen = useNotificationsPopoverStore(
-    (state) => state.setOpen,
-  );
-  const unread = useMergedNotificationUnreadCount();
-  const bellState = useNotificationBellState();
-  const hostState = useNotificationCenterHostState();
   const runnerHost = useRunnerHost();
   const auth = useAuthService();
 
@@ -89,27 +81,6 @@ export function MobileNavDrawer(): ReactNode {
       section: "general",
     });
     openSettings({ section: null, resetToGeneral: true });
-  };
-  const handleNotifications = () => {
-    close();
-    // Mirror the desktop bell's open telemetry (notifications-bell.tsx). The
-    // bell isn't mounted on mobile, so its edge-triggered open effect never
-    // fires - this drawer button is the sole open path here, and it's a direct
-    // UI interaction, hence entry_point "direct_ui".
-    const attentionCount = bellState.kind === "attention" ? bellState.count : 0;
-    Analytics.getInstance().track(AnalyticsEvent.NotificationCenterOpened, {
-      entry_point: "direct_ui",
-      host_state: hostState.isPartial ? "unknown" : "exact",
-      attention_bucket:
-        bellState.kind === "unknown"
-          ? "unknown"
-          : analyticsCountBucket(attentionCount),
-      unread_bucket:
-        bellState.kind === "unknown"
-          ? "unknown"
-          : analyticsCountBucket(unread),
-    });
-    setNotificationsOpen(true);
   };
   const handleManageSubscription = () => {
     close();
@@ -140,9 +111,26 @@ export function MobileNavDrawer(): ReactNode {
         data-mobile-shell-touch-scope=""
       >
         <SheetTitle className="sr-only">Menu</SheetTitle>
-        <div className="flex shrink-0 items-center gap-3 border-b border-border/60 p-4">
-          {profile === null ? null : (
-            <>
+        {/* The identity row is the account menu, matching the desktop header's
+            avatar `UserMenu` (Manage subscription + Sign out behind the
+            identity) rather than scattering those actions across the drawer.
+            A disclosure, not a nested sheet: a vaul drawer inside this Radix
+            sheet is the layering that made the terminal Launch button inert on
+            this branch, and the pattern already exists as
+            `HostSettingsDisclosure`.
+
+            Left uncontrolled: Radix unmounts `SheetContent` when the drawer
+            closes, which resets the disclosure for free - the next open must
+            not land with Sign out already under the user's thumb.
+
+            No bottom padding: the `nav` below supplies the gap, so the two
+            containers' padding can't stack into a seam. */}
+        {profile === null ? null : (
+          <Collapsible defaultOpen={false} className="shrink-0 px-2 pt-2">
+            <CollapsibleTrigger
+              className="group flex w-full min-w-0 items-center gap-3 rounded-md px-3 py-2 text-left transition-colors active:bg-accent/50"
+              data-testid="mobile-nav-account-trigger"
+            >
               <Avatar size="sm">
                 {profile.avatarUrl !== null ? (
                   <AvatarImage src={profile.avatarUrl} alt="" />
@@ -151,86 +139,72 @@ export function MobileNavDrawer(): ReactNode {
                   {computeInitials(profile.userName, profile.email)}
                 </AvatarFallback>
               </Avatar>
-              <div className="flex min-w-0 flex-1 flex-col">
+              {/* Sized to its text, not `flex-1`: the chevron then sits just
+                  after the email instead of being pushed to the far edge, and
+                  the trigger's leftover width stays tappable. `min-w-0` keeps
+                  a long name/email truncating rather than shoving it out. */}
+              <span className="flex min-w-0 flex-col">
                 <span className="truncate text-ui-sm font-medium text-foreground">
                   {profile.userName}
                 </span>
                 <span className="truncate text-ui-xs text-muted-foreground">
                   {profile.email}
                 </span>
-              </div>
-            </>
-          )}
-          {/* Mirrors the desktop bell trigger's badge states
-              (notifications-bell.tsx); the sheet itself closes via overlay
-              tap / swipe, so this slot hosts notifications instead of a
-              close button. */}
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            aria-label={unread > 0 ? `Notifications (${unread} unread)` : "Notifications"}
-            data-testid="mobile-nav-notifications"
-            className="relative ml-auto"
-            onClick={handleNotifications}
-          >
-            <Bell className="size-4" />
-            {bellState.kind === "attention" && (
-              <span
-                data-testid="mobile-nav-notifications-unread"
-                aria-hidden
-                className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-md bg-destructive px-1 text-overline font-semibold leading-none text-destructive-foreground tabular-nums shadow-sm ring-2 ring-background"
-              >
-                {bellState.count > 99 ? "99+" : bellState.count}
               </span>
-            )}
-            {/* Unlike the desktop bell's quiet dot, show the unread count -
-                the drawer bell is the only notifications surface on phones,
-                so the count carries real signal here. Dot only when the
-                merged count hasn't resolved to a number yet. */}
-            {bellState.kind === "quietDot" && unread > 0 && (
-              <span
-                data-testid="mobile-nav-notifications-unread-count"
-                aria-hidden
-                className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-md bg-primary px-1 text-overline font-semibold leading-none text-primary-foreground tabular-nums shadow-sm ring-2 ring-background"
+              <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-90" />
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <Button
+                type="button"
+                variant="ghost"
+                className={ROW_CLASS}
+                data-testid="mobile-nav-manage-subscription"
+                onClick={handleManageSubscription}
               >
-                {unread > 99 ? "99+" : unread}
-              </span>
-            )}
-            {bellState.kind === "quietDot" && unread === 0 && (
-              <span
-                data-testid="mobile-nav-notifications-quiet-dot"
-                aria-hidden
-                className="absolute -right-0.5 -top-0.5 size-2 rounded-full bg-primary ring-2 ring-background"
-              />
-            )}
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            aria-label="Sign out"
-            data-testid="mobile-nav-sign-out"
-            className="text-destructive hover:text-destructive"
-            onClick={handleSignOut}
-          >
-            <LogOut className="size-4" />
-          </Button>
-        </div>
+                <SquareArrowOutUpRight className="size-4" />
+                <span className="flex-1 text-left">Manage subscription</span>
+              </Button>
+              {/* Kept out of the resting drawer on purpose: as a top-right icon
+                  it was the most saturated pixel in the panel. */}
+              <Button
+                type="button"
+                variant="ghost"
+                className={cn(
+                  ROW_CLASS,
+                  "text-destructive hover:text-destructive",
+                )}
+                data-testid="mobile-nav-sign-out"
+                onClick={handleSignOut}
+              >
+                <LogOut className="size-4" />
+                <span className="flex-1 text-left">Sign out</span>
+              </Button>
+            </CollapsibleContent>
+          </Collapsible>
+        )}
         {/* "New task" sits outside the scroll container so it stays pinned
             while the recent-task list below it scrolls. */}
         <nav className="flex min-h-0 flex-1 flex-col p-2">
           <Button
             type="button"
             variant="ghost"
-            className={cn(ROW_CLASS, "shrink-0")}
+            // Weight alone separates the primary action from the history rows
+            // below (which are explicitly `font-normal`). A resting fill was
+            // tried and read as a heavy grey slab against an otherwise flat
+            // panel.
+            className={cn(ROW_CLASS, "shrink-0 font-medium text-foreground")}
             data-testid="mobile-nav-new-task"
             onClick={handleNewTask}
           >
             <Plus className="size-4" />
             <span className="flex-1 text-left">New task</span>
           </Button>
-          <div className="mt-1 min-h-0 flex-1 overflow-y-auto">
+          <div
+            className={cn(
+              "mt-1 min-h-0 flex-1 overflow-y-auto",
+              LIST_FADE_CLASS,
+            )}
+          >
             <DrawerTaskList onNavigate={close} />
           </div>
         </nav>
@@ -244,16 +218,6 @@ export function MobileNavDrawer(): ReactNode {
           >
             <Settings className="size-4" />
             <span className="flex-1 text-left">Settings</span>
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            className={ROW_CLASS}
-            data-testid="mobile-nav-manage-subscription"
-            onClick={handleManageSubscription}
-          >
-            <SquareArrowOutUpRight className="size-4" />
-            <span className="flex-1 text-left">Manage subscription</span>
           </Button>
         </div>
       </SheetContent>
@@ -287,6 +251,10 @@ function DrawerTaskList(props: DrawerTaskListProps): ReactNode {
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const { openHistory } = useSystemTabModalActions();
+  // One subscription to the shared 60s clock for the whole list, then the pure
+  // formatter per row - rather than a per-row `useRelativeTimestamp`, which
+  // would take one subscription each to re-render the same list anyway.
+  const now = useSampledNow();
   const {
     data,
     isPending,
@@ -361,12 +329,18 @@ function DrawerTaskList(props: DrawerTaskListProps): ReactNode {
               openItem(item);
             }}
           >
-            <Layers className="size-4 shrink-0 text-muted-foreground" />
+            {/* No leading icon: every row in this list is a task, so a repeated
+                glyph carried no information and cost the title ~28px. */}
             <span className="min-w-0 flex-1 truncate text-left font-normal">
               {drawerItemDisplayTitle(item)}
             </span>
+            {/* The shared `updatedLabel` ("about 1 month ago") spends ~100px on
+                a secondary detail and is why titles truncated mid-word. The
+                bucketed formatter the notification rows use says the same thing
+                in a third of the width. Formatted here rather than by changing
+                `updatedLabel`, which the landing list and the tray also read. */}
             <span className="shrink-0 text-ui-xs text-muted-foreground">
-              {item.updatedLabel}
+              {formatRelativeTimestamp(item.updatedAtMs, now)}
             </span>
           </Button>
         ))}
@@ -398,7 +372,12 @@ function DrawerTaskList(props: DrawerTaskListProps): ReactNode {
 
   return (
     <div
-      className="flex flex-col gap-1 border-t border-border/60 pt-2"
+      // `pb-8` is the blank strip `LIST_FADE_CLASS` fades over, so a full
+      // scroll never leaves the last row half-faded. Grouping here is
+      // whitespace rather than another rule: the drawer had four of them
+      // (identity, New task, this list, footer) and only the footer's - which
+      // separates the pinned actions from a moving list - earns its keep.
+      className="flex flex-col gap-1 pb-8"
       data-testid="mobile-nav-task-list"
     >
       <div className="flex items-center justify-between px-3 py-1">

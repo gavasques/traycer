@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { SETTINGS_SECTIONS } from "@/lib/settings-sections";
 import { RateLimitIconButton } from "@/components/layout/header/rate-limit-icon";
 import { ResourceMonitorPopover } from "@/components/resources/resource-monitor-popover";
+import { MobileNotificationsButton } from "@/components/notifications/mobile-notifications-button";
 import "@/components/layout/shell/mobile-shell-touch-targets.css";
 import { useMobileNavStore } from "@/stores/layout/mobile-nav-store";
 import { useMobileHeaderStore } from "@/stores/layout/mobile-header-store";
@@ -86,6 +87,9 @@ export function MobileAppHeader(): ReactNode {
         {showGlobalResourceMonitor ? (
           <ResourceMonitorPopover className={undefined} />
         ) : null}
+        {/* Last of the global controls, matching the desktop header's order
+            (rate limit -> resource monitor -> bell). */}
+        <MobileNotificationsButton />
         {rightActions}
       </div>
     </header>
@@ -97,7 +101,9 @@ export function MobileAppHeader(): ReactNode {
  * (drill-down depth 1), null on the settings index and everywhere else.
  */
 function useSettingsSectionLabel(): string | null {
-  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const pathname = useRouterState({
+    select: (state) => state.location.pathname,
+  });
   const section = SETTINGS_SECTIONS.find((s) =>
     pathname.startsWith(`/settings/${s.id}`),
   );
@@ -109,7 +115,9 @@ function useSettingsSectionLabel(): string | null {
  * epic route, otherwise a per-surface label.
  */
 function useMobileHeaderTitle(): string {
-  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const pathname = useRouterState({
+    select: (state) => state.location.pathname,
+  });
   const epicTabId = useMatch({
     from: "/epics/$epicId/$tabId",
     shouldThrow: false,

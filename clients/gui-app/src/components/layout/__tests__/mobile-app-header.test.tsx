@@ -20,13 +20,16 @@ import { useSettingsStore } from "@/stores/settings/settings-store";
 // this minimal harness while the switch on the resource-monitor toggle stays
 // observable.
 vi.mock("@/components/layout/header/rate-limit-icon", () => ({
-  RateLimitIconButton: () => (
-    <button type="button" aria-label="Usage limits" />
-  ),
+  RateLimitIconButton: () => <button type="button" aria-label="Usage limits" />,
 }));
 vi.mock("@/components/resources/resource-monitor-popover", () => ({
   ResourceMonitorPopover: () => (
     <button type="button" aria-label="Resource monitor" />
+  ),
+}));
+vi.mock("@/components/notifications/mobile-notifications-button", () => ({
+  MobileNotificationsButton: () => (
+    <button type="button" aria-label="Notifications" />
   ),
 }));
 
@@ -41,15 +44,31 @@ function renderAt(path: string) {
   });
   const nullComponent = () => null;
   const routeTree = rootRoute.addChildren([
-    createRoute({ getParentRoute: () => rootRoute, path: "/", component: nullComponent }),
-    createRoute({ getParentRoute: () => rootRoute, path: "/epics", component: nullComponent }),
+    createRoute({
+      getParentRoute: () => rootRoute,
+      path: "/",
+      component: nullComponent,
+    }),
+    createRoute({
+      getParentRoute: () => rootRoute,
+      path: "/epics",
+      component: nullComponent,
+    }),
     createRoute({
       getParentRoute: () => rootRoute,
       path: "/epics/$epicId/$tabId",
       component: nullComponent,
     }),
-    createRoute({ getParentRoute: () => rootRoute, path: "/settings", component: nullComponent }),
-    createRoute({ getParentRoute: () => rootRoute, path: "/draft/new", component: nullComponent }),
+    createRoute({
+      getParentRoute: () => rootRoute,
+      path: "/settings",
+      component: nullComponent,
+    }),
+    createRoute({
+      getParentRoute: () => rootRoute,
+      path: "/draft/new",
+      component: nullComponent,
+    }),
   ]);
   const router = createRouter({
     routeTree,
@@ -87,14 +106,14 @@ describe("MobileAppHeader", () => {
 
   it("titles the History and Settings surfaces from the route", async () => {
     renderAt("/epics");
-    expect(
-      (await screen.findByTestId("mobile-header-title")).textContent,
-    ).toBe("History");
+    expect((await screen.findByTestId("mobile-header-title")).textContent).toBe(
+      "History",
+    );
     cleanup();
     renderAt("/settings");
-    expect(
-      (await screen.findByTestId("mobile-header-title")).textContent,
-    ).toBe("Settings");
+    expect((await screen.findByTestId("mobile-header-title")).textContent).toBe(
+      "Settings",
+    );
   });
 
   it("titles the epic surface with the open epic's name", async () => {
@@ -102,15 +121,24 @@ describe("MobileAppHeader", () => {
       tabsById: { t1: { tabId: "t1", epicId: "e1", name: "Wire up billing" } },
     });
     renderAt("/epics/e1/t1");
-    expect(
-      (await screen.findByTestId("mobile-header-title")).textContent,
-    ).toBe("Wire up billing");
+    expect((await screen.findByTestId("mobile-header-title")).textContent).toBe(
+      "Wire up billing",
+    );
   });
 
   it("always renders the rate-limit control", async () => {
     renderAt("/");
     expect(
       await screen.findByRole("button", { name: "Usage limits" }),
+    ).not.toBeNull();
+  });
+
+  // Notifications moved out of the hamburger drawer into this cluster; the
+  // drawer no longer carries a bell at all.
+  it("always renders the notifications control", async () => {
+    renderAt("/");
+    expect(
+      await screen.findByRole("button", { name: "Notifications" }),
     ).not.toBeNull();
   });
 

@@ -140,6 +140,7 @@ function TerminalLaunchPanelImpl(props: TerminalLaunchPanelProps) {
           aria-hidden
         />
         <HarnessModelPicker
+          labelDisplay="responsive"
           store={store}
           withServiceTier={false}
           tuiOnly

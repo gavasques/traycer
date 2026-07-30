@@ -142,6 +142,8 @@ interface HarnessModelPickerProps {
   /** The exact host where the next run executes. This is explicit so usage
    *  comparison can never silently fall back to the renderer-default host. */
   runTargetHostId: string | null;
+  /** Forwarded to `HarnessModelTrigger`; see its `labelDisplay`. */
+  labelDisplay: "responsive" | "model-only";
 }
 
 function HarnessModelPickerImpl(props: HarnessModelPickerProps) {
@@ -782,6 +784,7 @@ function HarnessModelPickerImpl(props: HarnessModelPickerProps) {
             profileAccentDot={presentation.profileAccentDot}
             isLoading={presentation.isLoading}
             disabled={disabled}
+            labelDisplay={props.labelDisplay}
           />
         </TooltipWrapper>
       </PopoverTrigger>

@@ -160,7 +160,12 @@ export function WorkspaceFolderSummaryControl(props: {
         align="start"
         collisionPadding={12}
         container={dialogBoundaryEl ?? undefined}
-        className="w-[min(92vw,42rem)] max-w-[var(--radix-popover-content-available-width)] max-h-[min(var(--radix-popover-content-available-height),32rem)] gap-0 overflow-y-auto p-3"
+        // Desktop scrolls this whole element. Below md the folder LIST scrolls
+        // instead (see `WorkspaceFolderRows`), which is what keeps "Add folder"
+        // - a sibling below it - visible without scrolling to the end of the
+        // folders. Clipping here stops the two scrollers fighting; the list's
+        // own cap already bounds the panel well under this max-height.
+        className="w-[min(92vw,42rem)] max-w-[var(--radix-popover-content-available-width)] max-h-[min(var(--radix-popover-content-available-height),32rem)] gap-0 overflow-y-auto p-3 max-md:overflow-hidden"
         data-testid={props.popoverTestId}
         onOpenAutoFocus={(event) => event.preventDefault()}
         onInteractOutside={(event) =>

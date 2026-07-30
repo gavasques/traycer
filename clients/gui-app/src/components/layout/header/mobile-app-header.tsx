@@ -33,7 +33,12 @@ export function MobileAppHeader(): ReactNode {
       data-testid="app-header"
       data-variant="app"
       data-mobile-shell-touch-scope=""
-      className="relative z-20 flex h-[calc(2.5rem_+_env(safe-area-inset-top))] shrink-0 items-center gap-1 bg-canvas px-2 pt-[env(safe-area-inset-top)] text-canvas-foreground after:absolute after:inset-x-0 after:bottom-0 after:z-1 after:h-px after:bg-border/90 after:content-['']"
+      // `bg-background`, not the desktop header's `bg-canvas`: canvas exists to
+      // mark window chrome (title bar + tab strip) apart from content, and at
+      // this width there is no tab strip - the row is just a title sitting on
+      // the page, so the 1.5% lightness step between the two tokens read as a
+      // seam rather than as intent.
+      className="relative z-20 flex h-[calc(2.5rem_+_env(safe-area-inset-top))] shrink-0 items-center gap-1 bg-background px-2 pt-[env(safe-area-inset-top)] text-foreground after:absolute after:inset-x-0 after:bottom-0 after:z-1 after:h-px after:bg-border/90 after:content-['']"
     >
       <Button
         type="button"
@@ -46,37 +51,7 @@ export function MobileAppHeader(): ReactNode {
       >
         <Menu className="size-4" />
       </Button>
-      {settingsSection === null ? (
-        <span
-          className="min-w-0 flex-1 truncate font-medium text-foreground"
-          data-testid="mobile-header-title"
-        >
-          {title}
-        </span>
-      ) : (
-        // Drill-down breadcrumb for settings section routes: the parent crumb
-        // navigates back to the full-screen section list, replacing the
-        // dedicated back-link row the settings layout used to render.
-        // Unpadded crumbs so "Settings" sits exactly where the plain title
-        // does on the index route - no shift when the section crumb appears.
-        // The link's tap target comes from the full header-row height.
-        <span
-          className="flex h-full min-w-0 flex-1 items-center gap-1"
-          data-testid="mobile-header-title"
-        >
-          <Link
-            to="/settings"
-            data-testid="mobile-header-settings-crumb"
-            className="flex h-full shrink-0 items-center font-medium text-muted-foreground transition-colors active:text-foreground"
-          >
-            Settings
-          </Link>
-          <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
-          <span className="min-w-0 truncate font-medium text-foreground">
-            {settingsSection}
-          </span>
-        </span>
-      )}
+      <MobileHeaderTitleSlot title={title} settingsSection={settingsSection} />
       {/* Right cluster: global status controls sit parallel to the hamburger,
           mirroring the desktop header's rate-limit + resource-monitor gating
           (navDisabled never applies here - MobileAppHeader only renders for the
@@ -93,6 +68,57 @@ export function MobileAppHeader(): ReactNode {
         {rightActions}
       </div>
     </header>
+  );
+}
+
+interface MobileHeaderTitleSlotProps {
+  readonly title: string | null;
+  readonly settingsSection: string | null;
+}
+
+/**
+ * The header's centre slot. Always claims the row's spare width so the right
+ * cluster stays pinned right, even on the landing route where there is no title
+ * to show.
+ */
+function MobileHeaderTitleSlot(props: MobileHeaderTitleSlotProps): ReactNode {
+  const { title, settingsSection } = props;
+  if (settingsSection !== null) {
+    return (
+      // Drill-down breadcrumb for settings section routes: the parent crumb
+      // navigates back to the full-screen section list, replacing the
+      // dedicated back-link row the settings layout used to render.
+      // Unpadded crumbs so "Settings" sits exactly where the plain title
+      // does on the index route - no shift when the section crumb appears.
+      // The link's tap target comes from the full header-row height.
+      <span
+        className="flex h-full min-w-0 flex-1 items-center gap-1"
+        data-testid="mobile-header-title"
+      >
+        <Link
+          to="/settings"
+          data-testid="mobile-header-settings-crumb"
+          className="flex h-full shrink-0 items-center font-medium text-muted-foreground transition-colors active:text-foreground"
+        >
+          Settings
+        </Link>
+        <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 truncate font-medium text-foreground">
+          {settingsSection}
+        </span>
+      </span>
+    );
+  }
+  if (title === null) {
+    return <span className="min-w-0 flex-1" />;
+  }
+  return (
+    <span
+      className="min-w-0 flex-1 truncate font-medium text-foreground"
+      data-testid="mobile-header-title"
+    >
+      {title}
+    </span>
   );
 }
 
@@ -114,7 +140,7 @@ function useSettingsSectionLabel(): string | null {
  * Derives the header title from the active route: the open epic's name on the
  * epic route, otherwise a per-surface label.
  */
-function useMobileHeaderTitle(): string {
+function useMobileHeaderTitle(): string | null {
   const pathname = useRouterState({
     select: (state) => state.location.pathname,
   });
@@ -126,11 +152,15 @@ function useMobileHeaderTitle(): string {
   const epicName = useEpicCanvasStore((state) =>
     epicTabId === undefined ? null : (state.tabsById[epicTabId]?.name ?? null),
   );
-  // While the epic tab name is still unresolved, fall through to the app-name
-  // fallback rather than flashing an empty header.
+  // An epic whose name has not resolved yet falls through to no title rather
+  // than to a placeholder, so the header never flashes a stand-in and then
+  // swaps it for the real name.
   if (epicTabId !== undefined && epicName !== null) return epicName;
   if (isSettingsPath(pathname)) return "Settings";
   if (isHistoryPath(pathname)) return "History";
-  if (pathname.startsWith("/draft")) return "New task";
-  return "Traycer";
+  // Titles name a place you navigated TO. The composer surfaces - landing and
+  // drafts - are where you already are, and each one opens with a hero greeting
+  // that carries the page, so "Traycer" and "New task" were both labelling the
+  // obvious. History, Settings and an epic's name are the ones that earn a row.
+  return null;
 }

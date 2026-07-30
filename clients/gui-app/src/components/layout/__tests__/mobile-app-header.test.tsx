@@ -116,6 +116,25 @@ describe("MobileAppHeader", () => {
     );
   });
 
+  // Composer surfaces are where you already are, and each opens with a hero
+  // greeting - so neither the app name nor "New task" earns a header row.
+  it("renders no title on the composer surfaces", async () => {
+    renderAt("/");
+    await screen.findByRole("button", { name: "Open menu" });
+
+    expect(screen.queryByTestId("mobile-header-title")).toBeNull();
+    expect(screen.queryByText("Traycer")).toBeNull();
+    // The spacer still has to hold the right cluster against the right edge.
+    expect(screen.getByRole("button", { name: "Usage limits" })).not.toBeNull();
+
+    cleanup();
+    renderAt("/draft/new");
+    await screen.findByRole("button", { name: "Open menu" });
+
+    expect(screen.queryByTestId("mobile-header-title")).toBeNull();
+    expect(screen.queryByText("New task")).toBeNull();
+  });
+
   it("titles the epic surface with the open epic's name", async () => {
     useEpicCanvasStore.setState({
       tabsById: { t1: { tabId: "t1", epicId: "e1", name: "Wire up billing" } },

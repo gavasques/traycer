@@ -34,6 +34,7 @@ import {
 } from "@/components/epic-canvas/canvas/use-pointer-drag-commit";
 import { useHomeWorkspaceSource } from "@/components/home/host-workspace-selector/use-home-workspace-source";
 import { useIsMobileViewport } from "@/hooks/ui/use-mobile-viewport";
+import { useMobileHeaderStore } from "@/stores/layout/mobile-header-store";
 import { useVirtualKeyboardInset } from "@/hooks/ui/use-virtual-keyboard-inset";
 import { MobileTerminalKeyBar } from "@/components/epic-canvas/mobile/mobile-terminal-key-bar";
 import type { WorktreeStagingKey } from "@/stores/worktree/worktree-intent-staging-store";
@@ -68,6 +69,18 @@ import {
 } from "./landing-terminal-host-context";
 
 const INDEPENDENT_SCOPE: TerminalScope = { kind: "independent" };
+
+/**
+ * The panel's own surface. Desktop is a docked split, so it reads as chrome
+ * beside the content and carries the seam borders. The phone overlay covers the
+ * page rather than sitting next to it, so `bg-canvas` there laid a white sheet
+ * under the `bg-background` header, and the borders divide nothing.
+ */
+function landingTerminalPanelSurfaceClass(isMobile: boolean): string {
+  return isMobile
+    ? "bg-background"
+    : "border-t border-l border-canvas-border/70 bg-canvas";
+}
 
 interface LandingTerminalDragState {
   readonly containerWidth: number;
@@ -454,6 +467,9 @@ function LandingTerminalPanelContents(
     },
     [isDragging, props.panelOpen, scheduleTerminalLayoutReconcile],
   );
+  const revealToggle = props.panelOpen ? null : (
+    <LandingTerminalPanelToggle onOpenPanel={props.onOpenPanel} />
+  );
   useEffect(() => {
     const panel = panelRef.current;
     if (panel === null) return;
@@ -469,10 +485,11 @@ function LandingTerminalPanelContents(
   return (
     <>
       {/* Reveal-only affordance. Once open, the panel header owns collapse -
-          rendering both would stack two controls in the same corner. */}
-      {props.panelOpen ? null : (
-        <LandingTerminalPanelToggle onOpenPanel={props.onOpenPanel} />
-      )}
+          rendering both would stack two controls in the same corner. On a phone
+          it lives in the header's route-actions slot instead of floating in the
+          content area, where it was the only element in an otherwise empty
+          region with nothing to align to. */}
+      {isMobile ? <MobileLandingTerminalActionBinder /> : revealToggle}
       <div
         {...sliderProps}
         aria-valuenow={Math.round(props.panelWidthFraction * 100)}
@@ -496,7 +513,8 @@ function LandingTerminalPanelContents(
         data-testid="landing-terminal-panel"
         data-open={props.panelOpen ? "true" : "false"}
         className={cn(
-          "flex h-full min-h-0 shrink-0 flex-col overflow-hidden border-t border-l border-canvas-border/70 bg-canvas transition-[width,visibility]",
+          "flex h-full min-h-0 shrink-0 flex-col overflow-hidden transition-[width,visibility]",
+          landingTerminalPanelSurfaceClass(isMobile),
           // The width transition exists for open/collapse only. During a
           // resize drag the global freeze class suspends it - otherwise every
           // per-frame `style.width` write eases over the default duration and
@@ -509,8 +527,8 @@ function LandingTerminalPanelContents(
         onTransitionEnd={handlePanelTransitionEnd}
       >
         <LandingTerminalPanelHeader
+          isMobile={isMobile}
           maximized={props.maximized}
-          showMaximize={!isMobile}
           onToggleMaximized={props.onToggleMaximized}
           onTogglePanel={props.onTogglePanel}
         />
@@ -800,17 +818,83 @@ function LandingTerminalPanelToggle(props: {
   );
 }
 
+/**
+ * Both directions of the panel control, rendered into the mobile header's
+ * route-actions slot instead of floating in the content area. Free to leave
+ * that corner at phone width because the open panel goes through the
+ * full-overlay path there, so there is no docked-split geometry to stay
+ * aligned with.
+ *
+ * It carries collapse as well as reveal because the overlay is `absolute
+ * inset-0` inside the PAGE container, which sits below the app header - so it
+ * never covers the header, and a collapse button inside the panel would stack a
+ * second bar under a header that is still on screen. One control in one bar
+ * instead.
+ *
+ * Reads the store itself rather than taking handlers as props: the slot holds a
+ * baked `ReactNode`, and one closing over a caller's handler would go stale
+ * (see `MobileEpicHeaderActionsBinder`).
+ */
+function LandingTerminalHeaderToggle(): ReactNode {
+  const panelOpen = useLandingTerminalStore((state) => state.panelOpen);
+  const setPanelOpen = useLandingTerminalStore((state) => state.setPanelOpen);
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon-sm"
+      aria-label={panelOpen ? "Collapse terminal panel" : "Open terminal panel"}
+      data-testid={
+        panelOpen ? "landing-terminal-collapse" : "landing-terminal-toggle"
+      }
+      className="shrink-0 text-muted-foreground hover:text-foreground"
+      onClick={() => {
+        setPanelOpen(!panelOpen);
+      }}
+    >
+      {panelOpen ? (
+        <PanelRightClose className="size-4" />
+      ) : (
+        <PanelRightOpen className="size-4" />
+      )}
+    </Button>
+  );
+}
+
+/**
+ * Publishes the reveal toggle into the mobile header while the landing terminal
+ * panel is mounted, and clears it on unmount so it cannot leak into History,
+ * Settings or the epic view. Rendered from the panel contents, so it inherits
+ * the availability guard above - no toggle appears where no terminal can run.
+ */
+function MobileLandingTerminalActionBinder(): ReactNode {
+  const setRightActions = useMobileHeaderStore(
+    (state) => state.setRightActions,
+  );
+  useEffect(() => {
+    setRightActions(<LandingTerminalHeaderToggle />);
+    return () => {
+      setRightActions(null);
+    };
+  }, [setRightActions]);
+  return null;
+}
+
+/**
+ * Desktop-only chrome row. Both of its controls are meaningless at phone width:
+ * the open panel is a full overlay regardless of the maximized bit, so
+ * Maximize/Restore is a no-op, and collapse lives in the app header's slot
+ * because the overlay never covers that header - keeping a collapse button here
+ * would stack a second bar directly under one that is still on screen. The tab
+ * strip becomes the panel's top row there instead.
+ */
 function LandingTerminalPanelHeader(props: {
+  readonly isMobile: boolean;
   readonly maximized: boolean;
-  /**
-   * Mobile renders the open panel as a full overlay regardless of the
-   * maximized bit, so the Maximize/Restore toggle would be a no-op there
-   * and is hidden.
-   */
-  readonly showMaximize: boolean;
   readonly onToggleMaximized: () => void;
   readonly onTogglePanel: () => void;
 }): ReactNode {
+  if (props.isMobile) return null;
   return (
     <div className="flex h-9 shrink-0 items-center justify-between border-b border-canvas-border/70 px-2">
       <div className="flex min-w-0 items-center gap-2 text-ui-sm font-medium">
@@ -818,25 +902,23 @@ function LandingTerminalPanelHeader(props: {
         <span className="truncate">Terminal</span>
       </div>
       <div className="flex shrink-0 items-center">
-        {props.showMaximize ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            aria-label={
-              props.maximized
-                ? "Restore terminal panel"
-                : "Maximize terminal panel"
-            }
-            onClick={props.onToggleMaximized}
-          >
-            {props.maximized ? (
-              <Minimize2 className="size-4" />
-            ) : (
-              <Maximize2 className="size-4" />
-            )}
-          </Button>
-        ) : null}
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label={
+            props.maximized
+              ? "Restore terminal panel"
+              : "Maximize terminal panel"
+          }
+          onClick={props.onToggleMaximized}
+        >
+          {props.maximized ? (
+            <Minimize2 className="size-4" />
+          ) : (
+            <Maximize2 className="size-4" />
+          )}
+        </Button>
         <Button
           type="button"
           variant="ghost"

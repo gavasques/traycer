@@ -1,19 +1,9 @@
-import { type ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
-import {
-  ChevronRight,
-  LogOut,
-  Plus,
-  Settings,
-  SquareArrowOutUpRight,
-} from "lucide-react";
+import { LogOut, Plus, Settings, SquareArrowOutUpRight } from "lucide-react";
+import { SignOutConfirmDialog } from "@/components/auth/sign-out-confirm-dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
@@ -21,7 +11,6 @@ import "@/components/layout/shell/mobile-shell-touch-targets.css";
 import { Analytics, AnalyticsEvent } from "@/lib/analytics";
 import { computeInitials } from "@/lib/auth/compute-initials";
 import { resolveManageSubscriptionUrl } from "@/lib/auth/manage-subscription-url";
-import { useAuthService } from "@/lib/host";
 import { useRunnerHost } from "@/providers/use-runner-host";
 import { openNewEpicDraft } from "@/lib/commands/actions/new-epic";
 import { openEpicFromList } from "@/lib/commands/actions/open-epic-from-list";
@@ -50,10 +39,11 @@ const LIST_FADE_CLASS =
  * that the desktop header carries (Settings, identity / account) into a single
  * menu, plus a "New task" entry and an inline recent task list (the same
  * `useHistoryQuery` source the landing page renders), since the tab strip and
- * header right-cluster are hidden on phones. Notifications stay in the header
- * next to the other status controls (`MobileNotificationsButton`). Every
- * action reuses the same helper the desktop surfaces call. Mounted only on
- * mobile (see AppShell), so desktop is untouched.
+ * header right-cluster are hidden on phones. Manage subscription and Sign out
+ * ride the identity row as icons; notifications stay in the header next to the
+ * other status controls (`MobileNotificationsButton`). Every action reuses the
+ * same helper the desktop surfaces call. Mounted only on mobile (see
+ * AppShell), so desktop is untouched.
  */
 export function MobileNavDrawer(): ReactNode {
   const open = useMobileNavStore((state) => state.open);
@@ -62,7 +52,7 @@ export function MobileNavDrawer(): ReactNode {
   const profile = useAuthStore((state) => state.profile);
   const { openSettings } = useSystemTabModalActions();
   const runnerHost = useRunnerHost();
-  const auth = useAuthService();
+  const [signOutOpen, setSignOutOpen] = useState(false);
 
   const close = () => {
     setOpen(false);
@@ -93,44 +83,35 @@ export function MobileNavDrawer(): ReactNode {
         );
       });
   };
-  const handleSignOut = () => {
-    close();
-    Analytics.getInstance().track(AnalyticsEvent.SignOutRequested, {
-      source: "direct_ui",
-    });
-    void auth.signOut();
-  };
 
   return (
-    <Sheet open={open} onOpenChange={setOpen}>
-      <SheetContent
-        side="left"
-        showCloseButton={false}
-        className="gap-0 p-0 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
-        data-testid="mobile-nav-drawer"
-        data-mobile-shell-touch-scope=""
-      >
-        <SheetTitle className="sr-only">Menu</SheetTitle>
-        {/* The identity row is the account menu, matching the desktop header's
-            avatar `UserMenu` (Manage subscription + Sign out behind the
-            identity) rather than scattering those actions across the drawer.
-            A disclosure, not a nested sheet: a vaul drawer inside this Radix
-            sheet is the layering that made the terminal Launch button inert on
-            this branch, and the pattern already exists as
-            `HostSettingsDisclosure`.
+    <>
+      {/* Outside the `Sheet`, so the confirm can't be unmounted out from under
+          the user by an unrelated drawer close. */}
+      <SignOutConfirmDialog
+        open={signOutOpen}
+        onOpenChange={setSignOutOpen}
+        onConfirm={close}
+      />
+      <Sheet open={open} onOpenChange={setOpen}>
+        <SheetContent
+          side="left"
+          showCloseButton={false}
+          className="gap-0 p-0 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
+          data-testid="mobile-nav-drawer"
+          data-mobile-shell-touch-scope=""
+        >
+          <SheetTitle className="sr-only">Menu</SheetTitle>
+          {/* Identity plus the two account actions as icons beside the name -
+            the same pair the desktop `UserMenu` offers behind the avatar, both
+            one tap here. Manage subscription takes the slot the notification
+            bell vacated when it moved to the header.
 
-            Left uncontrolled: Radix unmounts `SheetContent` when the drawer
-            closes, which resets the disclosure for free - the next open must
-            not land with Sign out already under the user's thumb.
-
-            No bottom padding: the `nav` below supplies the gap, so the two
-            containers' padding can't stack into a seam. */}
-        {profile === null ? null : (
-          <Collapsible defaultOpen={false} className="shrink-0 px-2 pt-2">
-            <CollapsibleTrigger
-              className="group flex w-full min-w-0 items-center gap-3 rounded-md px-3 py-2 text-left transition-colors active:bg-accent/50"
-              data-testid="mobile-nav-account-trigger"
-            >
+            `px-5` is the nav rows' effective inset below (`p-2` + `px-3`), so
+            the avatar shares a left edge with their glyphs; no bottom padding
+            beyond `pb-2` because the `nav` supplies the rest of the gap. */}
+          {profile === null ? null : (
+            <div className="flex shrink-0 items-center gap-3 px-5 pt-4 pb-2">
               <Avatar size="sm">
                 {profile.avatarUrl !== null ? (
                   <AvatarImage src={profile.avatarUrl} alt="" />
@@ -139,89 +120,83 @@ export function MobileNavDrawer(): ReactNode {
                   {computeInitials(profile.userName, profile.email)}
                 </AvatarFallback>
               </Avatar>
-              {/* Sized to its text, not `flex-1`: the chevron then sits just
-                  after the email instead of being pushed to the far edge, and
-                  the trigger's leftover width stays tappable. `min-w-0` keeps
-                  a long name/email truncating rather than shoving it out. */}
-              <span className="flex min-w-0 flex-col">
+              <div className="flex min-w-0 flex-1 flex-col">
                 <span className="truncate text-ui-sm font-medium text-foreground">
                   {profile.userName}
                 </span>
                 <span className="truncate text-ui-xs text-muted-foreground">
                   {profile.email}
                 </span>
-              </span>
-              <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-90" />
-            </CollapsibleTrigger>
-            <CollapsibleContent>
+              </div>
               <Button
                 type="button"
                 variant="ghost"
-                className={ROW_CLASS}
+                size="icon-sm"
+                aria-label="Manage subscription"
                 data-testid="mobile-nav-manage-subscription"
                 onClick={handleManageSubscription}
               >
                 <SquareArrowOutUpRight className="size-4" />
-                <span className="flex-1 text-left">Manage subscription</span>
               </Button>
-              {/* Kept out of the resting drawer on purpose: as a top-right icon
-                  it was the most saturated pixel in the panel. */}
+              {/* Opens the confirm rather than signing out: unlike its
+                neighbours this control doesn't `close()` first, so cancelling
+                puts the user back in the drawer where they were. */}
               <Button
                 type="button"
                 variant="ghost"
-                className={cn(
-                  ROW_CLASS,
-                  "text-destructive hover:text-destructive",
-                )}
+                size="icon-sm"
+                aria-label="Sign out"
+                className="text-destructive hover:text-destructive"
                 data-testid="mobile-nav-sign-out"
-                onClick={handleSignOut}
+                onClick={() => {
+                  setSignOutOpen(true);
+                }}
               >
                 <LogOut className="size-4" />
-                <span className="flex-1 text-left">Sign out</span>
               </Button>
-            </CollapsibleContent>
-          </Collapsible>
-        )}
-        {/* "New task" sits outside the scroll container so it stays pinned
+            </div>
+          )}
+          {/* "New task" sits outside the scroll container so it stays pinned
             while the recent-task list below it scrolls. */}
-        <nav className="flex min-h-0 flex-1 flex-col p-2">
-          <Button
-            type="button"
-            variant="ghost"
-            // Weight alone separates the primary action from the history rows
-            // below (which are explicitly `font-normal`). A resting fill was
-            // tried and read as a heavy grey slab against an otherwise flat
-            // panel.
-            className={cn(ROW_CLASS, "shrink-0 font-medium text-foreground")}
-            data-testid="mobile-nav-new-task"
-            onClick={handleNewTask}
-          >
-            <Plus className="size-4" />
-            <span className="flex-1 text-left">New task</span>
-          </Button>
-          <div
-            className={cn(
-              "mt-1 min-h-0 flex-1 overflow-y-auto",
-              LIST_FADE_CLASS,
-            )}
-          >
-            <DrawerTaskList onNavigate={close} />
+          <nav className="flex min-h-0 flex-1 flex-col p-2">
+            <Button
+              type="button"
+              variant="ghost"
+              // Weight alone separates the primary action from the history rows
+              // below (which are explicitly `font-normal`). A resting fill was
+              // tried and read as a heavy grey slab against an otherwise flat
+              // panel.
+              className={cn(ROW_CLASS, "shrink-0 font-medium text-foreground")}
+              data-testid="mobile-nav-new-task"
+              onClick={handleNewTask}
+            >
+              <Plus className="size-4" />
+              <span className="flex-1 text-left">New task</span>
+            </Button>
+            <div
+              className={cn(
+                "mt-1 min-h-0 flex-1 overflow-y-auto",
+                LIST_FADE_CLASS,
+              )}
+            >
+              <DrawerTaskList onNavigate={close} />
+            </div>
+          </nav>
+          <div className="flex shrink-0 flex-col gap-1 border-t border-border/60 p-2">
+            <Button
+              type="button"
+              variant="ghost"
+              className={ROW_CLASS}
+              data-testid="mobile-nav-settings"
+              onClick={handleSettings}
+            >
+              <Settings className="size-4" />
+              <span className="flex-1 text-left">Settings</span>
+            </Button>
           </div>
-        </nav>
-        <div className="flex shrink-0 flex-col gap-1 border-t border-border/60 p-2">
-          <Button
-            type="button"
-            variant="ghost"
-            className={ROW_CLASS}
-            data-testid="mobile-nav-settings"
-            onClick={handleSettings}
-          >
-            <Settings className="size-4" />
-            <span className="flex-1 text-left">Settings</span>
-          </Button>
-        </div>
-      </SheetContent>
-    </Sheet>
+        </SheetContent>
+      </Sheet>
+    </>
   );
 }
 

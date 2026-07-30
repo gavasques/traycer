@@ -70,11 +70,11 @@ vi.mock("@/lib/tab-navigation", () => ({
 }));
 
 import {
-  act,
   cleanup,
   fireEvent,
   render,
   screen,
+  waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TestRouterProvider } from "../../../../__tests__/with-test-router";
@@ -138,26 +138,32 @@ describe("MobileNavDrawer", () => {
     useAuthStore.setState({ profile: null });
   });
 
-  describe("account disclosure", () => {
-    it("keeps the account actions out of the resting drawer", async () => {
+  describe("identity row", () => {
+    it("reaches both account actions in one tap", async () => {
       renderDrawer();
-      await screen.findByTestId("mobile-nav-account-trigger");
-
-      expect(screen.queryByTestId("mobile-nav-manage-subscription")).toBeNull();
-      expect(screen.queryByTestId("mobile-nav-sign-out")).toBeNull();
-      // Settings deliberately stays pinned in the footer, not folded into the
-      // account row.
-      expect(screen.queryByTestId("mobile-nav-settings")).not.toBeNull();
-    });
-
-    it("reveals Manage subscription and Sign out when the identity row is tapped", async () => {
-      renderDrawer();
-      fireEvent.click(await screen.findByTestId("mobile-nav-account-trigger"));
 
       expect(
         await screen.findByTestId("mobile-nav-manage-subscription"),
       ).not.toBeNull();
-      expect(await screen.findByTestId("mobile-nav-sign-out")).not.toBeNull();
+      expect(screen.queryByTestId("mobile-nav-sign-out")).not.toBeNull();
+      // Settings stays pinned in the footer rather than joining the identity
+      // row's icon pair.
+      expect(screen.queryByTestId("mobile-nav-settings")).not.toBeNull();
+    });
+
+    // Both controls are icon-only, and Radix tooltips never open on touch - the
+    // accessible name is the only label a phone user's screen reader gets.
+    it("names both icon-only controls", async () => {
+      renderDrawer();
+
+      expect(
+        (
+          await screen.findByTestId("mobile-nav-manage-subscription")
+        ).getAttribute("aria-label"),
+      ).toBe("Manage subscription");
+      expect(
+        screen.getByTestId("mobile-nav-sign-out").getAttribute("aria-label"),
+      ).toBe("Sign out");
     });
 
     it("opens the subscription page through the runner host", async () => {
@@ -167,7 +173,6 @@ describe("MobileNavDrawer", () => {
         return Promise.resolve();
       };
       renderDrawer();
-      fireEvent.click(await screen.findByTestId("mobile-nav-account-trigger"));
       fireEvent.click(
         await screen.findByTestId("mobile-nav-manage-subscription"),
       );
@@ -179,48 +184,53 @@ describe("MobileNavDrawer", () => {
       expect(useMobileNavStore.getState().open).toBe(false);
     });
 
-    it("signs out from the disclosed row", async () => {
+    it("confirms before signing out, then closes the drawer", async () => {
       let signedOut = 0;
       testState.signOut = () => {
         signedOut += 1;
         return Promise.resolve();
       };
       renderDrawer();
-      fireEvent.click(await screen.findByTestId("mobile-nav-account-trigger"));
       fireEvent.click(await screen.findByTestId("mobile-nav-sign-out"));
 
+      // The tap only asks. Unlike its neighbours this control leaves the
+      // drawer open, so cancelling returns the user where they were.
+      expect(signedOut).toBe(0);
+      expect(useMobileNavStore.getState().open).toBe(true);
+
+      fireEvent.click(await screen.findByTestId("confirm-action"));
+
       expect(signedOut).toBe(1);
+      expect(useMobileNavStore.getState().open).toBe(false);
     });
 
-    // Regression guard: without the reset, the drawer reopens already expanded
-    // and Sign out sits under the thumb.
-    it("collapses the disclosure again after the drawer closes", async () => {
+    it("keeps the session and the drawer when the confirm is cancelled", async () => {
+      let signedOut = 0;
+      testState.signOut = () => {
+        signedOut += 1;
+        return Promise.resolve();
+      };
       renderDrawer();
-      fireEvent.click(await screen.findByTestId("mobile-nav-account-trigger"));
-      await screen.findByTestId("mobile-nav-sign-out");
+      fireEvent.click(await screen.findByTestId("mobile-nav-sign-out"));
+      fireEvent.click(await screen.findByTestId("confirm-cancel"));
 
-      // Two separate commits on purpose: the collapse comes from Radix
-      // unmounting the sheet content, so the close has to actually render
-      // before the reopen.
-      act(() => {
-        useMobileNavStore.getState().setOpen(false);
+      await waitFor(() => {
+        expect(screen.queryByTestId("confirm-destructive-dialog")).toBeNull();
       });
-      act(() => {
-        useMobileNavStore.getState().setOpen(true);
-      });
-      await screen.findByTestId("mobile-nav-account-trigger");
-
-      expect(screen.queryByTestId("mobile-nav-sign-out")).toBeNull();
+      expect(signedOut).toBe(0);
+      expect(useMobileNavStore.getState().open).toBe(true);
     });
 
     // Notifications live in the header now (`MobileNotificationsButton`), so
-    // an unresolved profile simply drops the account block.
+    // an unresolved profile simply drops the whole account block, actions
+    // included.
     it("drops the account block when no profile has resolved", async () => {
       useAuthStore.setState({ profile: null });
       renderDrawer();
       await screen.findByTestId("mobile-nav-new-task");
 
-      expect(screen.queryByTestId("mobile-nav-account-trigger")).toBeNull();
+      expect(screen.queryByTestId("mobile-nav-manage-subscription")).toBeNull();
+      expect(screen.queryByTestId("mobile-nav-sign-out")).toBeNull();
     });
   });
 

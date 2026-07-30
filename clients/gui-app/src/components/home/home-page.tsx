@@ -10,6 +10,7 @@ import { HostWorkspaceSelector } from "@/components/home/host-workspace-selector
 import { EpicsListPanel } from "@/components/epics/epics-list-panel";
 import { LandingTerminalPanel } from "@/components/home/terminal-panel/landing-terminal-panel";
 import { parseSystemTabOverlayView } from "@/lib/system-tab-overlay-search";
+import { useIsMobile } from "@/hooks/ui/use-mobile";
 import "./home-touch-targets.css";
 
 export function HomePage() {
@@ -50,6 +51,10 @@ export function HomePage() {
       return overlay.settingsOverlay || overlay.historyOverlay;
     },
   });
+  // Phones drop the embedded list entirely: the hamburger drawer already
+  // carries "Recent tasks" + "View all" off the same `useHistoryQuery`, so an
+  // inline copy is pure duplication at this width.
+  const isMobile = useIsMobile();
   const workspaceSurface = useMemo(
     () => ({ kind: "home" as const, draftId }),
     [draftId],
@@ -72,19 +77,27 @@ export function HomePage() {
           narrow viewport (or the space left beside the terminal panel) and
           the outer overflow-hidden would clip the right edge instead of
           letting content reflow. */}
-      <div className="grid min-h-0 min-w-0 flex-1 grid-cols-[minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)_minmax(0,1fr)] overflow-hidden">
-        <div className="mx-auto w-full max-w-3xl px-6 pt-3">
+      {/* Row 2 bottom-aligns the hero and row 3 top-anchors the composer, so
+          the boundary between them is where the pair sits. An even 1fr/1fr
+          split (desktop, where the epics list fills row 3) centres it; below md
+          the list is gone, so row 3 is weighted heavier to lift the pair just
+          above the midpoint, where it reads better on a tall phone. Both rows
+          stay fractional on purpose - an intrinsic row 3 would let a grown
+          composer (attachments, several folders, keyboard open) squeeze row 2
+          to zero and then clip against this container's overflow-hidden. */}
+      <div className="grid min-h-0 min-w-0 flex-1 grid-cols-[minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)_minmax(0,1fr)] overflow-hidden max-md:grid-rows-[auto_minmax(0,1fr)_minmax(0,1.4fr)]">
+        <div className="mx-auto w-full max-w-3xl px-6 pt-3 max-md:px-4">
           <HostUpdateBanner className={undefined} />
         </div>
 
-        <section className="mx-auto flex w-full max-w-3xl items-end justify-center px-6 pb-10 pt-3">
+        <section className="mx-auto flex w-full max-w-3xl items-end justify-center px-6 pb-10 pt-3 max-md:px-4 max-md:pb-6">
           <HomeHero workspaceFolders={workspaceFolders} />
         </section>
 
         {/* Composer + recent epics share one row so the composer is top-anchored:
             adding a folder grows it downward into the (scrollable) epics list
             below instead of recentering and shoving the hero up. */}
-        <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-col px-6">
+        <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-col px-6 max-md:px-4">
           <div className="shrink-0">
             <SurfaceActivityProvider active={!systemModalOpen}>
               <LandingComposer
@@ -97,17 +110,19 @@ export function HomePage() {
             </SurfaceActivityProvider>
           </div>
 
-          <div className="mt-3 flex min-h-0 flex-1 flex-col pb-6">
-            {systemModalOpen ? null : (
-              <EpicsListPanel
-                variant="embedded"
-                onSelectEpic={null}
-                routeSearch={null}
-                historyNowMs={null}
-                autoFocusSearch={false}
-              />
-            )}
-          </div>
+          {isMobile ? null : (
+            <div className="mt-3 flex min-h-0 flex-1 flex-col pb-6">
+              {systemModalOpen ? null : (
+                <EpicsListPanel
+                  variant="embedded"
+                  onSelectEpic={null}
+                  routeSearch={null}
+                  historyNowMs={null}
+                  autoFocusSearch={false}
+                />
+              )}
+            </div>
+          )}
         </div>
       </div>
       <LandingTerminalPanel draftId={draftId} />

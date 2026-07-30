@@ -55,6 +55,14 @@ const homeMocks = vi.hoisted(() => ({
   })),
   composerCommits: [] as ComposerCommit[],
   nextInstanceId: 0,
+  isMobile: false,
+}));
+
+// Drive the viewport branch directly. jsdom reports a desktop width, so this
+// only makes the default explicit - the phone case flips it per test.
+vi.mock("@/hooks/ui/use-mobile", () => ({
+  useIsMobile: () => homeMocks.isMobile,
+  isMobileViewport: () => homeMocks.isMobile,
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -254,6 +262,7 @@ describe("<HomePage />", () => {
   beforeEach(() => {
     window.localStorage.clear();
     homeMocks.systemModalOpen = false;
+    homeMocks.isMobile = false;
     homeMocks.navigate.mockReset();
     homeMocks.request.mockReset();
     homeMocks.getActiveHostId.mockReset();
@@ -351,6 +360,25 @@ describe("<HomePage />", () => {
     expect(screen.getByTestId("landing-composer").dataset.activityEnabled).toBe(
       "false",
     );
+    queryClient.clear();
+  });
+
+  it("drops the embedded epics list at phone width, keeping the hero and composer", () => {
+    homeMocks.isMobile = true;
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <HomePage />
+      </QueryClientProvider>,
+    );
+
+    // The hamburger drawer already carries "Recent tasks" + "View all" off the
+    // same useHistoryQuery, so the inline copy is pure duplication here.
+    expect(screen.queryByTestId("epics-list-panel")).toBeNull();
+    expect(screen.getByTestId("home-hero")).not.toBeNull();
+    expect(screen.getByTestId("landing-composer")).not.toBeNull();
     queryClient.clear();
   });
 

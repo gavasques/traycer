@@ -11,7 +11,7 @@ import { ResourceMonitorPopover } from "@/components/resources/resource-monitor-
 import { SignInButton } from "@/components/layout/header/sign-in-button";
 import { NotificationsBell } from "@/components/notifications/notifications-bell";
 import { cn } from "@/lib/utils";
-import { useIsMobile } from "@/hooks/ui/use-mobile";
+import { useIsMobileViewport } from "@/hooks/ui/use-mobile-viewport";
 import { useAuthStore } from "@/stores/auth/auth-store";
 import { useSettingsStore } from "@/stores/settings/settings-store";
 import { useTitleBarDraggingSuppressed } from "@/stores/layout/title-bar-drag-store";
@@ -54,7 +54,7 @@ export interface AppHeaderProps {
  * (`DesktopAppHeader`) exactly as before.
  */
 export function AppHeader(props: AppHeaderProps): ReactNode {
-  const isMobile = useIsMobile();
+  const isMobile = useIsMobileViewport();
   if (props.variant === "app" && isMobile) {
     return <MobileAppHeader />;
   }

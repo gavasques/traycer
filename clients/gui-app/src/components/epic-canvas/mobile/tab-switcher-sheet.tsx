@@ -24,7 +24,7 @@ import {
   isWorkspaceFileRef,
   type EpicCanvasTileRef,
 } from "@/stores/epics/canvas/types";
-import { useIsMobile } from "@/hooks/ui/use-mobile";
+import { useIsMobileViewport } from "@/hooks/ui/use-mobile-viewport";
 import { useResolvedTheme } from "@/providers/use-resolved-theme";
 import {
   useActiveLeftPanelId,
@@ -68,11 +68,11 @@ function isEmbedOriginatedTileRef(ref: EpicCanvasTileRef): boolean {
  *
  * Opened from the Phase-1 current-tile bar chevron. Only meaningful on phones -
  * it is mounted from `MobileEpicTileView`, which itself renders only under the
- * `useIsMobile()` canvas branch - and self-gates on `useIsMobile()` as defence.
+ * `useIsMobileViewport()` canvas branch - and self-gates on `useIsMobileViewport()` as defence.
  */
 export function TabSwitcherSheet(props: TabSwitcherSheetProps) {
   const { epicId, tabId, open, onOpenChange } = props;
-  const isMobile = useIsMobile();
+  const isMobile = useIsMobileViewport();
   // The drawer content is portaled to <body>; re-assert the app's resolved
   // theme on it so `--popover` / `--background` (and the preset tokens) resolve
   // correctly inside the portal instead of falling back to the light :root.

@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { EpicsListPanel } from "@/components/epics/epics-list-panel";
-import { useIsMobile } from "@/hooks/ui/use-mobile";
+import { useIsMobileViewport } from "@/hooks/ui/use-mobile-viewport";
 
 export interface HistoryModalContentProps {
   /**
@@ -17,7 +17,7 @@ export function HistoryModalContent(
 ): ReactNode {
   // No autofocus on phones: focusing the search input raises the on-screen
   // keyboard over half the just-opened sheet.
-  const isMobile = useIsMobile();
+  const isMobile = useIsMobileViewport();
   // `variant="page"` keeps the chrome (header + search + filters)
   // identical to the `/epics` strip-tab view so the modal and tab
   // forms read as the same surface, just framed differently.

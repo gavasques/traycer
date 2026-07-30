@@ -7,8 +7,8 @@ import { AppHeader } from "@/components/layout/header/app-header";
 // host/query/auth providers, so stub them (and both branch markers) to keep
 // the test to the switch itself.
 const mobileState = vi.hoisted(() => ({ value: false }));
-vi.mock("@/hooks/ui/use-mobile", () => ({
-  useIsMobile: () => mobileState.value,
+vi.mock("@/hooks/ui/use-mobile-viewport", () => ({
+  useIsMobileViewport: () => mobileState.value,
   isMobileViewport: () => mobileState.value,
 }));
 vi.mock("@/components/layout/header/mobile-app-header", () => ({

@@ -2,7 +2,7 @@ import { useCallback, useRef, type ReactNode } from "react";
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer";
 import { NotificationsPopover } from "@/components/notifications/notifications-popover";
 import { useNotificationsPopoverStore } from "@/stores/notifications/notifications-popover-store";
-import { useIsMobile } from "@/hooks/ui/use-mobile";
+import { useIsMobileViewport } from "@/hooks/ui/use-mobile-viewport";
 import "@/components/layout/shell/mobile-shell-touch-targets.css";
 
 /**
@@ -25,7 +25,7 @@ import "@/components/layout/shell/mobile-shell-touch-targets.css";
  * exactly as before.
  */
 export function NotificationsMobileSheet(): ReactNode {
-  const isMobile = useIsMobile();
+  const isMobile = useIsMobileViewport();
   const open = useNotificationsPopoverStore((state) => state.open);
   const setOpen = useNotificationsPopoverStore((state) => state.setOpen);
   // main's popover is purely presentational: the caller owns outer sizing via

@@ -26,8 +26,8 @@ const touchTargetsCss = readFileSync(
 );
 
 const mobileState = vi.hoisted(() => ({ value: true }));
-vi.mock("@/hooks/ui/use-mobile", () => ({
-  useIsMobile: () => mobileState.value,
+vi.mock("@/hooks/ui/use-mobile-viewport", () => ({
+  useIsMobileViewport: () => mobileState.value,
   isMobileViewport: () => mobileState.value,
 }));
 vi.mock("@/providers/use-resolved-theme", () => ({

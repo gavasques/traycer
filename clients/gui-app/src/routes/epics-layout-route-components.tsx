@@ -1,7 +1,7 @@
 import { Outlet, useMatch } from "@tanstack/react-router";
 import { EpicSidebarColumn } from "@/components/epic-canvas/sidebar/epic-sidebar-column";
 import { EpicTabHost } from "@/components/epic-tabs/epic-tab-host";
-import { useIsMobile } from "@/hooks/ui/use-mobile";
+import { useIsMobileViewport } from "@/hooks/ui/use-mobile-viewport";
 
 /**
  * Layout for `/epics` and `/epics/$epicId/$tabId`. Hosts the single hoisted
@@ -28,7 +28,7 @@ export function EpicsLayoutRoute() {
   // sidebar (artifact/chat/terminal tree + resize rail) is dropped below md so
   // the pane container spans the full width. Its navigation re-homes into the
   // mobile tile switcher (separate work). Desktop (>=768px) is unaffected.
-  const isMobile = useIsMobile();
+  const isMobile = useIsMobileViewport();
   const activeRoute = useMatch({
     from: "/epics/$epicId/$tabId",
     shouldThrow: false,

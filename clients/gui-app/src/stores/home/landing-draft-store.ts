@@ -9,6 +9,9 @@ import { v4 as uuidv4 } from "uuid";
 import type { ChatRunSettings } from "@traycer/protocol/host/agent/gui/subscribe";
 import type { JsonContent } from "@traycer/protocol/common/registry";
 import { chatRunSettingsSchema } from "@traycer/protocol/persistence/epic/schemas";
+import { containsImageAtoms } from "@/lib/composer/image-atoms";
+import { extractPlainTextFromComposerJSONContent } from "@/lib/composer/tiptap-json-content";
+import { isMobileApp } from "@/lib/mobile-app";
 import type { DraftSelection } from "@/stores/composer/composer-draft-store";
 import { useWorkspaceFoldersStore } from "@/stores/workspace/workspace-folders-store";
 import type { WorkspaceFolderInfo } from "@/stores/workspace/workspace-folders-store";
@@ -72,9 +75,13 @@ interface LandingDraftStoreState {
   readonly drafts: ReadonlyArray<LandingDraftTab>;
   readonly activeDraftId: string | null;
   /**
-   * Always creates a fresh draft, sets it as active, returns its id.
-   * Pass `id` to create with a pre-minted identity (landing null-draft mount
-   * key stability); pass `undefined` to allocate a new uuid.
+   * Returns an active draft id. Desktop/browser: always creates a fresh
+   * draft and sets it active. In the INSTALLED MOBILE APP (`isMobileApp()`),
+   * an id-less call returns the newest existing draft instead - the phone
+   * has one stable composer. Pass `id` to create with a pre-minted identity
+   * (restore/sync, landing null-draft mount key stability) - explicit ids
+   * always mint, on every shell; pass `undefined` for a user-initiated
+   * "new draft" request.
    */
   createDraft: (
     settings: ChatRunSettings | null,
@@ -323,6 +330,32 @@ function parsePersistedComposerMode(value: unknown): ComposerMode {
     : DEFAULT_COMPOSER_MODE;
 }
 
+/**
+ * Content-derived emptiness: no typed text AND no image atoms. An image-only
+ * draft is real content - discarding or replacing it would drop the image.
+ */
+export function isLandingDraftEmpty(draft: LandingDraftTab): boolean {
+  if (
+    extractPlainTextFromComposerJSONContent(draft.content).trim().length > 0
+  ) {
+    return false;
+  }
+  return !containsImageAtoms(draft.content);
+}
+
+function newestDraft(drafts: ReadonlyArray<LandingDraftTab>): string | null {
+  let newest: LandingDraftTab | null = null;
+  for (const draft of drafts) {
+    // >= so the LATER array entry wins a millisecond tie: drafts are
+    // append-ordered, and same-ms timestamps are realistic (restore paths
+    // stamp several drafts in one tick).
+    if (newest === null || draft.lastTouchedAt >= newest.lastTouchedAt) {
+      newest = draft;
+    }
+  }
+  return newest === null ? null : newest.id;
+}
+
 export const useLandingDraftStore = create<LandingDraftStoreState>()(
   persist(
     (set, get) => ({
@@ -330,6 +363,20 @@ export const useLandingDraftStore = create<LandingDraftStoreState>()(
       activeDraftId: null,
 
       createDraft: (settings, id) => {
+        // The installed mobile app has ONE stable composer: its header has
+        // no tab strip, so a second draft tab could never be closed. "New
+        // task" therefore lands back on the existing draft - whatever its
+        // content - instead of minting another. Keyed on the PRODUCT flag,
+        // never the viewport (see `@/lib/mobile-app`): a responsively-narrow
+        // desktop browser keeps normal multi-draft behavior. Explicit ids
+        // are restore/sync paths and always mint exactly that draft.
+        if (id === undefined && isMobileApp()) {
+          const existing = newestDraft(get().drafts);
+          if (existing !== null) {
+            set({ activeDraftId: existing });
+            return existing;
+          }
+        }
         const next: LandingDraftTab = {
           id: id ?? uuidv4(),
           content: EMPTY_LANDING_DRAFT_CONTENT,

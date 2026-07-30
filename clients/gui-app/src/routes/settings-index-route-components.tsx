@@ -1,6 +1,6 @@
 import { Navigate } from "@tanstack/react-router";
 import { SettingsSidebar } from "@/components/settings/settings-sidebar";
-import { useIsMobile } from "@/hooks/ui/use-mobile";
+import { useIsMobileViewport } from "@/hooks/ui/use-mobile-viewport";
 
 /**
  * On phones, `/settings` is the drill-down entry: a full-screen list of
@@ -8,7 +8,7 @@ import { useIsMobile } from "@/hooks/ui/use-mobile";
  * already shows every section, so the index redirects to General as before.
  */
 export function SettingsIndexRedirect() {
-  const isMobile = useIsMobile();
+  const isMobile = useIsMobileViewport();
   if (isMobile) {
     return <SettingsSidebar mode={{ kind: "route" }} variant="mobile-list" />;
   }

@@ -41,7 +41,7 @@ must be added in BOTH places - the route file under `src/routes/` AND the modal
 ## Responsive Behavior (mobile)
 
 The **route** presentation collapses to a drill-down below the 768px
-`useIsMobile()` breakpoint: `/settings` renders the section list full-screen
+`useIsMobileViewport()` breakpoint: `/settings` renders the section list full-screen
 (`SettingsSidebar` with `variant="mobile-list"` - the index no longer
 redirects on phones), tapping a section navigates to its existing route
 full-screen, and `settings-layout.tsx` shows a back-to-list header instead of

@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
-import { useIsMobile } from "@/hooks/ui/use-mobile";
+import { useIsMobileViewport } from "@/hooks/ui/use-mobile-viewport";
 import { useMobileHeaderStore } from "@/stores/layout/mobile-header-store";
 import {
   useRegisteredEpicPermissionRole,
@@ -254,7 +254,7 @@ function EpicRenameForm(props: {
 /**
  * Fills / clears the mobile-header right-actions slot for the ACTIVE epic
  * route. Mounted once (from the active epic's route effects), self-gated on
- * `useIsMobile()`. The slot stores a `ReactNode` element (Phase 0 shape kept):
+ * `useIsMobileViewport()`. The slot stores a `ReactNode` element (Phase 0 shape kept):
  * this is safe because the element is a self-contained component keyed only on
  * the stable `{epicId, tabId}` route ids - it re-reads volatile state from its
  * own hooks each header render, so nothing goes stale. A render-fn slot would
@@ -264,7 +264,7 @@ function EpicRenameForm(props: {
  */
 export function MobileEpicHeaderActionsBinder(props: EpicHeaderIdentity) {
   const { epicId, tabId } = props;
-  const isMobile = useIsMobile();
+  const isMobile = useIsMobileViewport();
   const setRightActions = useMobileHeaderStore((s) => s.setRightActions);
 
   useEffect(() => {

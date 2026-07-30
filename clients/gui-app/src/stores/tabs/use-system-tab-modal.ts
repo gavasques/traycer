@@ -12,7 +12,7 @@ import {
   ensureHistoryTab,
   ensureSettingsTab,
 } from "@/lib/commands/actions/open-system-tab";
-import { isMobileViewport } from "@/hooks/ui/use-mobile";
+import { isMobileViewport } from "@/hooks/ui/use-mobile-viewport";
 import { settingsRouteOptions } from "@/stores/tabs/kinds/settings";
 import { type TabNavigationIntent } from "@/lib/tab-navigation";
 import { tabActivate, tabRouteOptions } from "@/stores/tabs/registry";

@@ -1,6 +1,10 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { TraycerApp, hostRpcRegistry } from "@traycer-clients/gui-app";
+import {
+  TraycerApp,
+  hostRpcRegistry,
+  setMobileApp,
+} from "@traycer-clients/gui-app";
 import type { RemoteHostFetcher } from "@traycer-clients/shared/host-client/remote-fetcher";
 import "./index.css";
 import { MobileRunnerHost } from "../mobile-runner-host";
@@ -35,6 +39,10 @@ const remoteFetcher: RemoteHostFetcher = async () => {
 
 function bootstrap(): void {
   document.documentElement.classList.add("traycer-mobile-client");
+  // PRODUCT flag, not layout: unlocks mobile-app-only UX policy such as the
+  // single-composer draft model. See gui-app's `src/lib/mobile-app.ts` for
+  // how this differs from the viewport signal.
+  setMobileApp(true);
   const host = new MobileRunnerHost({
     signInUrl: config.signInUrl,
     authnBaseUrl: config.authnBaseUrl,

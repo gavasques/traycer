@@ -22,7 +22,7 @@ import {
 import { ArrowLeftIcon } from "lucide-react";
 import { Command, CommandInput, CommandList } from "@/components/ui/command";
 import { InputGroupButton } from "@/components/ui/input-group";
-import { isMobileViewport } from "@/hooks/ui/use-mobile";
+import { isMobileViewport } from "@/hooks/ui/use-mobile-viewport";
 import { useCommandPaletteRouter } from "@/components/command-palette/command-palette-context";
 import {
   OpenerDeepView,

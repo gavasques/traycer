@@ -25,7 +25,7 @@ import { TabGroupView } from "@/components/epic-canvas/canvas/tab-group-view";
 import { EpicCanvasDragInteractionShield } from "@/components/epic-canvas/dnd/drag-interaction-shield";
 import { useEmptyShellDropActive } from "@/components/epic-canvas/dnd/dnd-store";
 import { MobileEpicTileView } from "@/components/epic-canvas/mobile/mobile-epic-tile-view";
-import { useIsMobile } from "@/hooks/ui/use-mobile";
+import { useIsMobileViewport } from "@/hooks/ui/use-mobile-viewport";
 
 interface TileCanvasPaneContextValue {
   readonly epicId: string;
@@ -121,7 +121,7 @@ function TileCanvasLive(
   );
   const resizeSplitInTab = useEpicCanvasStore((s) => s.resizeSplitInTab);
   const hasRecords = useEpicHasArtifactRecords();
-  const isMobile = useIsMobile();
+  const isMobile = useIsMobileViewport();
 
   const onResizeGroup = useCallback(
     (groupId: string, sizes: ReadonlyArray<number>) => {

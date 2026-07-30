@@ -60,8 +60,8 @@ const homeMocks = vi.hoisted(() => ({
 
 // Drive the viewport branch directly. jsdom reports a desktop width, so this
 // only makes the default explicit - the phone case flips it per test.
-vi.mock("@/hooks/ui/use-mobile", () => ({
-  useIsMobile: () => homeMocks.isMobile,
+vi.mock("@/hooks/ui/use-mobile-viewport", () => ({
+  useIsMobileViewport: () => homeMocks.isMobile,
   isMobileViewport: () => homeMocks.isMobile,
 }));
 

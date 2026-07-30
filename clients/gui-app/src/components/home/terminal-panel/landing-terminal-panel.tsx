@@ -33,7 +33,7 @@ import {
   type PointerDragSliderProps,
 } from "@/components/epic-canvas/canvas/use-pointer-drag-commit";
 import { useHomeWorkspaceSource } from "@/components/home/host-workspace-selector/use-home-workspace-source";
-import { useIsMobile } from "@/hooks/ui/use-mobile";
+import { useIsMobileViewport } from "@/hooks/ui/use-mobile-viewport";
 import { useVirtualKeyboardInset } from "@/hooks/ui/use-virtual-keyboard-inset";
 import { MobileTerminalKeyBar } from "@/components/epic-canvas/mobile/mobile-terminal-key-bar";
 import type { WorktreeStagingKey } from "@/stores/worktree/worktree-intent-staging-store";
@@ -399,7 +399,7 @@ function LandingTerminalPanelContents(
   // The overlay geometry applies only while actually open: a closed panel
   // physically collapses to the 0%-width in-flow strip on every device
   // rather than lingering as an invisible full-viewport layer.
-  const isMobile = useIsMobile();
+  const isMobile = useIsMobileViewport();
   const fullOverlay = props.maximized || isMobile;
   const overlayActive = fullOverlay && props.panelOpen;
   // Same touch-key treatment as the epic terminal tiles: at phone width the

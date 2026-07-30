@@ -18,8 +18,10 @@ import { useComposerRunSettingsStore } from "@/stores/composer/composer-run-sett
 import { draftTabIntent } from "@/lib/tab-navigation/intents";
 import type { KeybindingRouter } from "@/lib/keybindings/dispatch";
 
-/** Mints a new draft and returns its id. The caller is responsible for
- *  navigating to the draft's per-id route. */
+/** Returns the id of the draft to open: a freshly minted one, except in the
+ *  installed mobile app where the existing draft is reused (single stable
+ *  composer - see `createDraft`). The caller is responsible for navigating
+ *  to the draft's per-id route. */
 export function openNewEpicDraft(): string {
   return useLandingDraftStore
     .getState()

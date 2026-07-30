@@ -10,7 +10,7 @@ import { MigrationRunController } from "@/components/migration/migration-run-con
 import { OpenFolderDialog } from "@/components/open-folder-dialog";
 import { RemoteFolderPickerDialog } from "@/components/remote-folder-picker-dialog";
 import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
-import { useIsMobile } from "@/hooks/ui/use-mobile";
+import { useIsMobileViewport } from "@/hooks/ui/use-mobile-viewport";
 
 interface AppShellProps {
   children: ReactNode;
@@ -26,7 +26,7 @@ export function AppShell(props: AppShellProps) {
   const activeHostId = useReactiveActiveHostId();
   // Phones get the hamburger navigation drawer; it is only mounted below md so
   // desktop mounts nothing extra and stays unchanged.
-  const isMobile = useIsMobile();
+  const isMobile = useIsMobileViewport();
 
   return (
     <DiffWorkerPoolProvider>

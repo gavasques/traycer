@@ -22,8 +22,8 @@ const setComposerModeSpy = vi.fn();
 const mutateSpy =
   vi.fn<(vars: RenameVariables, options: { onSuccess: () => void }) => void>();
 
-vi.mock("@/hooks/ui/use-mobile", () => ({
-  useIsMobile: () => mobileValue,
+vi.mock("@/hooks/ui/use-mobile-viewport", () => ({
+  useIsMobileViewport: () => mobileValue,
 }));
 vi.mock("@/lib/epic-selectors", () => ({
   useRegisteredEpicPermissionRole: () => role,

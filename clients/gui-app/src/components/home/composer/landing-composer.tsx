@@ -75,7 +75,7 @@ import { landingComposerSettingsSeedForDraft } from "@/components/home/composer/
 import { contentIsSubmittable } from "@/lib/composer/composer-content";
 import { nextComposerMode } from "@/components/home/data/landing-options";
 import { ArrowLeftRight } from "lucide-react";
-import { useIsMobile } from "@/hooks/ui/use-mobile";
+import { useIsMobileViewport } from "@/hooks/ui/use-mobile-viewport";
 import { useHostBinding, useHostClient } from "@/lib/host";
 import { Analytics, AnalyticsEvent } from "@/lib/analytics";
 
@@ -129,7 +129,7 @@ export function LandingComposer(props: LandingComposerProps) {
   // Phones collapse the composer toolbar into a single options-sheet trigger.
   // Only the toolbar slot swaps, so the editor keeps its position in the tree
   // and never remounts when the viewport crosses the breakpoint.
-  const isMobile = useIsMobile();
+  const isMobile = useIsMobileViewport();
 
   const handleToggleComposerMode = useCallback(() => {
     const next = nextComposerMode(composerMode);

@@ -20,7 +20,7 @@ interface MobileEpicTileViewProps {
 
 /**
  * Phone (<768px) epic view: renders exactly ONE canvas tile full-screen in
- * place of the desktop split canvas. Mounted only from the `useIsMobile()`
+ * place of the desktop split canvas. Mounted only from the `useIsMobileViewport()`
  * branch in `TileCanvasLive` (non-null root), so the desktop tiling layer is
  * never built here. The tile is chosen by {@link selectMobileTile}, which reads
  * but never writes the split tree.

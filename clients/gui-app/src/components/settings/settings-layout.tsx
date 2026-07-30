@@ -1,6 +1,6 @@
 import { Outlet } from "@tanstack/react-router";
 import { SettingsSidebar } from "@/components/settings/settings-sidebar";
-import { useIsMobile } from "@/hooks/ui/use-mobile";
+import { useIsMobileViewport } from "@/hooks/ui/use-mobile-viewport";
 import { cn } from "@/lib/utils";
 import "./settings-touch-targets.css";
 
@@ -8,7 +8,7 @@ import "./settings-touch-targets.css";
 // "Settings > <section>" breadcrumb (mobile-app-header.tsx), so this layout
 // renders no chrome of its own there - just the section outlet.
 export function SettingsLayout() {
-  const isMobile = useIsMobile();
+  const isMobile = useIsMobileViewport();
   return (
     <div
       data-settings-touch-scope

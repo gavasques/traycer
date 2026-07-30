@@ -2,9 +2,10 @@ import type { UseNavigateResult } from "@tanstack/react-router";
 import { navigateToTabIntent } from "@/lib/tab-navigation";
 import { existingEpicTabIntent } from "@/lib/tab-navigation/intents";
 import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
-import { useLandingDraftStore } from "@/stores/home/landing-draft-store";
-import { extractPlainTextFromComposerJSONContent } from "@/lib/composer/tiptap-json-content";
-import { containsImageAtoms } from "@/lib/composer/image-atoms";
+import {
+  isLandingDraftEmpty,
+  useLandingDraftStore,
+} from "@/stores/home/landing-draft-store";
 import { useTabsStore } from "@/stores/tabs/store";
 import type { TabRef } from "@/stores/tabs/types";
 import {
@@ -124,15 +125,9 @@ function readActiveEmptyDraft(
   if (activeId === null) return null;
   const draft = state.drafts.find((entry) => entry.id === activeId);
   if (draft === undefined) return null;
-  // "Empty" is now derived from content: no typed text AND no image atoms. An
-  // image-only draft is real content, so replacing it in-place (which closes it)
-  // would silently drop the image - treat it as non-empty.
-  if (
-    extractPlainTextFromComposerJSONContent(draft.content).trim().length > 0
-  ) {
-    return null;
-  }
-  if (containsImageAtoms(draft.content)) return null;
+  // An image-only draft is real content, so replacing it in-place (which
+  // closes it) would silently drop the image - treat it as non-empty.
+  if (!isLandingDraftEmpty(draft)) return null;
   return { id: draft.id };
 }
 

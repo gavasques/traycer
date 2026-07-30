@@ -1,5 +1,6 @@
 import "../../../../__tests__/test-browser-apis";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { setMobileApp } from "@/lib/mobile-app";
 import {
   applyLandingDraftDesktopProjection,
   emptyLandingDraftWorkspaceSnapshot,
@@ -1418,6 +1419,50 @@ describe("useLandingDraftStore", () => {
       } finally {
         markReady.mockRestore();
       }
+    });
+  });
+
+  describe("mobile app draft model", () => {
+    afterEach(() => {
+      // Module-level product flag - must not leak across tests.
+      setMobileApp(false);
+    });
+
+    it("never mints a second draft in the mobile app, even over real content", () => {
+      setMobileApp(true);
+      const { createDraft, setDraftContent } = useLandingDraftStore.getState();
+      const first = createDraft(null, undefined);
+      setDraftContent(first, textContent("half-typed task"), null);
+      // The phone's one stable composer: New task lands back on it.
+      const again = createDraft(null, undefined);
+      expect(again).toBe(first);
+      expect(useLandingDraftStore.getState().drafts).toHaveLength(1);
+      expect(useLandingDraftStore.getState().activeDraftId).toBe(first);
+    });
+
+    it("returns the newest draft on a lastTouchedAt tie (later entry wins)", () => {
+      setMobileApp(true);
+      const { createDraft } = useLandingDraftStore.getState();
+      // Restore paths can stamp several drafts within one millisecond;
+      // drafts are append-ordered, so the later entry is the newer one.
+      createDraft(null, "restored-older");
+      createDraft(null, "restored-newer");
+      const sameStamp = useLandingDraftStore
+        .getState()
+        .drafts.map((draft) => ({ ...draft, lastTouchedAt: 1_000 }));
+      useLandingDraftStore.setState({ drafts: sameStamp });
+      const reused = createDraft(null, undefined);
+      expect(reused).toBe("restored-newer");
+      expect(useLandingDraftStore.getState().drafts).toHaveLength(2);
+    });
+
+    it("still honors explicit restore ids in the mobile app", () => {
+      setMobileApp(true);
+      const { createDraft } = useLandingDraftStore.getState();
+      createDraft(null, undefined);
+      const restored = createDraft(null, "restored-draft");
+      expect(restored).toBe("restored-draft");
+      expect(useLandingDraftStore.getState().drafts).toHaveLength(2);
     });
   });
 });

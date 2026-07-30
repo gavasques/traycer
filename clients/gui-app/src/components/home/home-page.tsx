@@ -10,7 +10,7 @@ import { HostWorkspaceSelector } from "@/components/home/host-workspace-selector
 import { EpicsListPanel } from "@/components/epics/epics-list-panel";
 import { LandingTerminalPanel } from "@/components/home/terminal-panel/landing-terminal-panel";
 import { parseSystemTabOverlayView } from "@/lib/system-tab-overlay-search";
-import { useIsMobile } from "@/hooks/ui/use-mobile";
+import { useIsMobileViewport } from "@/hooks/ui/use-mobile-viewport";
 import "./home-touch-targets.css";
 
 export function HomePage() {
@@ -54,7 +54,7 @@ export function HomePage() {
   // Phones drop the embedded list entirely: the hamburger drawer already
   // carries "Recent tasks" + "View all" off the same `useHistoryQuery`, so an
   // inline copy is pure duplication at this width.
-  const isMobile = useIsMobile();
+  const isMobile = useIsMobileViewport();
   const workspaceSurface = useMemo(
     () => ({ kind: "home" as const, draftId }),
     [draftId],

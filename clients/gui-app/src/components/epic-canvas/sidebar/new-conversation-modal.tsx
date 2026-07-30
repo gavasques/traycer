@@ -837,6 +837,9 @@ export function NewConversationModalBody(props: {
       workspaceDisabledHint={composerDisabledHint}
       header={header}
       topBanner={null}
+      // The modal is desktop-shaped and never collapses; the phone-width
+      // toolbar is the landing composer's alone for now.
+      toolbarLayout="full"
       attachmentsStrip={
         <NewConversationModalAttachmentStrip
           epicId={epicId}

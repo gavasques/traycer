@@ -35,6 +35,7 @@ vi.mock("@/components/home/composer/composer-shell", () => ({
     readonly onDragLeave: DragEventHandler<HTMLElement>;
     readonly dragOverlayVariant: FileTransferDragOverlayVariant | null;
     readonly editor: ReactNode;
+    readonly toolbar: ReactNode;
   }) => (
     <div
       role="region"
@@ -47,6 +48,7 @@ vi.mock("@/components/home/composer/composer-shell", () => ({
       onDragLeave={props.onDragLeave}
     >
       {props.editor}
+      {props.toolbar}
     </div>
   ),
 }));
@@ -60,7 +62,11 @@ vi.mock("@/components/home/composer/terminal-launch-panel", () => ({
 }));
 
 vi.mock("@/components/home/toolbar/composer-toolbar", () => ({
-  ComposerToolbar: () => null,
+  ComposerToolbar: () => <div data-testid="desktop-toolbar" />,
+}));
+
+vi.mock("@/components/home/mobile/composer-mobile-toolbar", () => ({
+  ComposerMobileToolbar: () => <div data-testid="mobile-toolbar" />,
 }));
 
 afterEach(cleanup);
@@ -81,12 +87,16 @@ function makePaste(): UseComposerPasteResult {
   };
 }
 
-function renderComposerBody(
-  composerMode: ComposerMode,
-  paste: UseComposerPasteResult,
-  header: ReactNode,
-  topBanner: ReactNode,
-) {
+interface RenderComposerBodyOptions {
+  readonly composerMode: ComposerMode;
+  readonly paste: UseComposerPasteResult;
+  readonly header: ReactNode;
+  readonly topBanner: ReactNode;
+  readonly toolbarLayout: "full" | "collapsed";
+}
+
+function renderComposerBody(options: RenderComposerBodyOptions) {
+  const { composerMode, paste, header, topBanner, toolbarLayout } = options;
   const toolbarStore = createComposerToolbarStore({
     seedKey: "test",
     values: {
@@ -116,6 +126,7 @@ function renderComposerBody(
       workspaceDisabledHint={null}
       header={header}
       topBanner={topBanner}
+      toolbarLayout={toolbarLayout}
       attachmentsStrip={null}
       workspaceControls={null}
       dictationControl={null}
@@ -134,7 +145,13 @@ function renderComposerBody(
 describe("ComposerBody file-transfer routing", () => {
   it("does not dispatch file transfers to the hidden chat editor in terminal mode", () => {
     const paste = makePaste();
-    renderComposerBody("terminal", paste, null, null);
+    renderComposerBody({
+      composerMode: "terminal",
+      paste,
+      header: null,
+      topBanner: null,
+      toolbarLayout: "full",
+    });
 
     const shell = screen.getByRole("region", { name: "Composer shell" });
     fireEvent.dragEnter(shell);
@@ -155,7 +172,13 @@ describe("ComposerBody file-transfer routing", () => {
 
   it("keeps file-transfer handling active in chat mode", () => {
     const paste = makePaste();
-    renderComposerBody("chat", paste, null, null);
+    renderComposerBody({
+      composerMode: "chat",
+      paste,
+      header: null,
+      topBanner: null,
+      toolbarLayout: "full",
+    });
 
     const shell = screen.getByRole("region", { name: "Composer shell" });
     fireEvent.dragEnter(shell);
@@ -175,7 +198,13 @@ describe("ComposerBody file-transfer routing", () => {
 
 describe("ComposerBody image-attachment caret stabilization", () => {
   it("enables caret stabilization on the underlying prompt editor", () => {
-    renderComposerBody("chat", makePaste(), null, null);
+    renderComposerBody({
+      composerMode: "chat",
+      paste: makePaste(),
+      header: null,
+      topBanner: null,
+      toolbarLayout: "full",
+    });
 
     const editor = screen.getByRole("textbox", { name: "Prompt editor" });
     expect(editor.getAttribute("data-stabilize-caret")).toBe("true");
@@ -184,12 +213,13 @@ describe("ComposerBody image-attachment caret stabilization", () => {
 
 describe("ComposerBody topBanner placement", () => {
   it("renders nothing extra when topBanner is null", () => {
-    renderComposerBody(
-      "chat",
-      makePaste(),
-      <div data-testid="mode-switch-header">header</div>,
-      null,
-    );
+    renderComposerBody({
+      composerMode: "chat",
+      paste: makePaste(),
+      header: <div data-testid="mode-switch-header">header</div>,
+      topBanner: null,
+      toolbarLayout: "full",
+    });
 
     expect(screen.queryByTestId("rate-limit-banner")).toBeNull();
     expect(screen.getByTestId("mode-switch-header")).toBeTruthy();
@@ -197,12 +227,13 @@ describe("ComposerBody topBanner placement", () => {
   });
 
   it("renders the mode-switch header, then topBanner, then the composer card, in that DOM order", () => {
-    const { container } = renderComposerBody(
-      "chat",
-      makePaste(),
-      <div data-testid="mode-switch-header">header</div>,
-      <div data-testid="rate-limit-banner">banner</div>,
-    );
+    const { container } = renderComposerBody({
+      composerMode: "chat",
+      paste: makePaste(),
+      header: <div data-testid="mode-switch-header">header</div>,
+      topBanner: <div data-testid="rate-limit-banner">banner</div>,
+      toolbarLayout: "full",
+    });
     const header = screen.getByTestId("mode-switch-header");
     const banner = screen.getByTestId("rate-limit-banner");
     const card = screen.getByTestId("composer-card");
@@ -224,5 +255,50 @@ describe("ComposerBody topBanner placement", () => {
       "rate-limit-banner",
       "composer-card",
     ]);
+  });
+});
+
+describe("ComposerBody toolbar layout", () => {
+  it("renders the desktop toolbar for the full layout", () => {
+    renderComposerBody({
+      composerMode: "chat",
+      paste: makePaste(),
+      header: null,
+      topBanner: null,
+      toolbarLayout: "full",
+    });
+
+    expect(screen.getByTestId("desktop-toolbar")).toBeTruthy();
+    expect(screen.queryByTestId("mobile-toolbar")).toBeNull();
+  });
+
+  it("renders the collapsed toolbar instead of the desktop one", () => {
+    renderComposerBody({
+      composerMode: "chat",
+      paste: makePaste(),
+      header: null,
+      topBanner: null,
+      toolbarLayout: "collapsed",
+    });
+
+    expect(screen.getByTestId("mobile-toolbar")).toBeTruthy();
+    expect(screen.queryByTestId("desktop-toolbar")).toBeNull();
+  });
+
+  it("keeps the collapsed toolbar out of terminal mode, as the full one is", () => {
+    // Both toolbars live in the chat-only half of the card; terminal mode
+    // hides that half and shows the launch panel instead.
+    renderComposerBody({
+      composerMode: "terminal",
+      paste: makePaste(),
+      header: null,
+      topBanner: null,
+      toolbarLayout: "collapsed",
+    });
+
+    // Its own wrapper, not just any `.hidden` in the card - the editor half
+    // carries the same class and appears first.
+    const toolbar = screen.getByTestId("mobile-toolbar");
+    expect(toolbar.parentElement?.className).toContain("hidden");
   });
 });

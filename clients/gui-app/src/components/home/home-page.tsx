@@ -11,6 +11,7 @@ import { EpicsListPanel } from "@/components/epics/epics-list-panel";
 import { LandingTerminalPanel } from "@/components/home/terminal-panel/landing-terminal-panel";
 import { parseSystemTabOverlayView } from "@/lib/system-tab-overlay-search";
 import { useIsMobileViewport } from "@/hooks/ui/use-mobile-viewport";
+import { useMobileNavStore } from "@/stores/layout/mobile-nav-store";
 import "./home-touch-targets.css";
 
 export function HomePage() {
@@ -55,6 +56,7 @@ export function HomePage() {
   // carries "Recent tasks" + "View all" off the same `useHistoryQuery`, so an
   // inline copy is pure duplication at this width.
   const isMobile = useIsMobileViewport();
+  const setNavOpen = useMobileNavStore((state) => state.setOpen);
   const workspaceSurface = useMemo(
     () => ({ kind: "home" as const, draftId }),
     [draftId],
@@ -110,7 +112,23 @@ export function HomePage() {
             </SurfaceActivityProvider>
           </div>
 
-          {isMobile ? null : (
+          {isMobile ? (
+            /* Recent tasks live in the hamburger drawer at this width, which is
+               not discoverable from a landing page that is otherwise empty
+               below the composer. `mt-auto` drops this into that dead space at
+               the bottom of the row; the bottom inset keeps it clear of the
+               home indicator. */
+            <button
+              type="button"
+              data-testid="home-view-history"
+              className="mt-auto shrink-0 self-center pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] text-ui-xs text-muted-foreground transition-colors active:text-foreground"
+              onClick={() => {
+                setNavOpen(true);
+              }}
+            >
+              View history
+            </button>
+          ) : (
             <div className="mt-3 flex min-h-0 flex-1 flex-col pb-6">
               {systemModalOpen ? null : (
                 <EpicsListPanel

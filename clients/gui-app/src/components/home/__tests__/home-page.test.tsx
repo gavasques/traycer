@@ -14,6 +14,7 @@ import type { JsonContent } from "@traycer/protocol/common/registry";
 import type { ComposerPromptEditorHandle } from "@/components/chat/composer/composer-prompt-editor";
 import { useAuthStore } from "@/stores/auth/auth-store";
 import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
+import { useMobileNavStore } from "@/stores/layout/mobile-nav-store";
 import {
   useLandingComposerStore,
   flushPendingLandingDraftContent,
@@ -316,6 +317,7 @@ describe("<HomePage />", () => {
       folders: [],
       folderInfoByPath: {},
     });
+    useMobileNavStore.setState({ open: false });
     useAuthStore.setState({
       status: "signed-out",
       profile: null,
@@ -379,6 +381,40 @@ describe("<HomePage />", () => {
     expect(screen.queryByTestId("epics-list-panel")).toBeNull();
     expect(screen.getByTestId("home-hero")).not.toBeNull();
     expect(screen.getByTestId("landing-composer")).not.toBeNull();
+    queryClient.clear();
+  });
+
+  it("opens the nav drawer from the phone-only View history link", () => {
+    homeMocks.isMobile = true;
+    useMobileNavStore.setState({ open: false });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <HomePage />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByTestId("home-view-history"));
+
+    // Same drawer the header hamburger opens - that is where "Recent tasks"
+    // lives once the embedded list is dropped at this width.
+    expect(useMobileNavStore.getState().open).toBe(true);
+    queryClient.clear();
+  });
+
+  it("keeps the View history link off the desktop landing page", () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <HomePage />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.queryByTestId("home-view-history")).toBeNull();
     queryClient.clear();
   });
 

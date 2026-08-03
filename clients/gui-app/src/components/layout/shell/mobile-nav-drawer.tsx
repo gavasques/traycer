@@ -12,10 +12,12 @@ import { Analytics, AnalyticsEvent } from "@/lib/analytics";
 import { computeInitials } from "@/lib/auth/compute-initials";
 import { resolveManageSubscriptionUrl } from "@/lib/auth/manage-subscription-url";
 import { useRunnerHost } from "@/providers/use-runner-host";
-import { openNewEpicDraft } from "@/lib/commands/actions/new-epic";
+import { openNewEpicIntent } from "@/lib/commands/actions/new-epic";
 import { openEpicFromList } from "@/lib/commands/actions/open-epic-from-list";
-import { phaseMigrationRoute } from "@/lib/routes";
-import { draftTabIntent, navigateToTabIntent } from "@/lib/tab-navigation";
+import {
+  activateTabIntent,
+  openPhaseMigrationIntent,
+} from "@/lib/tab-navigation";
 import { cn } from "@/lib/utils";
 import { epicDisplayTitle } from "@/lib/display-title";
 import { DEFAULT_HISTORY_SEARCH } from "@/lib/history-search";
@@ -59,7 +61,7 @@ export function MobileNavDrawer(): ReactNode {
   };
   const handleNewTask = () => {
     close();
-    navigateToTabIntent(navigate, draftTabIntent(openNewEpicDraft()));
+    activateTabIntent(navigate, openNewEpicIntent(), undefined);
   };
   const handleSettings = () => {
     close();
@@ -244,7 +246,20 @@ function DrawerTaskList(props: DrawerTaskListProps): ReactNode {
   const openItem = (item: HistoryItem) => {
     props.onNavigate();
     if (item.taskType === "phase") {
-      void navigate(phaseMigrationRoute(item.epicId));
+      activateTabIntent(
+        navigate,
+        openPhaseMigrationIntent({
+          phaseId: item.epicId,
+          name: item.title,
+          focus: {
+            focusedAt: undefined,
+            focusArtifactId: undefined,
+            focusThreadId: undefined,
+            migrationSource: "phase",
+          },
+        }),
+        undefined,
+      );
       return;
     }
     // Passing the row's raw title threads it through tab creation so the

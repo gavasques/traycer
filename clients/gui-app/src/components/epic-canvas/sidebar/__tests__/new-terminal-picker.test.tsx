@@ -12,13 +12,19 @@ import type {
 } from "@traycer/protocol/host";
 import { NewTerminalPicker } from "../new-terminal-picker";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import {
+  PaneSurfaceActivityContext,
+  PaneVisibilityContext,
+} from "@/components/epic-tabs/pane-visibility-context";
 import { useDesktopDialogStore } from "@/stores/dialogs/desktop-dialog-store";
 import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
 import { paneTabRefs } from "@/stores/epics/canvas/actions";
 import { collectPanes } from "@/stores/epics/canvas/tile-tree";
 import type { EpicCanvasTileRef } from "@/stores/epics/canvas/types";
+import { usePanelHeaderMenuStore } from "@/stores/epics/panel-header-menu-store";
 
 const selectById = vi.fn();
+const refreshDirectory = vi.fn(() => Promise.resolve([]));
 
 interface BindingsQueryStub {
   readonly data:
@@ -73,7 +79,9 @@ vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
 }));
 
 vi.mock("@/lib/host", () => ({
-  useHostBinding: () => ({ directory: { selectById } }),
+  useHostBinding: () => ({
+    directory: { refresh: refreshDirectory, selectById },
+  }),
 }));
 
 function makeRow(
@@ -108,7 +116,12 @@ function openPicker(): string {
   const tabId = useEpicCanvasStore.getState().openEpicTab("epic-1", "Epic");
   render(
     <TooltipProvider>
-      <NewTerminalPicker epicId="epic-1" tabId={tabId} onLaunched={null} />
+      <NewTerminalPicker
+        epicId="epic-1"
+        tabId={tabId}
+        onBeforeOpen={undefined}
+        onLaunched={null}
+      />
     </TooltipProvider>,
   );
   fireEvent.click(screen.getByTestId("epic-terminals-panel-add"));
@@ -125,7 +138,9 @@ describe("<NewTerminalPicker />", () => {
   beforeEach(() => {
     cleanup();
     resetCanvas();
+    usePanelHeaderMenuStore.setState({ openBySurfaceKey: {} });
     selectById.mockClear();
+    refreshDirectory.mockClear();
     stubLoadedBindings();
   });
 
@@ -166,6 +181,27 @@ describe("<NewTerminalPicker />", () => {
     expect(
       screen.getByRole("option", { name: /feature-x/i }).dataset.checked,
     ).toBeUndefined();
+  });
+
+  it("preserves the open picker when its panel header remounts", () => {
+    const tabId = useEpicCanvasStore.getState().openEpicTab("epic-1", "Epic");
+    const picker = (key: string) => (
+      <TooltipProvider>
+        <NewTerminalPicker
+          key={key}
+          epicId="epic-1"
+          tabId={tabId}
+          onBeforeOpen={undefined}
+          onLaunched={null}
+        />
+      </TooltipProvider>
+    );
+    const { rerender } = render(picker("collapsed-header"));
+
+    fireEvent.click(screen.getByTestId("epic-terminals-panel-add"));
+    rerender(picker("expanded-header"));
+
+    expect(screen.getByTestId("new-terminal-picker-popover")).toBeDefined();
   });
 
   it("auto-selects the primary workspace even when it is not the first row", () => {
@@ -278,7 +314,11 @@ describe("<NewTerminalPicker />", () => {
     };
     const tabId = openPicker();
 
-    expect(screen.getByText("No worktrees found.")).toBeDefined();
+    expect(
+      screen.getByText(
+        "No directories available. Open a workspace in the epic first.",
+      ),
+    ).toBeDefined();
     expect(
       screen.getByRole("button", { name: "Launch" }).hasAttribute("disabled"),
     ).toBe(false);
@@ -438,5 +478,44 @@ describe("<NewTerminalPicker />", () => {
       screen.getByRole("option", { name: /traycer.*main/i }).dataset.checked,
     ).toBeUndefined();
     expect(document.activeElement).toBe(input);
+  });
+});
+
+describe("<NewTerminalPicker /> focus-loss dismissal (MED4)", () => {
+  beforeEach(() => {
+    cleanup();
+    resetCanvas();
+    usePanelHeaderMenuStore.setState({ openBySurfaceKey: {} });
+    stubLoadedBindings();
+  });
+
+  function paneUi(focused: boolean, tabId: string) {
+    return (
+      <PaneSurfaceActivityContext.Provider value={{ visible: true, focused }}>
+        <PaneVisibilityContext.Provider value>
+          <TooltipProvider>
+            <NewTerminalPicker
+              epicId="epic-1"
+              tabId={tabId}
+              onBeforeOpen={undefined}
+              onLaunched={null}
+            />
+          </TooltipProvider>
+        </PaneVisibilityContext.Provider>
+      </PaneSurfaceActivityContext.Provider>
+    );
+  }
+
+  it("dismisses an open picker when its pane loses focus, rather than leaving a logically-open root with reset content", () => {
+    const tabId = useEpicCanvasStore.getState().openEpicTab("epic-1", "Epic");
+    const { rerender } = render(paneUi(true, tabId));
+    fireEvent.click(screen.getByTestId("epic-terminals-panel-add"));
+    expect(screen.queryByTestId("new-terminal-picker-popover")).not.toBeNull();
+
+    // Pane backgrounded (e.g. a native/deep-link activation of the partner).
+    act(() => {
+      rerender(paneUi(false, tabId));
+    });
+    expect(screen.queryByTestId("new-terminal-picker-popover")).toBeNull();
   });
 });

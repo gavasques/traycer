@@ -59,6 +59,7 @@ export interface ComposerBodyProps {
    * only the landing composer asks for `"collapsed"`, and only below `md`.
    */
   readonly toolbarLayout: "full" | "collapsed";
+  readonly stashControl: ReactNode;
   readonly attachmentsStrip: ReactNode;
   readonly workspaceControls: ReactNode;
   readonly dictationControl: ComposerDictationControl | null;
@@ -79,10 +80,11 @@ export interface ComposerBodyProps {
   readonly onEditorReady: (() => void) | null;
   readonly onSubmit: () => void;
   readonly onStartTerminal: (launch: TerminalAgentLaunch) => void;
-  readonly onSnapshot: (
+  readonly onDocumentChange: (
     content: JsonContent,
     selection: { from: number; to: number },
   ) => void;
+  readonly onSelectionChange: (selection: { from: number; to: number }) => void;
 }
 
 export function ComposerBody({
@@ -101,6 +103,7 @@ export function ComposerBody({
   header,
   topBanner,
   toolbarLayout,
+  stashControl,
   attachmentsStrip,
   workspaceControls,
   dictationControl,
@@ -111,16 +114,16 @@ export function ComposerBody({
   onEditorReady,
   onSubmit,
   onStartTerminal,
-  onSnapshot,
+  onDocumentChange,
+  onSelectionChange,
 }: ComposerBodyProps) {
   const harnessId = useStore(toolbarStore, (s) => s.selection.harnessId);
   const chatPasteActive = composerMode === "chat";
   const hiddenInTerminal = cn(composerMode !== "chat" && "hidden");
   const hiddenInChat = cn(composerMode !== "terminal" && "hidden");
-  const showLandingAgentModeTooltip = true;
-  // Every prop both toolbars take, identical for either layout - only the two
-  // desktop-only tooltip flags below differ. Shared so the two branches cannot
-  // drift apart silently; the moment they need different values, stop
+  // Every prop both toolbars take, identical for either layout - only the
+  // desktop-only permission note below differs. Shared so the two branches
+  // cannot drift apart silently; the moment they need different values, stop
   // spreading and pass them explicitly again.
   const sharedToolbarProps = {
     store: toolbarStore,
@@ -134,7 +137,7 @@ export function ComposerBody({
     composerDisabledHint: workspaceDisabledHint,
     dictation: dictationControl,
     dictationPreparing,
-    settingsLocked: false,
+    settingsLocked: isSubmitting,
     // The landing composer has no tab yet - the app-wide default host applies.
     createProfileHostId: null,
     runTargetHostId: null,
@@ -151,6 +154,7 @@ export function ComposerBody({
         onDragEnter={chatPasteActive ? paste.onDragEnter : NOOP}
         onDragLeave={chatPasteActive ? paste.onDragLeave : NOOP}
         dragOverlayVariant={chatPasteActive ? paste.dragOverlayVariant : null}
+        utilityRail={composerMode === "chat" ? stashControl : null}
         attachmentsStrip={composerMode === "chat" ? attachmentsStrip : null}
         editor={
           <>
@@ -164,11 +168,12 @@ export function ComposerBody({
                 hasPastedImageBytes={hasPastedImageBytes}
                 ingestPastedComposerImages={ingestPastedComposerImages}
                 isActive={chatEditorIsActive}
-                disabled={false}
+                disabled={isSubmitting}
                 placeholder={COMPOSER_PLACEHOLDER}
                 editorClassName={editorClassName}
                 stabilizeImageAttachmentCaret
-                onSnapshot={onSnapshot}
+                onDocumentChange={onDocumentChange}
+                onSelectionChange={onSelectionChange}
                 onSubmit={onSubmit}
                 onPaste={chatPasteActive ? paste.onPaste : NOOP}
                 onDragOver={chatPasteActive ? paste.onDragOver : NOOP}
@@ -200,7 +205,6 @@ export function ComposerBody({
                 <ComposerToolbar
                   {...sharedToolbarProps}
                   showNextTurnPermissionNote={false}
-                  showAgentModeTooltip={showLandingAgentModeTooltip}
                 />
               )}
             </SurfaceActivityProvider>

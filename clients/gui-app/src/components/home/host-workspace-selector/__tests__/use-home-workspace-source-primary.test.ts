@@ -12,11 +12,13 @@ const FIRST: WorkspaceFolderInfo = {
   path: "/tmp/first-repo",
   name: "first-repo",
   repoIdentifier: null,
+  hostId: null,
 };
 const PINNED: WorkspaceFolderInfo = {
   path: "/tmp/pinned-repo",
   name: "pinned-repo",
   repoIdentifier: null,
+  hostId: null,
 };
 
 function resetStores(): void {
@@ -62,9 +64,7 @@ describe("useHomeWorkspaceSource primaryWorkspacePath - the pinned folder wins",
   });
 
   it("resolves the pinned folder for the active landing draft", () => {
-    const draftId = useLandingDraftStore
-      .getState()
-      .createDraft(null, undefined);
+    const draftId = useLandingDraftStore.getState().createDraft(null);
     const stagingKey: WorktreeStagingKey = { surface: "landing", draftId };
     const { result } = renderHook(() =>
       useHomeWorkspaceSource(stagingKey, null),

@@ -3,7 +3,9 @@ import {
   pruneAcceptedActions,
   reconcileQueueChange,
   reconcileSnapshotChange,
+  reconcileTurnSettled,
   sweepStalePendingActions,
+  turnSettledFromStatus,
   withoutPendingAction,
 } from "@/stores/chats/chat-queue-reconciler";
 import {
@@ -58,6 +60,7 @@ import type {
   ChatFileEditApprovalState,
   ChatPendingInterviewState,
   ChatQueuedItem,
+  ChatQueueDeliveryPolicy,
   ChatQueueState,
   ChatRunSettings,
   ChatRunStatus,
@@ -86,7 +89,10 @@ import type {
 import { v4 as uuidv4 } from "uuid";
 import { create, type StoreApi, type UseBoundStore } from "zustand";
 
-type ChatStreamClientHandle = Pick<ChatStreamClient, "sendAction" | "close">;
+type ChatStreamClientHandle = Pick<
+  ChatStreamClient,
+  "sendAction" | "close" | "sameTurnSteeringProtocolSupported"
+>;
 
 export type ChatStreamClientFactory = (
   epicId: string,
@@ -312,6 +318,17 @@ export interface ChatSessionState {
   readonly runStatus: ChatRunStatus;
   readonly activeTurn: ChatActiveTurn | null;
   /**
+   * Whether the tab's negotiated `chat.subscribe` protocol version understands
+   * the `after_safe_point` explicit-steer delivery policy (host handshake
+   * minor >= 5). A new renderer paired with a released <=1.4 host must NOT emit
+   * `after_safe_point`: that host predates same-turn steering and would inject
+   * the message under whatever ordering/settings it does understand. Captured
+   * once the stream reaches `open` (the version is stable per connection);
+   * `false` until then and on any non-open status, so `Mod-Enter` degrades to
+   * the plain-Enter queue alias until steer support is confirmed.
+   */
+  readonly steerProtocolSupported: boolean;
+  /**
    * The host's own `isTurnInProgress()`: is a turn genuinely active or
    * activating right now? Narrower than `runStatus !== "idle"`, which also
    * reads "running" for a pending queued item or visible background work
@@ -351,6 +368,17 @@ export interface ChatSessionState {
   readonly pendingActions: Readonly<Record<string, PendingChatAction>>;
   readonly acceptedActions: Readonly<Record<string, AcceptedChatAction>>;
   readonly pendingUserMessages: ReadonlyArray<PendingUserMessage>;
+  /**
+   * Message ids THIS client minted locally (composer send, same-turn steer,
+   * inline edit) and successfully dispatched - the single source of truth
+   * the chat transcript's anchor classifier uses to tell a local action
+   * apart from an identically-shaped row arriving from elsewhere (another
+   * window's edit reaching this one via the host's `broadcastSnapshot`, a
+   * queued auto-flush, an A2A row). Bounded FIFO (see
+   * `MAX_LOCAL_PROVENANCE_MESSAGE_IDS`); an id is removed once the consumer
+   * acts on it (`consumeLocalProvenance`) or ages out.
+   */
+  readonly localProvenanceMessageIds: ReadonlySet<string>;
   readonly errorNotices: ReadonlyArray<ChatErrorNotice>;
   readonly failedSendRestoration: FailedSendRestorationState | null;
   readonly currentComposerSettings: ChatRunSettings | null;
@@ -419,6 +447,7 @@ export interface ChatSessionState {
     content: JsonContent,
     sender: UserMessageSender,
     settings: ChatRunSettings,
+    deliveryPolicy: ChatQueueDeliveryPolicy,
   ) => SentChatMessageAction | null;
   /**
    * Sends the initial handoff message reusing its pre-minted ids (shared with
@@ -529,6 +558,14 @@ export interface ChatSessionState {
    * downstream ack/accept reconciliation continues to work.
    */
   takeSetupFailedRestoration: (messageId: string) => JsonContent | null;
+  /**
+   * Removes `messageId` from {@link localProvenanceMessageIds} - the chat
+   * transcript's anchor classifier calls this once it has acted on a local-
+   * provenance match, so a coincidental later reappearance of the same id
+   * (a stale re-render, a reconciled dedupe) is not treated as fresh
+   * local-action evidence a second time. A no-op if the id is not present.
+   */
+  consumeLocalProvenance: (messageId: string) => void;
   setCurrentComposerSettings: (settings: ChatRunSettings) => void;
   dispose: () => void;
 }
@@ -585,6 +622,12 @@ export interface ChatSessionStoreHandle {
   readonly store: UseBoundStore<StoreApi<ChatSessionState>>;
   readonly deliveredNotices: DeliveredNoticeTracker;
   /**
+   * Completed restores already surfaced as toasts. Completion state remains in
+   * the store for the dialog, so delivery lives on the handle to survive task-
+   * tab focus changes and component remounts without replaying the result.
+   */
+  readonly deliveredRestoreCompletionKeys: Set<string>;
+  /**
    * Per-surface visibility report feeding the stream-flush coordinator's
    * tiered flush rate. The same chat can render in several surfaces (split
    * panes, keep-alive tabs); the chat counts as visible when ANY reporting
@@ -601,6 +644,29 @@ export function isChatRunInProgress(runStatus: ChatRunStatus): boolean {
 }
 
 const EMPTY_QUEUE: ChatQueueState = { status: "idle", items: [] };
+
+const EMPTY_LOCAL_PROVENANCE_MESSAGE_IDS: ReadonlySet<string> = new Set();
+/**
+ * Small and dumb by design (per the chat-scroller-refactor review): a local
+ * action is consumed by the classifier almost immediately after landing, so
+ * this only needs to absorb a burst of in-flight sends/edits/steers, not
+ * accumulate indefinitely.
+ */
+const MAX_LOCAL_PROVENANCE_MESSAGE_IDS = 32;
+
+function withLocalProvenanceMessageId(
+  current: ReadonlySet<string>,
+  messageId: string,
+): ReadonlySet<string> {
+  const next = new Set(current);
+  next.add(messageId);
+  while (next.size > MAX_LOCAL_PROVENANCE_MESSAGE_IDS) {
+    const oldest = next.values().next().value;
+    if (oldest === undefined) break;
+    next.delete(oldest);
+  }
+  return next;
+}
 
 function chatRunSettingsEqual(a: ChatRunSettings, b: ChatRunSettings): boolean {
   // Keyed by every `ChatRunSettings` field via `satisfies`: adding a field to
@@ -650,6 +716,8 @@ export const MAX_ERROR_NOTICE_RECORDS = 32;
  * memory bounded.
  */
 export const MAX_DELIVERED_CLIENT_ACTION_IDS = MAX_ERROR_NOTICE_RECORDS * 4;
+/** Bounds string-key retention while comfortably covering recent restores. */
+export const MAX_DELIVERED_RESTORE_COMPLETIONS = 32;
 
 function appendErrorNotice(
   notices: ReadonlyArray<ChatErrorNotice>,
@@ -770,8 +838,9 @@ export function createChatSessionStore(
     // `blockDelta` coalescing. Deltas accumulate here and are folded into a
     // single `set()` per coordinator tick (one animation frame in production)
     // instead of one `set()` per token. Every non-delta frame that consumes
-    // message/turn state (`onSnapshot`, `onTurnStateChanged`, `onMessageAccepted`)
-    // flushes the buffer first, so observable ordering matches arrival order.
+    // message/turn state (`onSnapshot`, `onTurnStateChanged`, `onMessageAccepted`,
+    // `onInterviewRequested`) flushes the buffer first, so observable ordering
+    // matches arrival order.
     let bufferedDeltas: RuntimeEvent[] = [];
 
     // `providers.list` nudge driven by the DURABLE auth-failure signal: an
@@ -916,6 +985,26 @@ export function createChatSessionStore(
             failedSendRestoration: state.failedSendRestoration,
             nowMs: now,
           });
+          // `reconcileSnapshotChange` only settles sends still awaiting their
+          // ack. A send whose accepted ack landed before the connection died
+          // has already left `pendingActions`, so its optimistic user message
+          // needs its own settled pass: when this authoritative snapshot
+          // reports no turn in progress, an entry with no remaining path to
+          // materialization will never be cleared by a later frame - drop it
+          // (restoring its content if the transcript never recorded it).
+          const settled = reconcileTurnSettled(
+            turnSettledFromStatus(
+              frame.snapshot.turnInProgress,
+              frame.snapshot.runStatus,
+            ),
+            {
+              pendingActions: pending.pendingActions,
+              pendingUserMessages: pending.pendingUserMessages,
+              messages,
+              queue: frame.snapshot.queue,
+              failedSendRestoration: pending.failedSendRestoration,
+            },
+          );
           // A changed persisted tuple is an authoritative host-side update
           // (for example `agent.configure`) and must replace the live picker.
           // An unchanged tuple is ordinary stream traffic, so keep any local
@@ -982,8 +1071,8 @@ export function createChatSessionStore(
               },
               now,
             ),
-            pendingUserMessages: pending.pendingUserMessages,
-            failedSendRestoration: pending.failedSendRestoration,
+            pendingUserMessages: settled.pendingUserMessages,
+            failedSendRestoration: settled.failedSendRestoration,
             restore: sweepStaleRestoreSlot(state.restore, connectionEpoch),
             snapshotLoaded: true,
             worktreeBinding: frame.snapshot.worktreeBinding,
@@ -1091,8 +1180,15 @@ export function createChatSessionStore(
               state.queue,
               frame.clientActionId,
             ),
+            // Single slot, first writer wins until `ackFailedSendRestoration`
+            // clears it - the same rule `reconcileSnapshotChange` and the
+            // settled-turn pass already follow. Two rejections landing before
+            // the composer consumes the first would otherwise leave the
+            // earlier (longer-waiting) content unreachable.
             failedSendRestoration:
-              pending?.action === "send" && pending.restoreContent !== null
+              state.failedSendRestoration === null &&
+              pending?.action === "send" &&
+              pending.restoreContent !== null
                 ? {
                     clientActionId: frame.clientActionId,
                     content: pending.restoreContent,
@@ -1196,7 +1292,24 @@ export function createChatSessionStore(
           const turnIdChanged = previousTurnId !== nextTurnId;
           const nextBackgroundItems =
             frame.backgroundItems ?? state.backgroundItems;
+          // A frame reporting the turn settled (the host's `turnInProgress`
+          // when present, `runStatus` idle for an older host) is the point
+          // where a send stopped during activation can be declared dead:
+          // its accepted ack kept the optimistic user message waiting for a
+          // `messageAccepted` that will now never arrive. Drop such stranded
+          // entries and restore their content to the composer.
+          const settledPatch = reconcileTurnSettled(
+            turnSettledFromStatus(frame.turnInProgress, frame.runStatus),
+            {
+              pendingActions: state.pendingActions,
+              pendingUserMessages: state.pendingUserMessages,
+              messages: nextMessages,
+              queue: state.queue,
+              failedSendRestoration: state.failedSendRestoration,
+            },
+          );
           return {
+            ...settledPatch,
             messages: nextMessages,
             runStatus: frame.runStatus,
             activeTurn: frame.activeTurn,
@@ -1296,6 +1409,13 @@ export function createChatSessionStore(
         if (disposed || !matchesChat(options, frame.epicId, frame.chatId)) {
           return;
         }
+        // Consuming frame: the host emits this interview's `blockDelta` first,
+        // but that delta is still buffered until the next coordinator tick.
+        // Publishing the pending id ahead of its block would expose a
+        // host-pending interview with no `streaming` segment - which
+        // `findUnanswerableInterviews` reads as permanently stuck and answers
+        // with the destructive dismiss affordance, mid-normal-Q&A.
+        flushBlockDeltas();
         set((state) => ({
           pendingInterviews: upsertPendingInterview(state.pendingInterviews, {
             blockId: frame.blockId,
@@ -1450,10 +1570,22 @@ export function createChatSessionStore(
             if (reason?.kind === "fatalError") return reason.details;
             return state.fatalClose;
           };
+          // The negotiated `chat.subscribe` version is stable per connection and
+          // available once the handshake completes (status `open`). Capture the
+          // steer-protocol capability there so the composer only resolves
+          // `after_safe_point` against a host that understands it; a non-open
+          // status drops it back to `false` so a reconnect re-confirms.
+          const resolveSteerProtocolSupported = () => {
+            if (status === "open") {
+              return streamClient?.sameTurnSteeringProtocolSupported() ?? false;
+            }
+            return false;
+          };
           return {
             connectionStatus: status,
             runStatus: status === "closed" ? "idle" : state.runStatus,
             activeTurn: status === "closed" ? null : state.activeTurn,
+            steerProtocolSupported: resolveSteerProtocolSupported(),
             fatalClose: resolveFatalClose(),
           };
         });
@@ -1584,6 +1716,7 @@ export function createChatSessionStore(
       queue: EMPTY_QUEUE,
       runStatus: "idle",
       activeTurn: null,
+      steerProtocolSupported: false,
       turnInProgress: undefined,
       pendingApprovals: [],
       pendingFileEditApprovals: [],
@@ -1596,6 +1729,7 @@ export function createChatSessionStore(
       pendingActions: {},
       acceptedActions: {},
       pendingUserMessages: [],
+      localProvenanceMessageIds: EMPTY_LOCAL_PROVENANCE_MESSAGE_IDS,
       errorNotices: [],
       failedSendRestoration: null,
       currentComposerSettings: null,
@@ -1608,12 +1742,30 @@ export function createChatSessionStore(
         if (disposed) return;
         closeStreamClient();
         clearBufferedDeltas();
+        const prior = get();
         set({
           connectionStatus: "connecting",
+          steerProtocolSupported: false,
           fatalClose: null,
           snapshotLoaded: false,
         });
-        streamClient = createStreamClient();
+        try {
+          streamClient = createStreamClient();
+        } catch (cause) {
+          // The replacement factory can throw (durable-transport wiring throws
+          // on a failed subscription). Without this restore the session would
+          // strand in "connecting" with NO stream client - nothing ever moves
+          // it again, and recovery passes (the wake retry, the tile's retry
+          // affordance) all key off a terminal status. Restore the pre-attempt
+          // terminal state so the next pulse or click can try again, then
+          // rethrow for the caller to report.
+          set({
+            connectionStatus: "closed",
+            fatalClose: prior.fatalClose,
+            snapshotLoaded: prior.snapshotLoaded,
+          });
+          throw cause;
+        }
       },
       refreshMissingWorktreePaths: (update) => {
         if (disposed) return;
@@ -1631,7 +1783,7 @@ export function createChatSessionStore(
         }
         set({ missingWorktreePaths: next });
       },
-      sendMessage: (content, sender, settings) => {
+      sendMessage: (content, sender, settings, deliveryPolicy) => {
         const clientActionId = uuidv4();
         const messageId = uuidv4();
         // A worktree staged mid-chat ("Create new worktree") rides on this send;
@@ -1656,7 +1808,7 @@ export function createChatSessionStore(
           sender,
           settings,
           accountContext: useAccountContextStore.getState().accountContext,
-          deliveryPolicy: "auto",
+          deliveryPolicy,
           worktreeIntent,
         };
         // Consume before dispatch so the pending action captures precisely the
@@ -1669,6 +1821,17 @@ export function createChatSessionStore(
           restoreWorktreeStagingRevision =
             stagedWorktreeIntentRevision(stagedKey);
         }
+        // Captured once, before dispatch, and reused for BOTH the optimistic
+        // echo below AND the local-provenance registration after it - a
+        // queued send (this false) gets NO optimistic transcript row today,
+        // and per decision #9 its eventual flush must ride the ordinary
+        // gated-arrival path (anchor only if already following-end), not an
+        // unconditional one. Re-deriving this condition after dispatch
+        // instead of reusing it would risk it reading post-dispatch state
+        // (e.g. the just-appended optimistic queue item) and disagreeing
+        // with what `pendingUserMessage` below actually decided.
+        const rendersAsPendingUserMessage =
+          shouldRenderSendAsPendingUserMessage(get());
         const sentClientActionId = sendAction({
           set,
           get,
@@ -1695,7 +1858,7 @@ export function createChatSessionStore(
           // rendered-messages.ts. The persisted message later replaces this echo
           // by shared `messageId` (the `dedupedPending` guard), and the card stays
           // pinned immediately above it throughout.
-          pendingUserMessage: shouldRenderSendAsPendingUserMessage(get())
+          pendingUserMessage: rendersAsPendingUserMessage
             ? {
                 clientActionId,
                 messageId,
@@ -1711,6 +1874,20 @@ export function createChatSessionStore(
             stagingStore.setIntent(stagedKey, worktreeIntent);
           }
           return null;
+        }
+        // Local provenance ONLY for the idle-send shape that actually paints
+        // an optimistic row same-frame - a queued send (send-while-running)
+        // has no transcript row until the host drains it, and that drain is
+        // a passive arrival gated on `isFollowingEnd` like any other queued
+        // flush (decision #9), never unconditional (chat-scroller-refactor
+        // review round 3).
+        if (rendersAsPendingUserMessage) {
+          set((state) => ({
+            localProvenanceMessageIds: withLocalProvenanceMessageId(
+              state.localProvenanceMessageIds,
+              messageId,
+            ),
+          }));
         }
         const optimisticQueuedItem = optimisticQueuedItemForSend({
           state: get(),
@@ -1800,6 +1977,12 @@ export function createChatSessionStore(
           },
         });
         if (sentClientActionId === null) return null;
+        set((state) => ({
+          localProvenanceMessageIds: withLocalProvenanceMessageId(
+            state.localProvenanceMessageIds,
+            input.messageId,
+          ),
+        }));
         return {
           clientActionId: sentClientActionId,
           messageId: input.messageId,
@@ -1894,6 +2077,16 @@ export function createChatSessionStore(
             .setEpicIntent(options.epicId, worktreeIntent, Date.now());
           get().refreshMissingWorktreePaths([]);
         }
+        // Same-turn steer and inline edit both mint their id here - local
+        // provenance regardless of whether this lands as a branch reset
+        // (rewriting an earlier turn) or ahead of a still-continuing live
+        // assistant turn (same-turn steer).
+        set((state) => ({
+          localProvenanceMessageIds: withLocalProvenanceMessageId(
+            state.localProvenanceMessageIds,
+            messageId,
+          ),
+        }));
         return { clientActionId: sentClientActionId, messageId };
       },
       revertFileChanges: (fromMessageId, filePaths, revertArtifacts) => {
@@ -2413,6 +2606,14 @@ export function createChatSessionStore(
         });
         return restored;
       },
+      consumeLocalProvenance: (messageId) => {
+        set((state) => {
+          if (!state.localProvenanceMessageIds.has(messageId)) return state;
+          const next = new Set(state.localProvenanceMessageIds);
+          next.delete(messageId);
+          return { localProvenanceMessageIds: next };
+        });
+      },
       dispose: () => {
         if (disposed) return;
         disposed = true;
@@ -2432,6 +2633,7 @@ export function createChatSessionStore(
       notices: new WeakSet<ChatErrorNotice>(),
       clientActionIds: new Set<string>(),
     },
+    deliveredRestoreCompletionKeys: new Set<string>(),
     setSurfaceVisibility: (surfaceId, visible) => {
       if (surfaceVisibility.get(surfaceId) === visible) return;
       surfaceVisibility.set(surfaceId, visible);
@@ -2710,9 +2912,11 @@ function findRestorableSendByMessageId<
 
 /**
  * A chat session is "fully settled" when no turn is running, none is active,
- * and the queue is empty/idle. Single source of truth for the
- * render-send-as-pending check and the turn-completion refresh subscribers
- * (`lib/chats/chat-turn-completions.ts`).
+ * and the queue is empty/idle. Used only by the render-send-as-pending check
+ * below - the turn-completion refresh subscribers
+ * (`lib/chats/chat-turn-completions.ts`) intentionally use their own looser
+ * `turnEnded` (idle + no active turn; the queue may still be paused), so an
+ * errored turn's parked queue still drives a completion refresh.
  */
 export function isChatSessionSettled(
   state: Pick<ChatSessionState, "runStatus" | "activeTurn" | "queue">,

@@ -54,6 +54,19 @@ export const landingTerminalsKey = (identity: string | null): string =>
 export const openEpicKey = (identity: string | null, epicId: string): string =>
   scopedPersistKey("open-epic", scopeBucket(identity), epicId);
 
+// App-level host picker memory. This is intentionally unscoped: creation
+// surfaces share one "last selected host" value across the GUI app.
+export const lastSelectedHostKey = (): string =>
+  persistKey("last-selected-host");
+
+// The hostId this machine's OWN local host last published. Unscoped and
+// identity-free like the picker memory: it is a fact about this machine, not
+// about who is signed in. The directory uses it to keep the machine's own
+// host out of the remote arm while the local host is booting - the boot
+// window is exactly when no live local snapshot exists to tell it apart.
+export const lastLocalHostIdKey = (): string =>
+  persistKey("last-local-host-id");
+
 export const appLocalNotificationsKey = (userId: string | null): string =>
   scopedPersistKey("app-local-notifications", scopeBucket(userId));
 
@@ -109,7 +122,6 @@ export const worktreeActivityCacheKey = (hostId: string): string =>
 // launch while the live listing refetches behind it.
 export const worktreeListingCacheKey = (hostId: string): string =>
   scopedPersistKey("worktree-listing-cache", hostId);
-
 // ── Catalog ────────────────────────────────────────────────────────────────
 // `kind` tells enumeration the shape of each persisted surface:
 //   - "static"  : plain `traycer-gui-app:<leaf>` localStorage key.
@@ -119,8 +131,9 @@ export const worktreeListingCacheKey = (hostId: string): string =>
 //
 // The `leaf` is the DIVERGENCE-CORRECT key leaf, not the store/file name (six
 // stores diverge — see the literals below). Non-zustand `traycer-gui-app:` keys
-// are cataloged for enumeration only; their builders are NOT refactored here.
-// Auth (`traycer.*`) keys are intentionally excluded.
+// are cataloged here too; builders may stay local to their owner unless a
+// centralized builder is useful. Auth (`traycer.*`) keys are intentionally
+// excluded.
 export type PersistStoreKind = "static" | "scoped" | "session" | "channel";
 
 export interface PersistStoreEntry {
@@ -164,7 +177,7 @@ export const PERSIST_STORES = [
     kind: "scoped",
   },
 
-  // ── Static zustand stores (20) ───────────────────────────────────────────
+  // ── Static zustand stores (26) ───────────────────────────────────────────
   { camelName: "onboarding", leaf: "onboarding", kind: "static" },
   { camelName: "commandPalette", leaf: "command-palette", kind: "static" },
   { camelName: "composerDraft", leaf: "composer-drafts", kind: "static" },
@@ -183,12 +196,14 @@ export const PERSIST_STORES = [
     kind: "static",
   },
   { camelName: "gitPanel", leaf: "git-panel", kind: "static" },
+  { camelName: "prPresence", leaf: "pr-presence", kind: "static" },
   {
     camelName: "initialChatHandoff",
     leaf: "initial-chat-handoffs",
     kind: "static",
   },
   { camelName: "leftPanel", leaf: "left-panel", kind: "static" },
+  { camelName: "commGraphPanel", leaf: "comm-graph-panel", kind: "static" },
   { camelName: "fileTree", leaf: "file-tree", kind: "static" },
   { camelName: "historySearch", leaf: "history-search", kind: "static" },
   { camelName: "landingDraft", leaf: "draft", kind: "static" },
@@ -221,10 +236,24 @@ export const PERSIST_STORES = [
     leaf: "workspace-folders",
     kind: "static",
   },
+  {
+    camelName: "providersWorkspaceSelection",
+    leaf: "providers-workspace-selection",
+    kind: "static",
+  },
+  {
+    camelName: "providerLoginTerminals",
+    leaf: "provider-login-terminals",
+    kind: "static",
+  },
 
-  // ── Non-zustand keys (enumeration only; builders NOT refactored here) ─────
+  // ── Non-zustand keys ─────────────────────────────────────────────────────
   // `last-route:<windowId>` — per-window router history (persistent-history.ts).
   { camelName: "lastRoute", leaf: "last-route", kind: "static" },
+  // App-level creation-surface host picker memory (host-directory-service.ts).
+  { camelName: "lastSelectedHost", leaf: "last-selected-host", kind: "static" },
+  // This machine's own local host id (host-directory-service.ts).
+  { camelName: "lastLocalHostId", leaf: "last-local-host-id", kind: "static" },
   // `consumed-initial-route:<windowId>:<route>` — sessionStorage guard.
   {
     camelName: "consumedInitialRoute",

@@ -54,6 +54,7 @@ export function SwitcherTerminalsList(props: SwitcherListProps) {
             <NewTerminalPicker
               epicId={epicId}
               tabId={tabId}
+              onBeforeOpen={undefined}
               onLaunched={onClose}
             />
           ) : null
@@ -91,6 +92,7 @@ function SwitcherTerminalRow(props: {
   const label = terminalSessionTitle({
     title: session.title,
     activeProcessName: session.activeProcessName,
+    currentCwd: session.cwd,
   });
 
   const onSelect = useCallback(() => {
@@ -101,6 +103,7 @@ function SwitcherTerminalRow(props: {
       name: terminalSessionTitle({
         title: session.title,
         activeProcessName: session.activeProcessName,
+        currentCwd: session.cwd,
       }),
       titleSource: deriveTitleSourceFromSessionTitle(session.title),
       hostId,

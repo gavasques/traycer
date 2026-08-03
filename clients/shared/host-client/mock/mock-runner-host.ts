@@ -4,10 +4,13 @@ import type {
   DeviceFlowAuthorization,
   DeviceFlowResult,
   DeviceFlowSession,
+  HostRestartRequestResult,
   IDeviceFlowHost,
   IHostPicker,
   IHostManagement,
   INotificationHost,
+  NotificationForegroundDisplay,
+  NotificationForegroundAppLocal,
   IRunnerHost,
   ISecureStorage,
   ITokenStore,
@@ -31,6 +34,22 @@ import type {
 } from "../../platform/runner-host";
 import { defaultShellArgs } from "@traycer/protocol/config/shell-family";
 import {
+  listUserSessionsViaHttp,
+  requestStepUpChallengeViaHttp,
+  mintHostCredentialViaHttp,
+  revokeAllSessionsViaHttp,
+  revokeUserSessionViaHttp,
+  toRetainedStepUpVerifyResult,
+  verifyStepUpChallengeViaHttp,
+  type ListUserSessionsFetchResult,
+  type MintHostCredentialFetchResult,
+  type RetainedStepUpVerifyFetchResult,
+  type RevokeAllSessionsFetchResult,
+  type RevokeUserSessionFetchResult,
+  type StepUpChallengeFetchResult,
+} from "../../auth/devices-sessions-fetcher";
+import type { MintHostCredentialRequest } from "@traycer/protocol/auth/devices-sessions";
+import {
   credentialsIdentityFromAuthenticatedUser,
   refreshOnceAbortable,
   validateAuthTokenIdentityAccessOnceAbortable,
@@ -38,6 +57,15 @@ import {
 } from "../../auth/auth-validation";
 import type { AuthIdentityValidationResult } from "../../auth/auth-validation-types";
 import type { HostDirectoryEntry } from "../host-directory";
+import {
+  fetchRegisteredHostsViaHttp,
+  type HostListFetchResult,
+} from "../remote-fetcher";
+import {
+  updateHostVersionPolicyViaHttp,
+  type UpdateHostVersionPolicyFetchResult,
+  type UpdateHostVersionPolicyInput,
+} from "../host-version-policy-fetcher";
 
 export interface MockRunnerHostOptions {
   readonly signInUrl: string;
@@ -60,9 +88,24 @@ export interface MockRunnerHostOptions {
    */
   readonly traycerCli: ITraycerCli | null | undefined;
   readonly hostManagement?: IHostManagement | null;
+  /**
+   * Mirrors `IRunnerHost.getLastKnownLocalHostId()` - the durable host id read
+   * from pid metadata, which still answers while the host is down. Omit it and
+   * the mock derives the id from `localHost`, which is what a machine with a
+   * running host reports. Set it explicitly (usually alongside
+   * `localHost: null`) to model the case the real bridge exists for: a host
+   * that has published metadata before but is not reachable right now.
+   */
+  readonly lastKnownLocalHostId?: string | null;
 }
 
 const MOCK_TOKEN_STORE_KEY = "traycer.token";
+const STEP_UP_EXPIRY_SKEW_MS = 5_000;
+
+interface RetainedStepUpCredential {
+  readonly accessToken: string;
+  readonly expiresAtMs: number;
+}
 
 /** Ordered flag-list equality, for the mock's family-default canonicalisation. */
 function sameFlags(a: readonly string[], b: readonly string[]): boolean {
@@ -82,6 +125,10 @@ function sameFlags(a: readonly string[], b: readonly string[]): boolean {
 export class MockRunnerHost implements IRunnerHost {
   readonly signInUrl: string;
   readonly authnBaseUrl: string;
+  // Fixed test-only value: no test constructs a real remote transport against
+  // this mock (remote hosts flow through `hosts`/`HostDirectoryEntry` fixtures
+  // instead), so this never needs to vary per test the way `authnBaseUrl` does.
+  readonly relayBaseUrl: string = "wss://relay.test.invalid/attach";
   readonly hasLocalHost: boolean;
   readonly openedExternalLinks: string[] = [];
   readonly notificationsSent: Array<{
@@ -90,6 +137,7 @@ export class MockRunnerHost implements IRunnerHost {
     readonly payload: unknown;
     readonly replaceKey: string | null;
     readonly deliveryKey: string | null;
+    readonly foregroundAppLocal: NotificationForegroundAppLocal | null;
   }> = [];
   readonly secureStorageEntries: Map<string, string> = new Map();
   readonly tokenStoreEntries: Map<string, StoredCredentials> = new Map();
@@ -110,8 +158,14 @@ export class MockRunnerHost implements IRunnerHost {
   private readonly notificationClickHandlers = new Set<
     (payload: unknown) => void
   >();
+  private readonly notificationForegroundDisplayHandlers = new Set<
+    (display: NotificationForegroundDisplay) => void
+  >();
   private readonly systemResumedHandlers = new Set<() => void>();
   private localHost: LocalHostSnapshot | null;
+  /** `undefined` means "derive from `localHost`"; `null` means "no id on disk". */
+  private readonly explicitLastKnownLocalHostId: string | null | undefined;
+  private retainedStepUpCredential: RetainedStepUpCredential | null = null;
 
   readonly tray: MockTrayState = new MockTrayState();
   readonly hostPicker: MockHostPicker = new MockHostPicker();
@@ -162,6 +216,7 @@ export class MockRunnerHost implements IRunnerHost {
     this.signInUrl = options.signInUrl;
     this.authnBaseUrl = options.authnBaseUrl;
     this.localHost = options.localHost;
+    this.explicitLastKnownLocalHostId = options.lastKnownLocalHostId;
     this.hosts = options.hosts;
     this.workspaceFolderPickerPaths =
       options.workspaceFolderPickerPaths === undefined
@@ -185,6 +240,119 @@ export class MockRunnerHost implements IRunnerHost {
     // Access-only (§3): the mock mirrors the desktop IPC, which no longer
     // refreshes on a failed lookup — the spend routes through `tokenStore.rotate`.
     return validateAuthTokenIdentityAccessOnly(this.authnBaseUrl, token);
+  }
+
+  listRegisteredHosts(bearerToken: string): Promise<HostListFetchResult> {
+    // The in-memory shell has no CORS boundary, so it calls the shared HTTP
+    // helper directly (browser/dev parity with the auth validators above).
+    return fetchRegisteredHostsViaHttp(this.authnBaseUrl, bearerToken);
+  }
+
+  listUserSessions(
+    bearerToken: string,
+    signal: AbortSignal,
+  ): Promise<ListUserSessionsFetchResult> {
+    // Same no-CORS-boundary parity as `listRegisteredHosts` above. Owning the
+    // request in-process, it can hand the caller's signal straight to `fetch`
+    // and abort the real request.
+    return listUserSessionsViaHttp(this.authnBaseUrl, bearerToken, signal);
+  }
+
+  async revokeUserSession(
+    bearerToken: string,
+    familyId: string,
+    useStepUpCredential: boolean,
+  ): Promise<RevokeUserSessionFetchResult> {
+    const stepUpToken = useStepUpCredential
+      ? this.activeRetainedStepUpToken()
+      : null;
+    const result = await revokeUserSessionViaHttp(
+      this.authnBaseUrl,
+      stepUpToken ?? bearerToken,
+      familyId,
+    );
+    // Parity with the desktop main-process handler (`auth-ipc.ts`): a
+    // step-up-required verdict on a retained credential means the server just
+    // rejected it, so holding it would make the next revoke re-send a
+    // credential known to be dead and re-prompt in a loop.
+    if (result.kind === "step-up-required" && useStepUpCredential) {
+      this.retainedStepUpCredential = null;
+    }
+    return result;
+  }
+
+  async revokeAllSessions(
+    bearerToken: string,
+  ): Promise<RevokeAllSessionsFetchResult> {
+    const result = await revokeAllSessionsViaHttp(
+      this.authnBaseUrl,
+      this.activeRetainedStepUpToken() ?? bearerToken,
+    );
+    this.retainedStepUpCredential = null;
+    return result;
+  }
+
+  mintHostCredential(
+    bearerToken: string,
+    request: MintHostCredentialRequest,
+  ): Promise<MintHostCredentialFetchResult> {
+    // The caller's own bearer: the mint is not step-up gated, so this double
+    // must not substitute a retained step-up credential either.
+    return mintHostCredentialViaHttp(this.authnBaseUrl, bearerToken, request);
+  }
+
+  requestStepUpChallenge(
+    bearerToken: string,
+  ): Promise<StepUpChallengeFetchResult> {
+    return requestStepUpChallengeViaHttp(this.authnBaseUrl, bearerToken);
+  }
+
+  async verifyStepUpChallenge(
+    bearerToken: string,
+    code: string,
+  ): Promise<RetainedStepUpVerifyFetchResult> {
+    const result = await verifyStepUpChallengeViaHttp(
+      this.authnBaseUrl,
+      bearerToken,
+      code,
+    );
+    if (result.kind === "ok") {
+      this.retainedStepUpCredential = {
+        accessToken: result.response.access_token,
+        expiresAtMs:
+          Date.now() +
+          Math.max(
+            0,
+            result.response.expires_in * 1_000 - STEP_UP_EXPIRY_SKEW_MS,
+          ),
+      };
+    }
+    return toRetainedStepUpVerifyResult(result);
+  }
+
+  private activeRetainedStepUpToken(): string | null {
+    if (this.retainedStepUpCredential === null) {
+      return null;
+    }
+    if (this.retainedStepUpCredential.expiresAtMs <= Date.now()) {
+      this.retainedStepUpCredential = null;
+      return null;
+    }
+    return this.retainedStepUpCredential.accessToken;
+  }
+
+  updateHostVersionPolicy(
+    bearerToken: string,
+    hostId: string,
+    input: UpdateHostVersionPolicyInput,
+  ): Promise<UpdateHostVersionPolicyFetchResult> {
+    // Same no-CORS-boundary parity as `listRegisteredHosts` above.
+    return updateHostVersionPolicyViaHttp(
+      this.authnBaseUrl,
+      bearerToken,
+      hostId,
+      input,
+    );
   }
 
   async openExternalLink(url: string): Promise<void> {
@@ -267,6 +435,7 @@ export class MockRunnerHost implements IRunnerHost {
         authnBaseUrl: this.authnBaseUrl,
         token: stored.token,
         refreshToken: stored.refreshToken,
+        clientKind: "desktop",
         signal: null,
       });
       if (refreshed.kind === "network-error") {
@@ -320,6 +489,7 @@ export class MockRunnerHost implements IRunnerHost {
         authnBaseUrl: this.authnBaseUrl,
         token: legacy.token,
         refreshToken: legacy.refreshToken,
+        clientKind: "desktop",
         signal: null,
       });
       if (refreshed.kind === "network-error") return "retryable";
@@ -365,8 +535,9 @@ export class MockRunnerHost implements IRunnerHost {
     });
   }
 
-  async requestHostRespawn(): Promise<void> {
+  async requestHostRespawn(): Promise<HostRestartRequestResult> {
     this.requestHostRespawnCalls += 1;
+    return { kind: "restarted" };
   }
 
   readonly notifications: INotificationHost = {
@@ -376,6 +547,7 @@ export class MockRunnerHost implements IRunnerHost {
       payload: unknown,
       replaceKey: string | null,
       deliveryKey: string | null,
+      foregroundAppLocal: NotificationForegroundAppLocal | null,
     ): Promise<void> => {
       this.notificationsSent.push({
         title,
@@ -383,6 +555,7 @@ export class MockRunnerHost implements IRunnerHost {
         payload,
         replaceKey,
         deliveryKey,
+        foregroundAppLocal,
       });
     },
     onClick: (handler: (payload: unknown) => void): Disposable => {
@@ -393,7 +566,25 @@ export class MockRunnerHost implements IRunnerHost {
         },
       };
     },
+    onForegroundDisplay: (
+      handler: (display: NotificationForegroundDisplay) => void,
+    ): Disposable => {
+      this.notificationForegroundDisplayHandlers.add(handler);
+      return {
+        dispose: () => {
+          this.notificationForegroundDisplayHandlers.delete(handler);
+        },
+      };
+    },
   };
+
+  emitForegroundNotificationDisplay(
+    display: NotificationForegroundDisplay,
+  ): void {
+    for (const handler of this.notificationForegroundDisplayHandlers) {
+      handler(display);
+    }
+  }
 
   onLocalHostChange(
     handler: (snapshot: LocalHostSnapshot | null) => void,
@@ -405,6 +596,14 @@ export class MockRunnerHost implements IRunnerHost {
         this.localHostHandlers.delete(handler);
       },
     };
+  }
+
+  getLastKnownLocalHostId(): Promise<string | null> {
+    if (this.explicitLastKnownLocalHostId !== undefined) {
+      return Promise.resolve(this.explicitLastKnownLocalHostId);
+    }
+    // A running host is exactly the case where pid metadata carries its id.
+    return Promise.resolve(this.localHost?.hostId ?? null);
   }
 
   onSystemResumed(handler: () => void): Disposable {

@@ -39,17 +39,22 @@ const MOBILE_SWITCHER_CATEGORY_IDS: ReadonlyArray<LeftPanelId> =
 
 /**
  * Every curated category is unconditionally visible in the registry, so this
- * benign context only exists to honour each definition's `isVisible()` contract
- * (Comments/Sharing - the only context-dependent panels - are not in the set).
+ * benign context only exists to honour each definition's `isAutoVisible()`
+ * contract (Comments/Sharing/Pull requests - the context-dependent panels - are
+ * not in the set). The empty override map keeps the switcher on each panel's
+ * own rule: the rail's show/hide context menu is a desktop affordance, and the
+ * phone switcher's category set is curated here rather than by that menu.
  */
 const SWITCHER_AVAILABILITY: LeftPanelAvailabilityContext = {
   commentsPanelRevealed: false,
   hasActiveCommentableArtifact: false,
+  hasPullRequests: false,
+  visibilityOverrideById: {},
 };
 
 export function visibleSwitcherCategoryDefs(): ReadonlyArray<LeftPanelMetadataDefinition> {
   return MOBILE_SWITCHER_CATEGORY_DEFS.filter((definition) =>
-    definition.isVisible(SWITCHER_AVAILABILITY),
+    definition.isAutoVisible(SWITCHER_AVAILABILITY),
   );
 }
 

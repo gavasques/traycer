@@ -2,10 +2,8 @@ import type { ReactNode } from "react";
 import { Check } from "lucide-react";
 
 import {
-  AGENT_MODE_OPTIONS,
   PERMISSION_OPTIONS,
   normalizePermissionMode,
-  type AgentMode,
   type PermissionMode,
 } from "@/components/home/data/landing-options";
 import {
@@ -21,8 +19,6 @@ import "@/components/layout/shell/mobile-shell-touch-targets.css";
 interface ComposerOptionsSheetProps {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
-  readonly agentMode: AgentMode;
-  readonly onAgentModeChange: (next: AgentMode) => void;
   readonly permission: PermissionMode;
   readonly onPermissionChange: (next: PermissionMode) => void;
   /** See `PermissionsPicker`: `null` (or empty) means "no harness scope". */
@@ -72,30 +68,6 @@ export function ComposerOptionsSheet(props: ComposerOptionsSheetProps) {
           <DrawerTitle>Task options</DrawerTitle>
         </DrawerHeader>
         <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-2 pb-[max(1rem,env(safe-area-inset-bottom))]">
-          <div role="radiogroup" aria-label="Mode">
-            <OptionsSectionLabel>Mode</OptionsSectionLabel>
-            {AGENT_MODE_OPTIONS.map((option) => {
-              const Icon = option.icon;
-              return (
-                <OptionRow
-                  key={option.id}
-                  icon={
-                    <Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                  }
-                  label={option.label}
-                  description={option.description}
-                  selected={option.id === props.agentMode}
-                  disabled={props.settingsLocked}
-                  testId={`composer-options-mode-${option.id}`}
-                  onSelect={() => {
-                    if (props.settingsLocked) return;
-                    props.onAgentModeChange(option.id);
-                  }}
-                />
-              );
-            })}
-          </div>
-
           <div role="radiogroup" aria-label="Permissions">
             <OptionsSectionLabel>Permissions</OptionsSectionLabel>
             {PERMISSION_OPTIONS.map((option) => {

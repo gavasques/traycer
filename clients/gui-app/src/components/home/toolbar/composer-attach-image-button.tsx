@@ -1,6 +1,7 @@
 import { useCallback, useRef, type ChangeEvent } from "react";
 import { ImagePlus } from "lucide-react";
 import { ToolbarIconButton } from "@/components/home/toolbar/toolbar-buttons";
+import { TooltipWrapper } from "@/components/ui/tooltip-wrapper";
 
 interface ComposerAttachImageButtonProps {
   readonly onAttachImages: (files: ReadonlyArray<File>) => void;
@@ -50,13 +51,19 @@ export function ComposerAttachImageButton(
         className="hidden"
         onChange={handleImageChange}
       />
-      <ToolbarIconButton
-        aria-label="Attach image"
-        title="Attach image"
-        onClick={handleOpenImagePicker}
+      <TooltipWrapper
+        label="Attach image"
+        side="top"
+        sideOffset={undefined}
+        align={undefined}
       >
-        <ImagePlus className="size-4" />
-      </ToolbarIconButton>
+        <ToolbarIconButton
+          aria-label="Attach image"
+          onClick={handleOpenImagePicker}
+        >
+          <ImagePlus className="size-4" />
+        </ToolbarIconButton>
+      </TooltipWrapper>
     </>
   );
 }

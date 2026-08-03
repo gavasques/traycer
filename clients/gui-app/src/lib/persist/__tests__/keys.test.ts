@@ -8,6 +8,8 @@ import {
   composerHarnessMemoryKey,
   composerRunSettingsKey,
   epicCanvasKey,
+  lastLocalHostIdKey,
+  lastSelectedHostKey,
   interviewDraftKey,
   interviewDraftKeyPrefix,
   landingTerminalsKey,
@@ -53,6 +55,8 @@ describe("persist key builders — output-preserving against current source", ()
     );
     // Source: src/stores/epics/git-panel-store.ts
     expect(persistKey("git-panel")).toBe("traycer-gui-app:git-panel");
+    // Source: src/stores/epics/pr-presence-store.ts
+    expect(persistKey("pr-presence")).toBe("traycer-gui-app:pr-presence");
     // Source: src/stores/epics/initial-chat-handoff-store.ts (plural divergence)
     expect(persistKey("initial-chat-handoffs")).toBe(
       "traycer-gui-app:initial-chat-handoffs",
@@ -75,6 +79,10 @@ describe("persist key builders — output-preserving against current source", ()
     // Source: src/stores/settings/local-snapshot-clear-store.ts (plural divergence)
     expect(persistKey("local-snapshot-clears")).toBe(
       "traycer-gui-app:local-snapshot-clears",
+    );
+    // Source: src/stores/providers/provider-login-terminals.ts
+    expect(persistKey("provider-login-terminals")).toBe(
+      "traycer-gui-app:provider-login-terminals",
     );
     // Source: src/stores/settings/settings-store.ts
     expect(persistKey("settings")).toBe("traycer-gui-app:settings");
@@ -210,6 +218,14 @@ describe("persist key builders — output-preserving against current source", ()
     // Today's arg order is (userId, epicId); the emitted string must stay
     // `…:open-epic:{bucket}:{epicId}`.
     expect(openEpicKey(null, "e1")).toBe("traycer-gui-app:open-epic:anon:e1");
+  });
+
+  it("emits the app-level last-selected-host localStorage key", () => {
+    expect(lastSelectedHostKey()).toBe("traycer-gui-app:last-selected-host");
+  });
+
+  it("emits the machine-level last-local-host-id localStorage key", () => {
+    expect(lastLocalHostIdKey()).toBe("traycer-gui-app:last-local-host-id");
   });
 
   it("has no two catalog entries sharing a leaf", () => {

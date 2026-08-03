@@ -10,11 +10,13 @@ const WORKSPACE_A: WorkspaceFolderInfo = {
   path: "/tmp/workspace-a",
   name: "workspace-a",
   repoIdentifier: null,
+  hostId: null,
 };
 const WORKSPACE_B: WorkspaceFolderInfo = {
   path: "/tmp/workspace-b",
   name: "workspace-b",
   repoIdentifier: null,
+  hostId: null,
 };
 
 beforeEach(() => {
@@ -86,9 +88,7 @@ describe("useNewConversationModalStore setPrimaryFolder", () => {
         [WORKSPACE_B.path]: WORKSPACE_B,
       },
     };
-    const draftId = useLandingDraftStore
-      .getState()
-      .createDraft(null, undefined);
+    const draftId = useLandingDraftStore.getState().createDraft(null);
 
     useNewConversationModalStore
       .getState()

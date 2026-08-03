@@ -47,6 +47,36 @@ export interface MobileRunnerHostOptions {
   readonly hostLabel: string;
 }
 
+/**
+ * INCOMPLETE against the current `IRunnerHost`, and therefore this package does
+ * not compile. Written before `main` landed remote-host support, this satisfies
+ * 27 of the interface's 37 members; merging `development` into `mobile-app`
+ * surfaced the gap. Filling it was deliberately deferred rather than stubbed,
+ * so that the decisions below get made rather than defaulted.
+ *
+ * Missing members, grouped by what the phone actually needs:
+ *
+ *   Genuinely required - the phone only ever reaches a host over the relay:
+ *     - `relayBaseUrl`
+ *     - `listRegisteredHosts`  (see `fetchRegisteredHostsViaHttp` in
+ *       `@traycer-clients/shared/host-client/remote-fetcher`)
+ *
+ *   Meaningless here - both concern a host on this same machine, which a phone
+ *   never has (`hasLocalHost` is `false` below), so these are inert:
+ *     - `updateHostVersionPolicy`
+ *     - `getLastKnownLocalHostId`
+ *
+ *   Open product questions - the desktop surfaces UI for each; whether the
+ *   phone should is undecided:
+ *     - `listUserSessions`, `revokeUserSession`, `revokeAllSessions`
+ *     - `requestStepUpChallenge`, `verifyStepUpChallenge`
+ *     - `mintHostCredential`
+ *
+ * Four existing members also drifted and need updating in place:
+ * `requestHostRespawn`'s return type (now `HostRestartRequestResult`), the
+ * token-refresh call's `clientKind` argument, `notifications.onForegroundDisplay`,
+ * and the `RemoteHostFetcher` shape used by `src/web/main.tsx`.
+ */
 export class MobileRunnerHost implements IRunnerHost {
   readonly signInUrl: string;
   readonly authnBaseUrl: string;

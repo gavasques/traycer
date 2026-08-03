@@ -16,15 +16,12 @@ afterEach(cleanup);
 function renderSheet(overrides: {
   readonly supportedPermissionModes: ReadonlyArray<PermissionMode> | null;
   readonly onPermissionChange: (next: PermissionMode) => void;
-  readonly onAgentModeChange: () => void;
   readonly settingsLocked: boolean;
 }) {
   return render(
     <ComposerOptionsSheet
       open
       onOpenChange={vi.fn()}
-      agentMode="regular"
-      onAgentModeChange={overrides.onAgentModeChange}
       permission="supervised"
       onPermissionChange={overrides.onPermissionChange}
       supportedPermissionModes={overrides.supportedPermissionModes}
@@ -41,19 +38,13 @@ function defaults() {
   return {
     supportedPermissionModes: null,
     onPermissionChange: vi.fn(),
-    onAgentModeChange: vi.fn(),
     settingsLocked: false,
   };
 }
 
 describe("ComposerOptionsSheet", () => {
-  it("marks the active mode and permission as checked", () => {
+  it("marks the active permission as checked", () => {
     renderSheet(defaults());
-    expect(
-      screen
-        .getByRole("radio", { name: /Regular/ })
-        .getAttribute("aria-checked"),
-    ).toBe("true");
     expect(
       screen
         .getByRole("radio", { name: /Supervised/ })
@@ -66,13 +57,6 @@ describe("ComposerOptionsSheet", () => {
     renderSheet(props);
     await userEvent.click(screen.getByRole("radio", { name: /Full access/ }));
     expect(props.onPermissionChange).toHaveBeenCalledWith("full_access");
-  });
-
-  it("reports the picked mode", async () => {
-    const props = defaults();
-    renderSheet(props);
-    await userEvent.click(screen.getByRole("radio", { name: /Epic/ }));
-    expect(props.onAgentModeChange).toHaveBeenCalledWith("epic");
   });
 
   it("disables a mode the harness does not support and names the harness", async () => {
@@ -100,9 +84,6 @@ describe("ComposerOptionsSheet", () => {
 
   it("locks the radio rows when settings are locked", () => {
     renderSheet({ ...defaults(), settingsLocked: true });
-    expect(
-      screen.getByRole("radio", { name: /Epic/ }).hasAttribute("disabled"),
-    ).toBe(true);
     expect(
       screen
         .getByRole("radio", { name: /Full access/ })

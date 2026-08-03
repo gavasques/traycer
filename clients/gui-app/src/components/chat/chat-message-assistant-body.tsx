@@ -4,6 +4,7 @@ import {
   WorkingVerbContext,
   pickWorkingVerb,
 } from "@/components/chat/working-verb";
+import { isFastModeEnabled } from "@/components/home/data/landing-options";
 import { HarnessIcon } from "@/components/home/pickers/harness-icon";
 import { TooltipWrapper } from "@/components/ui/tooltip-wrapper";
 import type {
@@ -573,14 +574,6 @@ function AssistantMetaRow({ label, value }: { label: string; value: string }) {
 }
 
 /**
- * Fast mode is on whenever the turn carried a non-default service tier (e.g.
- * Codex `"priority"`); an empty/null tier means the harness default.
- */
-function isFastModeEnabled(serviceTier: string | null): boolean {
-  return serviceTier !== null && serviceTier.trim().length > 0;
-}
-
-/**
  * Past-tense verbs rotated per turn so the footer reads playfully rather than
  * mechanically (Claude Code CLI pattern). Seeded by `messageId` (stable per
  * turn AND distinct between sibling turns sharing one user-send) so the verb
@@ -795,12 +788,17 @@ function AssistantSegment({
         />
       );
     case "reasoning":
+      // Unreachable from the timeline - `isActivitySegment` admits reasoning
+      // unconditionally, so every reasoning block reaches the renderer through
+      // an activity group. Kept so the switch stays exhaustive over the segment
+      // taxonomy, and for direct renders in tests.
       return (
         <ReasoningSegment
           findUnitId={findUnitId}
           markdown={segment.markdown}
           isStreaming={segment.isStreaming}
           durationMs={segment.durationMs}
+          bodyBoundedByParent={false}
         />
       );
     case "tool": {

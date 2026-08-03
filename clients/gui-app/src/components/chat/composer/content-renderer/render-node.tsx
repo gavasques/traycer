@@ -8,7 +8,8 @@ import {
   stringValue,
   mentionAttachmentFromAttrs,
   mentionPlainTextFromAttrs,
-  slashCommandPlainTextFromAttrs,
+  numberValue,
+  slashCommandLabelFromAttrs,
 } from "@/lib/composer/tiptap-json-content";
 import { fallbackImageAttachmentDisplayLabel } from "@/lib/composer/image-attachment-labels";
 import { cn } from "@/lib/utils";
@@ -16,6 +17,7 @@ import { cn } from "@/lib/utils";
 import { applyMarks } from "./render-marks";
 import type { ComposerContentRenderContext } from "./types";
 
+import { TooltipWrapper } from "@/components/ui/tooltip-wrapper";
 const SKIPPED_NODES = new Set(["attachmentGroup"]);
 
 type NodeRenderer = (
@@ -77,7 +79,10 @@ function renderSlashCommand(
   return (
     <SlashCommandChip
       key={key}
-      name={slashCommandPlainTextFromAttrs(node.attrs)}
+      // Label, not plain text: a chip picked (or written into a next step) with
+      // `$` reads back as `$name` here just as it does in the live composer,
+      // while the node it came from still serializes to the canonical `/name`.
+      name={slashCommandLabelFromAttrs(node.attrs)}
       density={context.profile.inlineChipDensity}
     />
   );
@@ -98,17 +103,23 @@ function renderImageAttachment(
     });
   const classNames = context.profile.inlineChipClassNames;
   return (
-    <span
-      key={key}
-      aria-label={`Attached ${label.ariaLabel}`}
-      className={cn(classNames.root, "text-foreground/90")}
-      data-composer-image-id={id ?? undefined}
-      data-composer-chip="image-attachment"
-      title={label.title}
+    <TooltipWrapper
+      label={label.title}
+      side="top"
+      sideOffset={undefined}
+      align={undefined}
     >
-      <ImageIcon className={classNames.mutedIcon} aria-hidden />
-      <span className={classNames.text}>{label.inlineLabel}</span>
-    </span>
+      <span
+        key={key}
+        aria-label={`Attached ${label.ariaLabel}`}
+        className={cn(classNames.root, "text-foreground/90")}
+        data-composer-image-id={id ?? undefined}
+        data-composer-chip="image-attachment"
+      >
+        <ImageIcon className={classNames.mutedIcon} aria-hidden />
+        <span className={classNames.text}>{label.inlineLabel}</span>
+      </span>
+    </TooltipWrapper>
   );
 }
 
@@ -172,6 +183,7 @@ const RENDERERS: Partial<Record<string, NodeRenderer>> = {
         />
       ),
       nodeKey: key,
+      start: numberValue(node.attrs?.start) ?? 1,
     }),
   listItem: (node, key, context) =>
     context.profile.renderListItem({

@@ -20,6 +20,7 @@ import {
   mockLocalHostEntry,
   mockRemoteHostEntry,
 } from "../mock/mock-host-directory";
+import type { RemoteHostDirectoryEntry } from "../remote-fetcher";
 import { WsRpcClient } from "../../host-transport/ws-rpc-client";
 import { HostRpcError } from "../../host-transport/host-messenger";
 import type {
@@ -243,6 +244,52 @@ describe("HostClient", () => {
     ]);
   });
 
+  it("emits host-updated on a same-id remote host's public-key rotation, isolated from every other field (R-1)", () => {
+    const { client, invalidator, events } = buildHostClientWithMock();
+    const remoteEntry = (publicKey: string): RemoteHostDirectoryEntry => ({
+      hostId: "mock-remote",
+      label: "Mock Remote Host",
+      kind: "remote",
+      // Every remote host shares one fixed relay attach URL - a rotation is
+      // a same-URL event by construction, so this must stay identical.
+      websocketUrl: "wss://mock-remote.traycer.invalid/rpc",
+      version: "0.0.0-mock",
+      status: "available",
+      publicKey,
+      remoteStatus: {
+        presenceLease: "fresh",
+        hostRelayAttached: true,
+        viewerReachability: "ok",
+        clientCloud: "ok",
+        busy: false,
+        busySessionCount: 0,
+        updateState: "current",
+        appVersion: null,
+        lastSeenAt: null,
+      },
+    });
+    client.bind(remoteEntry("pubkey-a"));
+    invalidator.calls.length = 0;
+    invalidator.options.length = 0;
+    events.length = 0;
+
+    // hostId / kind / websocketUrl / version / status all held stable -
+    // ONLY the public key rotates (re-enrollment / corruption recovery).
+    const rotated = remoteEntry("pubkey-b");
+    client.bind(rotated);
+
+    expect(client.getActiveHost()).toBe(rotated);
+    expect(invalidator.calls).toEqual(["mock-remote"]);
+    expect(invalidator.options).toEqual([{ refetchActive: true }]);
+    expect(events).toEqual([
+      {
+        previousHostId: "mock-remote",
+        currentHostId: "mock-remote",
+        reason: "host-updated",
+      },
+    ]);
+  });
+
   it("invalidates on RequestContext identity change", () => {
     const { client, invalidator, events } = buildHostClientWithMock();
     client.bind(mockLocalHostEntry);
@@ -285,6 +332,28 @@ describe("HostClient", () => {
 
     client.notifyAvailabilityRecovered();
     expect(invalidator.calls).toEqual(["mock-local"]);
+    expect(events).toHaveLength(1);
+    expect(events[0].reason).toBe("availability-recovered");
+  });
+
+  it("explicit-host recovery invalidates a NON-active host's scope without announcing an active-host change", () => {
+    const { client, invalidator, events } = buildHostClientWithMock();
+    client.bind(mockLocalHostEntry);
+    invalidator.calls.length = 0;
+    invalidator.options.length = 0;
+    events.length = 0;
+
+    // A tab-bound durable stream heartbeats its own host, which need not be
+    // the active one; its queries are keyed by THAT id.
+    client.notifyHostAvailabilityRecovered("other-host");
+    expect(invalidator.calls).toEqual(["other-host"]);
+    expect(invalidator.options).toEqual([{ refetchActive: true }]);
+    expect(events).toEqual([]);
+
+    // For the active host it is exactly notifyAvailabilityRecovered(),
+    // change event included.
+    client.notifyHostAvailabilityRecovered("mock-local");
+    expect(invalidator.calls).toEqual(["other-host", "mock-local"]);
     expect(events).toHaveLength(1);
     expect(events[0].reason).toBe("availability-recovered");
   });
@@ -345,6 +414,7 @@ describe("HostClient", () => {
       webSocketFactory: factory,
       dialTimeoutMs: 1000,
       frameTimeoutMs: 1000,
+      hostAttestationWindowMs: 0,
     });
 
     const client = new HostClient({
@@ -398,6 +468,7 @@ describe("HostClient", () => {
       webSocketFactory: factory,
       dialTimeoutMs: 1000,
       frameTimeoutMs: 1000,
+      hostAttestationWindowMs: 0,
     });
     const client = new HostClient({
       registry,

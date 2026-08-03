@@ -1,12 +1,15 @@
 import {
   useCallback,
   useMemo,
+  useState,
   type CSSProperties,
   type ReactNode,
   type RefObject,
 } from "react";
-import { BellOff, CheckCheck, Settings } from "lucide-react";
+import { BellOff, CheckCheck, Settings, Trash2 } from "lucide-react";
+import type { StreamMethodSupport } from "@traycer-clients/shared/host-transport/ws-stream-client";
 import { Button } from "@/components/ui/button";
+import { ConfirmDestructiveDialog } from "@/components/ui/confirm-destructive-dialog";
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { TooltipWrapper } from "@/components/ui/tooltip-wrapper";
@@ -16,6 +19,11 @@ import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-i
 import { useNotificationActivation } from "@/hooks/notifications/use-notification-activation";
 import { useNotificationCenterArrivals } from "@/hooks/notifications/use-notification-center-arrivals";
 import { useNotificationCenterScrollAnchor } from "@/hooks/notifications/use-notification-center-scroll-anchor";
+import { useStreamMethodSupport } from "@/lib/host/stream-runtime-context";
+import {
+  useNotificationFeedMode,
+  type NotificationFeedMode,
+} from "@/lib/notifications/notification-feed-mode";
 import {
   Analytics,
   AnalyticsEvent,
@@ -42,6 +50,7 @@ import {
   useNotificationCenterHostState,
   useRecentNotificationIds,
 } from "@/stores/notifications/merged-notifications";
+import { useCloudNotificationsStore } from "@/stores/notifications/cloud-notifications-store";
 import { useNotificationsPopoverStore } from "@/stores/notifications/notifications-popover-store";
 import { useSystemTabModalActions } from "@/stores/tabs/use-system-tab-modal";
 
@@ -90,15 +99,49 @@ function isMarkAllReadDisabled(input: {
   readonly unreadCount: number;
   readonly loadedHostAttentionCount: number;
   readonly hasActiveHost: boolean;
+  readonly cloudConnectionState:
+    "connecting" | "connected" | "reconnecting" | "unavailable" | null;
 }): boolean {
+  if (input.cloudConnectionState !== null) {
+    return (
+      input.unreadCount === 0 || input.cloudConnectionState !== "connected"
+    );
+  }
   const actionableHostAttention = input.hasActiveHost
     ? input.loadedHostAttentionCount
     : 0;
   return input.unreadCount === 0 && actionableHostAttention === 0;
 }
 
+/** Local-fallback header subtitle text. A partial host state is either
+ * transient (still
+ * connecting - the exact wording carries no permanence claim) or confirmed
+ * permanent for this session (the stream's mirror-compat check has already
+ * resolved `host.notifications.feed.subscribe` as `"unsupported"` on an old
+ * host) - only the confirmed case gets version-specific wording. */
+function localNotificationsSubtitle(input: {
+  readonly isPartial: boolean;
+  readonly hostLabel: string | null;
+  readonly notificationsSupport: StreamMethodSupport | null;
+}): string {
+  if (!input.isPartial) {
+    return `Task activity from ${input.hostLabel ?? "this device"}`;
+  }
+  if (input.notificationsSupport === "unsupported") {
+    return "Task activity isn't available on this host version";
+  }
+  return "Task activity is unavailable right now";
+}
+
+function notificationsSubtitle(
+  feedMode: NotificationFeedMode,
+  input: Parameters<typeof localNotificationsSubtitle>[0],
+): string | null {
+  return feedMode === "local" ? localNotificationsSubtitle(input) : null;
+}
+
 /**
- * Notification center surface content: header (title, active-device/partial
+ * Notification center surface content: header (title, optional local-host
  * subtitle, Filter, Mark all read, overflow Settings), a single scrolling
  * feed body (Needs attention, then Recent activity with temporal
  * separators), and a fixed "Load older activity" footer. Outer sizing is
@@ -120,7 +163,24 @@ export function NotificationsPopover(
   const recentIds = useRecentNotificationIds();
   const unreadCount = useMergedNotificationUnreadCount();
   const actions = useMergedNotificationsActions();
+  const [clearAllConfirmOpen, setClearAllConfirmOpen] = useState(false);
   const hostState = useNotificationCenterHostState();
+  const feedMode = useNotificationFeedMode();
+  const cloudConnectionState = useCloudNotificationsStore(
+    (state) => state.connectionState,
+  );
+  const cloudPresentationState = cloudStateForFeedMode(
+    feedMode,
+    cloudConnectionState,
+  );
+  // Distinguishes a permanent condition (this host's stream mirror-compat
+  // check has already confirmed it will never support the notifications
+  // feed) from a merely transient one (still connecting) - both leave
+  // `hostState.isPartial` true, but only the confirmed case should be worded
+  // as permanent in the local fallback subtitle below.
+  const notificationsSupport = useStreamMethodSupport(
+    "host.notifications.feed.subscribe",
+  );
   // Authoritative active-host signal for the "Mark all read" enablement gate -
   // `null` during a disconnect even though the runtime binding is retained.
   const activeHostId = useReactiveActiveHostId();
@@ -211,6 +271,7 @@ export function NotificationsPopover(
         payload: row.payload,
         receivedAt: Date.now(),
         feedId: row.feedId,
+        originHostId: row.originHostId,
         // Fires synchronously right after routing, so the center closes on
         // dispatch (`onSuccess: onNavigate`). The origin-host guard inside
         // the hook can still settle this as `"failure"` (no toast, nothing
@@ -247,7 +308,7 @@ export function NotificationsPopover(
         category: row.category,
         acknowledgment_source: "explicit_action",
       });
-      actions.markAsRead(row.feedId);
+      actions.markAsRead(row);
     },
     [actions],
   );
@@ -274,6 +335,22 @@ export function NotificationsPopover(
     });
     actions.markAllAsRead();
   }, [actions, hostState.isPartial, unreadCount]);
+
+  const handleClearAll = useCallback(() => {
+    setClearAllConfirmOpen(true);
+  }, []);
+
+  const handleConfirmClearAll = useCallback(() => {
+    actions.clearAll();
+    setClearAllConfirmOpen(false);
+  }, [actions]);
+
+  const handleClear = useCallback(
+    (row: MergedNotificationRow) => {
+      actions.clear(row);
+    },
+    [actions],
+  );
 
   const handleUnreadOnlyChange = useCallback(
     (next: boolean) => {
@@ -308,9 +385,9 @@ export function NotificationsPopover(
   const isRecentFilteredEmpty =
     !isEmpty && recentIds.length === 0 && isFiltered;
 
-  const canLoadOlder = unreadOnly
-    ? actions.canLoadMoreUnreadRecent
-    : actions.canLoadMoreHost;
+  const canLoadOlder =
+    feedMode === "local" &&
+    (unreadOnly ? actions.canLoadMoreUnreadRecent : actions.canLoadMoreHost);
   const isLoadingOlder = unreadOnly
     ? actions.isLoadingMoreUnreadRecent
     : actions.isLoadingMoreHost;
@@ -329,76 +406,34 @@ export function NotificationsPopover(
         className="flex w-[min(90vw,34rem)] min-w-0 flex-col gap-0 overflow-hidden"
         data-testid="notifications-popover"
       >
-        <header className="flex shrink-0 flex-col gap-2 border-b border-border/60 bg-popover px-4 pt-3 pb-2.5">
-          <div className="flex min-w-0 items-center justify-between gap-2">
-            <h2
-              ref={headingRef}
-              tabIndex={-1}
-              className="text-ui-sm font-semibold outline-none"
-            >
-              Notifications
-            </h2>
-            <div className="flex shrink-0 items-center gap-0.5">
-              <NotificationFilterMenu
-                unreadOnly={unreadOnly}
-                categories={categories}
-                onUnreadOnlyChange={handleUnreadOnlyChange}
-                onToggleCategory={handleToggleCategory}
-                onOpenChange={onFilterMenuOpenChange}
-                onPointerDownOutside={handleFilterPointerDownOutside}
-              />
-              <TooltipWrapper
-                label="Mark all as read"
-                side="bottom"
-                sideOffset={6}
-                align="end"
-              >
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={handleMarkAllRead}
-                  disabled={isMarkAllReadDisabled({
-                    unreadCount,
-                    loadedHostAttentionCount,
-                    hasActiveHost: activeHostId !== null,
-                  })}
-                  data-testid="notifications-mark-all-read"
-                  aria-label="Mark all notifications as read"
-                  className="text-muted-foreground hover:text-foreground"
-                >
-                  <CheckCheck className="size-3.5" aria-hidden />
-                </Button>
-              </TooltipWrapper>
-              <TooltipWrapper
-                label="Notification settings"
-                side="bottom"
-                sideOffset={6}
-                align="end"
-              >
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={handleOpenSettings}
-                  data-testid="notifications-open-settings"
-                  aria-label="Notification settings"
-                  className="text-muted-foreground hover:text-foreground"
-                >
-                  <Settings className="size-3.5" aria-hidden />
-                </Button>
-              </TooltipWrapper>
-            </div>
-          </div>
-          <p
-            data-testid="notifications-subtitle"
-            className="truncate text-ui-xs text-muted-foreground"
-          >
-            {hostState.isPartial
-              ? "Task activity is unavailable right now"
-              : `Task activity from ${hostState.hostLabel ?? "this device"}`}
-          </p>
-        </header>
+        <NotificationsPopoverHeader
+          headingRef={headingRef}
+          unreadOnly={unreadOnly}
+          categories={categories}
+          onUnreadOnlyChange={handleUnreadOnlyChange}
+          onToggleCategory={handleToggleCategory}
+          onFilterMenuOpenChange={onFilterMenuOpenChange}
+          onFilterPointerDownOutside={handleFilterPointerDownOutside}
+          onMarkAllRead={handleMarkAllRead}
+          isMarkAllReadDisabled={isMarkAllReadDisabled({
+            unreadCount,
+            loadedHostAttentionCount,
+            hasActiveHost: activeHostId !== null,
+            cloudConnectionState: cloudPresentationState,
+          })}
+          showClearAll={feedMode === "cloud"}
+          isClearAllDisabled={
+            cloudConnectionState !== "connected" ||
+            fullOccurrenceOrder.length === 0
+          }
+          onClearAll={handleClearAll}
+          onOpenSettings={handleOpenSettings}
+          subtitle={notificationsSubtitle(feedMode, {
+            isPartial: hostState.isPartial,
+            hostLabel: hostState.hostLabel,
+            notificationsSupport,
+          })}
+        />
 
         <OriginUnavailableBanner />
 
@@ -457,6 +492,7 @@ export function NotificationsPopover(
                         onActivate={handleActivate}
                         onAcknowledge={handleAcknowledge}
                         onResolve={handleResolve}
+                        onClear={handleClear}
                       />
                     ))}
                   </ul>
@@ -480,6 +516,7 @@ export function NotificationsPopover(
                   onActivate={handleActivate}
                   onAcknowledge={handleAcknowledge}
                   onResolve={handleResolve}
+                  onClear={handleClear}
                   onResetFilters={resetFilters}
                 />
               </section>
@@ -499,8 +536,153 @@ export function NotificationsPopover(
           </footer>
         ) : null}
       </div>
+      <ConfirmDestructiveDialog
+        open={clearAllConfirmOpen}
+        onOpenChange={setClearAllConfirmOpen}
+        title="Clear all cloud notifications?"
+        description="This permanently clears every notification currently visible in your cloud feed across your devices."
+        cascadeSummary={null}
+        actionLabel="Clear all"
+        isPending={false}
+        onConfirm={handleConfirmClearAll}
+      />
     </TooltipProvider>
   );
+}
+
+interface NotificationsPopoverHeaderProps {
+  readonly headingRef: RefObject<HTMLHeadingElement | null>;
+  readonly unreadOnly: boolean;
+  readonly categories: ReadonlySet<NotificationCategory>;
+  readonly onUnreadOnlyChange: (next: boolean) => void;
+  readonly onToggleCategory: (category: NotificationCategory) => void;
+  readonly onFilterMenuOpenChange: (open: boolean) => void;
+  readonly onFilterPointerDownOutside: (point: {
+    readonly clientX: number;
+    readonly clientY: number;
+  }) => void;
+  readonly onMarkAllRead: () => void;
+  readonly isMarkAllReadDisabled: boolean;
+  readonly showClearAll: boolean;
+  readonly isClearAllDisabled: boolean;
+  readonly onClearAll: () => void;
+  readonly onOpenSettings: () => void;
+  readonly subtitle: string | null;
+}
+
+function NotificationsPopoverHeader({
+  headingRef,
+  unreadOnly,
+  categories,
+  onUnreadOnlyChange,
+  onToggleCategory,
+  onFilterMenuOpenChange,
+  onFilterPointerDownOutside,
+  onMarkAllRead,
+  isMarkAllReadDisabled,
+  showClearAll,
+  isClearAllDisabled,
+  onClearAll,
+  onOpenSettings,
+  subtitle,
+}: NotificationsPopoverHeaderProps): ReactNode {
+  return (
+    <header className="flex shrink-0 flex-col gap-2 border-b border-border/60 bg-popover px-4 pt-3 pb-2.5">
+      <div className="flex min-w-0 items-center justify-between gap-2">
+        <h2
+          ref={headingRef}
+          tabIndex={-1}
+          className="text-ui-sm font-semibold outline-none"
+        >
+          Notifications
+        </h2>
+        <div className="flex shrink-0 items-center gap-0.5">
+          <NotificationFilterMenu
+            unreadOnly={unreadOnly}
+            categories={categories}
+            onUnreadOnlyChange={onUnreadOnlyChange}
+            onToggleCategory={onToggleCategory}
+            onOpenChange={onFilterMenuOpenChange}
+            onPointerDownOutside={onFilterPointerDownOutside}
+          />
+          <TooltipWrapper
+            label="Mark all as read"
+            side="bottom"
+            sideOffset={6}
+            align="end"
+          >
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              onClick={onMarkAllRead}
+              disabled={isMarkAllReadDisabled}
+              data-testid="notifications-mark-all-read"
+              aria-label="Mark all notifications as read"
+              className="text-muted-foreground hover:text-foreground"
+            >
+              <CheckCheck className="size-3.5" aria-hidden />
+            </Button>
+          </TooltipWrapper>
+          {showClearAll ? (
+            <TooltipWrapper
+              label="Clear cloud notifications"
+              side="bottom"
+              sideOffset={6}
+              align="end"
+            >
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                onClick={onClearAll}
+                disabled={isClearAllDisabled}
+                data-testid="notifications-clear-all"
+                aria-label="Clear cloud notifications"
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <Trash2 className="size-3.5" aria-hidden />
+              </Button>
+            </TooltipWrapper>
+          ) : null}
+          <TooltipWrapper
+            label="Notification settings"
+            side="bottom"
+            sideOffset={6}
+            align="end"
+          >
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              onClick={onOpenSettings}
+              data-testid="notifications-open-settings"
+              aria-label="Notification settings"
+              className="text-muted-foreground hover:text-foreground"
+            >
+              <Settings className="size-3.5" aria-hidden />
+            </Button>
+          </TooltipWrapper>
+        </div>
+      </div>
+      {subtitle === null ? null : (
+        <p
+          data-testid="notifications-subtitle"
+          className="truncate text-ui-xs text-muted-foreground"
+        >
+          {subtitle}
+        </p>
+      )}
+    </header>
+  );
+}
+
+function cloudStateForFeedMode(
+  feedMode: "local" | "cloud" | "upgrade-required",
+  connectionState: "connecting" | "connected" | "reconnecting" | "unavailable",
+): "connecting" | "connected" | "reconnecting" | "unavailable" | null {
+  if (feedMode === "upgrade-required") return "unavailable";
+  return feedMode === "cloud" ? connectionState : null;
 }
 
 /** One-open-cycle banner for a native click whose captured origin host no
@@ -531,6 +713,7 @@ interface RecentSectionBodyProps {
   readonly onActivate: (row: MergedNotificationRow) => void;
   readonly onAcknowledge: (row: MergedNotificationRow) => void;
   readonly onResolve: (row: MergedNotificationRow) => void;
+  readonly onClear: (row: MergedNotificationRow) => void;
   readonly onResetFilters: () => void;
 }
 
@@ -542,6 +725,7 @@ function RecentSectionBody(props: RecentSectionBodyProps): ReactNode {
         onActivate={props.onActivate}
         onAcknowledge={props.onAcknowledge}
         onResolve={props.onResolve}
+        onClear={props.onClear}
       />
     );
   }
@@ -563,6 +747,7 @@ interface RecentRowListProps {
   readonly onActivate: (row: MergedNotificationRow) => void;
   readonly onAcknowledge: (row: MergedNotificationRow) => void;
   readonly onResolve: (row: MergedNotificationRow) => void;
+  readonly onClear: (row: MergedNotificationRow) => void;
 }
 
 /** Inserts a temporal separator whenever the calendar-day group changes
@@ -583,6 +768,7 @@ function RecentRowList(props: RecentRowListProps): ReactNode {
           onActivate={props.onActivate}
           onAcknowledge={props.onAcknowledge}
           onResolve={props.onResolve}
+          onClear={props.onClear}
         />
       ))}
     </ul>
@@ -596,6 +782,7 @@ interface RecentRowProps {
   readonly onActivate: (row: MergedNotificationRow) => void;
   readonly onAcknowledge: (row: MergedNotificationRow) => void;
   readonly onResolve: (row: MergedNotificationRow) => void;
+  readonly onClear: (row: MergedNotificationRow) => void;
 }
 
 function RecentRow(props: RecentRowProps): ReactNode {
@@ -623,6 +810,7 @@ function RecentRow(props: RecentRowProps): ReactNode {
         onActivate={props.onActivate}
         onAcknowledge={props.onAcknowledge}
         onResolve={props.onResolve}
+        onClear={props.onClear}
       />
     </>
   );

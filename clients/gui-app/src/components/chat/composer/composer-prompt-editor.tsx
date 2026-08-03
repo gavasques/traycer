@@ -18,10 +18,12 @@ import { Selection, type Transaction } from "@tiptap/pm/state";
 import type { JsonContent } from "@traycer/protocol/common/registry";
 import type { GuiHarnessId } from "@traycer/protocol/host/index";
 
+import type { ChatComposerSubmitSource } from "@/lib/chats/resolve-steer-submit";
 import { cn } from "@/lib/utils";
 import { registerComposerFocus } from "@/lib/composer/composer-focus-registry";
 import { normalizeComposerContentWithSelection } from "@/lib/composer/composer-content-normalizer";
 import { hasClaimableFileTransfer } from "@/lib/files/file-transfer-paths";
+import { usePaneActivationFocusIntent } from "@/components/epic-canvas/pane-activation";
 
 import { buildComposerExtensions } from "./editor/editor-config";
 import type {
@@ -53,10 +55,28 @@ export interface ComposerPromptEditorHandle {
   readonly isReady: () => boolean;
   readonly focus: () => void;
   readonly focusAtEnd: () => void;
+  readonly hasFocus: () => boolean;
   readonly getJSON: () => JsonContent;
   readonly isEmpty: () => boolean;
   readonly clear: () => void;
+  /**
+   * Replace the document and notify the owner via the normal `onDocumentChange`
+   * signal (a real editor-level document mutation). The landing and new-
+   * conversation prompt-stash destinations use this path; chat records its
+   * canonical replacement first and then uses {@link syncContent}.
+   */
   readonly setContent: (
+    content: JsonContent,
+    selection: { readonly from: number; readonly to: number } | null,
+  ) => void;
+  /**
+   * Replace the document WITHOUT emitting `onDocumentChange` - for an owner
+   * that already recorded this exact replacement against its own canonical
+   * store (e.g. the chat draft store's resetEpoch bridge) before pushing it
+   * into the live editor to match. An echoed `onDocumentChange` here would
+   * double-count one external replacement as two document mutations.
+   */
+  readonly syncContent: (
     content: JsonContent,
     selection: { readonly from: number; readonly to: number } | null,
   ) => void;
@@ -125,11 +145,25 @@ export interface ComposerPromptEditorProps {
         images: ReadonlyArray<PastedComposerImage>,
       ) => ReadonlyArray<PastedComposerImageOutcome>)
     | null;
-  readonly onSnapshot: (
+  /**
+   * A real document mutation (Tiptap's own `docChanged`-gated `update` event -
+   * typing, pasting, an image insert/remove, or a programmatic `setContent`).
+   * Never fired for a caret-only move; see `onSelectionChange`.
+   */
+  readonly onDocumentChange: (
     content: JsonContent,
-    selection: { from: number; to: number },
+    selection: { readonly from: number; readonly to: number },
   ) => void;
-  readonly onSubmit: () => void;
+  /**
+   * Caret/selection moved with no document mutation. Deliberately carries no
+   * `content` - a selection-only event must never serialize the document (it
+   * can carry multi-megabyte inline images), so this never calls `getJSON()`.
+   */
+  readonly onSelectionChange: (selection: {
+    readonly from: number;
+    readonly to: number;
+  }) => void;
+  readonly onSubmit: (source: ChatComposerSubmitSource) => void;
   readonly onPaste: ClipboardEventHandler<HTMLElement>;
   readonly onDragOver: DragEventHandler<HTMLElement>;
   readonly onDrop: DragEventHandler<HTMLElement>;
@@ -169,6 +203,19 @@ function usePastedImageBytesPresenceGetter(
   return useCallback(() => latest.current, []);
 }
 
+// Stable getter for the live placeholder, mirroring the presence-getter above.
+// The Tiptap Placeholder decoration closes over this once (extensions build
+// once) and re-reads it on each transaction, so a changing placeholder never
+// rebuilds the editor. The layout effect lands the new value before the owner's
+// no-op-transaction poke fires.
+function usePlaceholderGetter(placeholder: string): () => string {
+  const latest = useRef(placeholder);
+  useLayoutEffect(() => {
+    latest.current = placeholder;
+  }, [placeholder]);
+  return useCallback(() => latest.current, []);
+}
+
 function useIngestPastedComposerImagesGetter(
   ingestPastedComposerImages:
     | ((
@@ -200,7 +247,8 @@ function ComposerPromptEditorImpl(props: ComposerPromptEditorProps) {
     slashProviderId,
     hasPastedImageBytes,
     ingestPastedComposerImages,
-    onSnapshot,
+    onDocumentChange,
+    onSelectionChange,
     onSubmit,
     onPaste,
     onDragOver,
@@ -211,36 +259,43 @@ function ComposerPromptEditorImpl(props: ComposerPromptEditorProps) {
     onEditorReady,
     ref,
   } = props;
+  const paneActivationFocusIntent = usePaneActivationFocusIntent();
 
   // Tiptap's `useEditor` extension chain is built once (`buildComposerExtensions`
   // is memoized with empty editor deps). The plugin closure inside calls
-  // `onSubmit`/`onSnapshot` long after extensions were registered, so we feed
-  // it via refs that always point at the latest prop. This is a *legitimate*
-  // latest-value-ref usage (closure into a static external library plugin) -
-  // do not "fix" it by adding the callbacks to the editor deps; that would
-  // rebuild Tiptap on every keystroke.
+  // `onSubmit`/`onDocumentChange`/`onSelectionChange` long after extensions
+  // were registered, so we feed it via refs that always point at the latest
+  // prop. This is a *legitimate* latest-value-ref usage (closure into a static
+  // external library plugin) - do not "fix" it by adding the callbacks to the
+  // editor deps; that would rebuild Tiptap on every keystroke.
   const normalizedInitial = useMemo(
     () =>
       normalizeComposerContentWithSelection(initialContent, initialSelection),
     [initialContent, initialSelection],
   );
   const onSubmitRef = useRef(onSubmit);
-  const onSnapshotRef = useRef(onSnapshot);
+  const onDocumentChangeRef = useRef(onDocumentChange);
+  const onSelectionChangeRef = useRef(onSelectionChange);
   const onEditorReadyRef = useRef(onEditorReady);
   const initialSelectionRef = useRef(normalizedInitial.selection);
   useEffect(() => {
     onSubmitRef.current = onSubmit;
-    onSnapshotRef.current = onSnapshot;
+    onDocumentChangeRef.current = onDocumentChange;
+    onSelectionChangeRef.current = onSelectionChange;
     onEditorReadyRef.current = onEditorReady;
   });
 
-  const [stableSubmitHolder] = useState<{ readonly current: () => void }>(
-    () => ({
-      current: () => {
-        onSubmitRef.current();
-      },
-    }),
-  );
+  const [stableSubmitHolder] = useState<{
+    readonly current: (source: ChatComposerSubmitSource) => void;
+  }>(() => ({
+    current: (source) => {
+      onSubmitRef.current(source);
+    },
+  }));
+  // Live placeholder source. The editor is built once, so a changing placeholder
+  // (e.g. the mid-turn steer hint) flows through this stable getter rather than
+  // rebuilding extensions; an effect below re-reads it via a no-op transaction.
+  const getPlaceholder = usePlaceholderGetter(placeholder);
   const getHasPastedImageBytes =
     usePastedImageBytesPresenceGetter(hasPastedImageBytes);
   const getIngestPastedComposerImages = useIngestPastedComposerImagesGetter(
@@ -250,7 +305,7 @@ function ComposerPromptEditorImpl(props: ComposerPromptEditorProps) {
     () =>
       buildComposerExtensions({
         pickerStore,
-        placeholder,
+        getPlaceholder,
         onSubmit: stableSubmitHolder,
         slashProviderId,
         getHasPastedImageBytes,
@@ -258,9 +313,9 @@ function ComposerPromptEditorImpl(props: ComposerPromptEditorProps) {
       }),
     [
       getHasPastedImageBytes,
+      getPlaceholder,
       getIngestPastedComposerImages,
       pickerStore,
-      placeholder,
       slashProviderId,
       stableSubmitHolder,
     ],
@@ -281,13 +336,21 @@ function ComposerPromptEditorImpl(props: ComposerPromptEditorProps) {
         attributes: editorAttributesObject,
       },
       onUpdate({ editor: updatedEditor }) {
-        onSnapshotRef.current(updatedEditor.getJSON(), {
+        // Tiptap only fires `update` when a transaction actually changed the
+        // document (gated internally on `docChanged` plus a structural
+        // doc-equality check) - so every call here is a real mutation, never
+        // a caret-only echo. `getJSON()` is safe precisely because of that
+        // gate, not despite it.
+        onDocumentChangeRef.current(updatedEditor.getJSON(), {
           from: updatedEditor.state.selection.from,
           to: updatedEditor.state.selection.to,
         });
       },
       onSelectionUpdate({ editor: updatedEditor }) {
-        onSnapshotRef.current(updatedEditor.getJSON(), {
+        // Never call `getJSON()` here - a selection-only event must not
+        // serialize the document, which can carry multi-megabyte inline
+        // images.
+        onSelectionChangeRef.current({
           from: updatedEditor.state.selection.from,
           to: updatedEditor.state.selection.to,
         });
@@ -313,15 +376,21 @@ function ComposerPromptEditorImpl(props: ComposerPromptEditorProps) {
 
   useEffect(() => {
     if (editor === null) return;
-    editor.setEditable(!disabled);
+    // Tiptap's `setEditable` emits `update` unconditionally when told to -
+    // bypassing the normal `docChanged` gate entirely - so toggling `disabled`
+    // (e.g. the moment a submission starts) would otherwise fire a phantom
+    // `onDocumentChange` for a document that never changed. Suppress it: this
+    // call carries no content change to report.
+    editor.setEditable(!disabled, false);
   }, [editor, disabled]);
 
   useEffect(() => {
     if (editor === null) return;
     if (!isActive) return;
     if (editor.isFocused) return;
+    if (paneActivationFocusIntent.shouldYieldAutoFocus()) return;
     editor.commands.focus();
-  }, [editor, isActive]);
+  }, [editor, isActive, paneActivationFocusIntent]);
 
   useEffect(() => {
     if (editor === null) return;
@@ -337,6 +406,17 @@ function ComposerPromptEditorImpl(props: ComposerPromptEditorProps) {
     });
   }, [editor, editorAttributesObject]);
 
+  useEffect(() => {
+    // The Placeholder decoration only re-reads the getter on a transaction. Poke
+    // an empty one when the placeholder changes and the editor is showing it
+    // (empty), so a mid-turn steer hint appears without waiting for a keystroke.
+    // Skipped while non-empty to avoid disturbing an in-progress edit / IME.
+    // `usePlaceholderGetter`'s layout effect has already landed the new value.
+    if (editor !== null && editor.isEmpty) {
+      editor.view.dispatch(editor.state.tr);
+    }
+  }, [editor, placeholder]);
+
   const isReady = useCallback(() => editor !== null, [editor]);
 
   const focus = useCallback(() => {
@@ -346,6 +426,11 @@ function ComposerPromptEditorImpl(props: ComposerPromptEditorProps) {
   const focusAtEnd = useCallback(() => {
     editor?.commands.focus("end");
   }, [editor]);
+
+  const hasFocus = useCallback(
+    (): boolean => editor?.isFocused ?? false,
+    [editor],
+  );
 
   const getJSON = useCallback((): JsonContent => {
     if (editor === null) return normalizedInitial.content;
@@ -362,17 +447,18 @@ function ComposerPromptEditorImpl(props: ComposerPromptEditorProps) {
     editor.chain().clearContent().focus().run();
   }, [editor]);
 
-  const setContent = useCallback(
+  const applyContent = useCallback(
     (
       content: JsonContent,
       selection: { readonly from: number; readonly to: number } | null,
+      emitUpdate: boolean,
     ) => {
       if (editor === null) return;
       const normalized = normalizeComposerContentWithSelection(
         content,
         selection,
       );
-      editor.commands.setContent(normalized.content);
+      editor.commands.setContent(normalized.content, { emitUpdate });
       if (normalized.selection !== null) {
         editor.commands.setTextSelection({
           from: normalized.selection.from,
@@ -383,6 +469,26 @@ function ComposerPromptEditorImpl(props: ComposerPromptEditorProps) {
       }
     },
     [editor],
+  );
+
+  const setContent = useCallback(
+    (
+      content: JsonContent,
+      selection: { readonly from: number; readonly to: number } | null,
+    ) => {
+      applyContent(content, selection, true);
+    },
+    [applyContent],
+  );
+
+  const syncContent = useCallback(
+    (
+      content: JsonContent,
+      selection: { readonly from: number; readonly to: number } | null,
+    ) => {
+      applyContent(content, selection, false);
+    },
+    [applyContent],
   );
 
   const handleDrop = useCallback<DragEventHandler<HTMLElement>>(
@@ -509,10 +615,12 @@ function ComposerPromptEditorImpl(props: ComposerPromptEditorProps) {
       isReady,
       focus,
       focusAtEnd,
+      hasFocus,
       getJSON,
       isEmpty,
       clear,
       setContent,
+      syncContent,
       insertImageAttachments,
       beginPathInsertion,
       removeImageAttachmentById,
@@ -526,6 +634,7 @@ function ComposerPromptEditorImpl(props: ComposerPromptEditorProps) {
       dismissActiveSuggestion,
       focus,
       focusAtEnd,
+      hasFocus,
       getJSON,
       insertImageAttachments,
       insertDictatedText,
@@ -534,6 +643,7 @@ function ComposerPromptEditorImpl(props: ComposerPromptEditorProps) {
       removeImageAttachmentById,
       rewriteImageAttachmentHashById,
       setContent,
+      syncContent,
     ],
   );
 

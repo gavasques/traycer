@@ -8,7 +8,6 @@ import {
 import { toast } from "sonner";
 import { RestartHostConfirmDialog } from "@/components/host/restart-host-confirm-dialog";
 import { HostBusyForceDeferDialog } from "@/components/host/host-busy-force-defer-dialog";
-import { ActionsRow } from "@/components/settings/panels/host-settings-actions-row";
 import { AdvancedDisclosure } from "@/components/settings/panels/host-settings-advanced-disclosure";
 import { DoctorSheet } from "@/components/settings/panels/host-settings-doctor-sheet";
 import {
@@ -16,25 +15,25 @@ import {
   useNowMs,
 } from "@/components/settings/panels/host-settings-panel-hooks";
 import {
+  customNameFromDraft,
   deriveStatus,
   extractErrorMessage,
   findReleasedAt,
 } from "@/components/settings/panels/host-settings-panel-model";
-import { HostProgressBanner } from "@/components/settings/panels/host-settings-progress-banner";
+import { MyHostsList } from "@/components/settings/panels/my-hosts-list";
+import { HostSummaryCard } from "@/components/settings/panels/host-settings-summary-card";
 import { InstallationDetailsDisclosure } from "@/components/settings/panels/host-settings-installation-details";
 import { PackageManagerUpgradeHint } from "@/components/settings/panels/host-settings-package-manager-upgrade-hint";
-import { StatusRow } from "@/components/settings/panels/host-settings-status-row";
-import { UpdatesRow } from "@/components/settings/panels/host-settings-updates-row";
+import { SettingsGroup } from "@/components/settings/settings-group";
 import { SettingsPanelShell } from "@/components/settings/settings-panel-shell";
-import { SettingsRow } from "@/components/settings/settings-row";
-import { Button } from "@/components/ui/button";
-import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
-import { Input } from "@/components/ui/input";
+import { useSettingsDensity } from "@/providers/settings-density-context";
+import { cn } from "@/lib/utils";
 import {
   runnerMutationKeys,
   runnerQueryKeys,
 } from "@/lib/query-keys/runner-mutation-keys";
 import { toastFromRunnerError } from "@/lib/runner-error-toast";
+import { toastHostRestartDeclined } from "@/lib/host-restart-toast";
 import { useRunnerHost } from "@/providers/use-runner-host";
 import { useRunnerHostControllerStatusQuery } from "@/hooks/runner/use-runner-host-controller-status-query";
 import { useRunnerConvergeReady } from "@/hooks/runner/use-runner-converge-ready-mutation";
@@ -81,10 +80,12 @@ export function HostSettingsPanel() {
     return (
       <SettingsPanelShell
         title="Host"
-        description="Host management is only available on the desktop app."
+        description="Your hosts across every device."
       >
+        <MyHostsList />
         <div className="px-5 py-6 text-ui-sm text-muted-foreground">
-          This shell doesn&apos;t bundle the Traycer CLI.
+          Local host management is only available on the desktop app — this
+          shell doesn&apos;t bundle the Traycer CLI.
         </div>
       </SettingsPanelShell>
     );
@@ -92,89 +93,6 @@ export function HostSettingsPanel() {
   return (
     <HostSettingsPanelInner management={management} runnerHost={runnerHost} />
   );
-}
-
-interface HostNameRowProps {
-  readonly settings: HostNameSettings | undefined;
-  readonly pending: boolean;
-  readonly draftName: string;
-  readonly savePending: boolean;
-  readonly onDraftNameChange: (value: string) => void;
-  readonly onSave: () => void;
-  readonly onReset: () => void;
-}
-
-function HostNameRow(props: HostNameRowProps) {
-  const { settings, pending, draftName, savePending } = props;
-  const disabled = pending || savePending || settings === undefined;
-  const dirty =
-    settings === undefined
-      ? false
-      : customNameFromDraft(draftName, settings) !== settings.customName;
-  const systemName = settings === undefined ? "" : settings.systemName;
-  const resetDisabled =
-    settings === undefined ||
-    pending ||
-    savePending ||
-    settings.customName === null;
-
-  return (
-    <SettingsRow
-      label="Display Name"
-      control={
-        <div className="flex w-[min(68vw,28rem)] max-w-full flex-col gap-2">
-          <Input
-            aria-label="Display Name"
-            value={draftName}
-            maxLength={80}
-            placeholder={systemName.length === 0 ? "Display Name" : systemName}
-            disabled={disabled}
-            onChange={(event) => {
-              props.onDraftNameChange(event.currentTarget.value);
-            }}
-          />
-          <div className="flex justify-end gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={resetDisabled}
-              onClick={props.onReset}
-            >
-              Reset
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              disabled={disabled || !dirty}
-              onClick={props.onSave}
-            >
-              {savePending ? (
-                <AgentSpinningDots
-                  testId={undefined}
-                  variant="orbit"
-                  className="text-current"
-                />
-              ) : null}
-              Save
-            </Button>
-          </div>
-        </div>
-      }
-    />
-  );
-}
-
-function customNameFromDraft(
-  draftName: string,
-  settings: HostNameSettings | undefined,
-): string | null {
-  const normalized = draftName.trim().replace(/\s+/g, " ");
-  if (normalized.length === 0) return null;
-  if (settings !== undefined && normalized === settings.systemName) {
-    return null;
-  }
-  return normalized;
 }
 
 interface HostSettingsPanelInnerProps {
@@ -188,8 +106,10 @@ interface HostSettingsPanelInnerProps {
 function HostSettingsPanelInner(props: HostSettingsPanelInnerProps) {
   const { management, runnerHost } = props;
   const queryClient = useQueryClient();
+  const compact = useSettingsDensity() === "compact";
   const nowMs = useNowMs();
   const [doctorOpen, setDoctorOpen] = useState(false);
+  const [editingName, setEditingName] = useState(false);
   const [hostNameDraftOverride, setHostNameDraftOverride] = useState<
     string | null
   >(null);
@@ -253,7 +173,11 @@ function HostSettingsPanelInner(props: HostSettingsPanelInnerProps) {
     }),
   );
 
-  const { data: hostNameSettings, isPending: hostNamePending } = useQuery(
+  const {
+    data: hostNameSettings,
+    isPending: hostNamePending,
+    isError: hostNameError,
+  } = useQuery(
     queryOptions<HostNameSettings>({
       queryKey: runnerQueryKeys.hostName(management),
       queryFn: () => management.getHostName(),
@@ -400,8 +324,15 @@ function HostSettingsPanelInner(props: HostSettingsPanelInnerProps) {
   const restartMutation = useMutation({
     mutationKey: runnerMutationKeys.hostRestart(),
     mutationFn: () => management.restartHost(),
-    onSuccess: () => {
+    onSuccess: (result) => {
       setRestartConfirmOpen(false);
+      // `declined` resolves (rather than rejecting) because it is not an
+      // error - the host deliberately was not restarted and a later retry
+      // succeeds on its own; see `toastHostRestartDeclined`.
+      if (result.kind === "declined") {
+        toastHostRestartDeclined(result.message);
+        return;
+      }
       toast.success("Host restart requested");
       void queryClient.invalidateQueries({
         queryKey: runnerQueryKeys.hostInstalledRecord(management),
@@ -471,6 +402,7 @@ function HostSettingsPanelInner(props: HostSettingsPanelInnerProps) {
     onSuccess: (data) => {
       queryClient.setQueryData(runnerQueryKeys.hostName(management), data);
       setHostNameDraftOverride(null);
+      setEditingName(false);
       toast.success("Host name updated");
     },
     onError: (err) => toastFromRunnerError(err, "Couldn't update host name"),
@@ -512,94 +444,154 @@ function HostSettingsPanelInner(props: HostSettingsPanelInnerProps) {
     refreshRegistryMutation.mutate();
   };
 
+  const handleRetryTerminalOutcome = (): void => {
+    if (terminalOutcome === null) return;
+    const { intent, pin } = terminalOutcome;
+    setTerminalOutcome(null);
+    if (intent === "apply") {
+      runApply(false);
+    } else if (pin !== null) {
+      runInstallVersion(pin, false);
+    }
+  };
+
   return (
     <SettingsPanelShell
       title="Host"
-      description="Local background service that runs Traycer on your machine."
+      description="Your hosts across every device, plus this machine's local service."
+      bodyClassName="overflow-visible rounded-none border-none bg-transparent"
     >
-      {progress !== null ? <HostProgressBanner progress={progress} /> : null}
-      {terminalOutcome !== null ? (
-        <div
-          data-testid="settings-host-deferred-outcome"
-          className="flex items-center justify-between gap-3 border-b border-destructive/30 bg-destructive/10 px-5 py-3 text-ui-sm text-destructive"
-        >
-          <span className="min-w-0 flex-1">{terminalOutcome.message}</span>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              const { intent, pin } = terminalOutcome;
-              setTerminalOutcome(null);
-              if (intent === "apply") {
-                runApply(false);
-              } else if (pin !== null) {
-                runInstallVersion(pin, false);
-              }
-            }}
-            data-testid="settings-host-deferred-retry"
+      <MyHostsList />
+      <section aria-labelledby="local-host-management-heading">
+        <div className="border-b border-border/40 px-5 py-4">
+          <h3
+            id="local-host-management-heading"
+            className="text-ui font-medium"
           >
-            Retry
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            onClick={() => setTerminalOutcome(null)}
-          >
-            Dismiss
-          </Button>
+            This machine
+          </h3>
+          <p className="mt-1 text-ui-sm text-muted-foreground">
+            Install, update, restart, register, deregister, and rename the
+            Traycer host service running on this machine.
+          </p>
         </div>
-      ) : null}
-      {packageManagerUpgrade !== null ? (
-        <PackageManagerUpgradeHint hint={packageManagerUpgrade} />
-      ) : null}
+        <div className={cn("flex flex-col", compact ? "gap-3.5" : "gap-5")}>
+          {packageManagerUpgrade !== null ? (
+            <PackageManagerUpgradeHint hint={packageManagerUpgrade} />
+          ) : null}
 
-      <HostNameRow
-        settings={hostNameSettings}
-        pending={hostNamePending}
-        draftName={hostNameDraft}
-        savePending={hostNameMutation.isPending}
-        onDraftNameChange={(value) => setHostNameDraftOverride(value)}
-        onSave={() => {
-          hostNameMutation.mutate(
-            customNameFromDraft(hostNameDraft, hostNameSettings),
-          );
-        }}
-        onReset={() => {
-          hostNameMutation.mutate(null);
-        }}
-      />
-      <StatusRow status={status} pending={statusPending} />
-      <ActionsRow
-        status={status}
-        pending={statusPending}
-        anyPending={anyPending}
-        installPending={installPending}
-        restartPending={restartMutation.isPending}
-        onInstall={() =>
-          convergeReadyMutation.mutate(
-            { force: false },
-            {
-              onSuccess: (outcome) => {
-                if (outcome.kind === "ok" && outcome.value.running) {
-                  toast.success(
-                    outcome.value.version !== null
-                      ? `Installed host v${outcome.value.version}`
-                      : "Host installed",
-                  );
-                }
-                invalidate();
+          <HostSummaryCard
+            status={status}
+            statusPending={statusPending}
+            banner={{
+              progress,
+              terminalOutcome:
+                terminalOutcome === null
+                  ? null
+                  : { message: terminalOutcome.message },
+              onRetryTerminalOutcome: handleRetryTerminalOutcome,
+              onDismissTerminalOutcome: () => setTerminalOutcome(null),
+            }}
+            nameEdit={{
+              settings: hostNameSettings,
+              pending: hostNamePending,
+              error: hostNameError,
+              draft: hostNameDraft,
+              savePending: hostNameMutation.isPending,
+              editing: editingName,
+              onDraftChange: (value) => setHostNameDraftOverride(value),
+              onSave: () => {
+                hostNameMutation.mutate(
+                  customNameFromDraft(hostNameDraft, hostNameSettings),
+                );
               },
-              onError: (err) => {
-                toastFromRunnerError(err, "Couldn't install host");
+              onReset: () => {
+                hostNameMutation.mutate(null);
               },
-            },
-          )
-        }
-        onRestart={() => setRestartConfirmOpen(true)}
-        onOpenDoctor={() => setDoctorOpen(true)}
-      />
+              onOpenEditing: () => setEditingName(true),
+              onCancel: () => {
+                setEditingName(false);
+                setHostNameDraftOverride(null);
+              },
+            }}
+            actions={{
+              anyPending,
+              installPending,
+              restartPending: restartMutation.isPending,
+              onInstall: () =>
+                convergeReadyMutation.mutate(
+                  { force: false },
+                  {
+                    onSuccess: (outcome) => {
+                      if (outcome.kind === "ok" && outcome.value.running) {
+                        toast.success(
+                          outcome.value.version !== null
+                            ? `Installed host v${outcome.value.version}`
+                            : "Host installed",
+                        );
+                      }
+                      invalidate();
+                    },
+                    onError: (err) => {
+                      toastFromRunnerError(err, "Couldn't install host");
+                    },
+                  },
+                ),
+              onRestart: () => setRestartConfirmOpen(true),
+              onOpenDoctor: () => setDoctorOpen(true),
+            }}
+            updates={{
+              hidden: status?.state === "not-installed",
+              registryState,
+              registryFetching:
+                registryFetching || refreshRegistryMutation.isPending,
+              anyPending,
+              updatePending,
+              latestReleasedAt,
+              nowMs,
+              updateReady: controllerStatus?.updateReady ?? false,
+              stagedVersion: controllerStatus?.stagedVersion ?? null,
+              downloadProgress: controllerStatus?.download?.progress ?? null,
+              onUpdate: () => runApply(false),
+              onRefresh: handleRefreshRegistry,
+            }}
+          />
+
+          <SettingsGroup
+            title="Installation"
+            tone="default"
+            dataTestId={undefined}
+            fill={false}
+          >
+            <InstallationDetailsDisclosure
+              record={installedRecord ?? null}
+              loading={installedPending}
+            />
+            <AdvancedDisclosure
+              installedVersion={installedRecord?.version ?? null}
+              availableSnapshot={availableSnapshot}
+              availablePending={availablePending}
+              availableErrorMessage={extractErrorMessage(
+                availableError,
+                registryState,
+              )}
+              availableFetching={availableFetching}
+              includePreReleases={includePreReleases}
+              registryState={registryState}
+              statusState={status?.state}
+              anyPending={anyPending}
+              registerPending={registerPending}
+              deregisterPending={deregisterServiceMutation.isPending}
+              onInstallVersion={(version) => runInstallVersion(version, false)}
+              onRegisterService={() => registerServiceMutation.mutate()}
+              onDeregisterService={() => deregisterServiceMutation.mutate()}
+              onRefreshAvailable={handleRefreshRegistry}
+              onIncludePreReleasesChange={setIncludePreReleases}
+            />
+          </SettingsGroup>
+        </div>
+      </section>
+
       <RestartHostConfirmDialog
         open={restartConfirmOpen}
         onOpenChange={(open) => {
@@ -608,50 +600,6 @@ function HostSettingsPanelInner(props: HostSettingsPanelInnerProps) {
         isPending={restartMutation.isPending}
         onConfirm={() => restartMutation.mutate()}
       />
-      {status?.state === "not-installed" ? null : (
-        <UpdatesRow
-          registryState={registryState}
-          registryFetching={
-            registryFetching || refreshRegistryMutation.isPending
-          }
-          anyPending={anyPending}
-          updatePending={updatePending}
-          latestReleasedAt={latestReleasedAt}
-          nowMs={nowMs}
-          updateReady={controllerStatus?.updateReady ?? false}
-          stagedVersion={controllerStatus?.stagedVersion ?? null}
-          downloadProgress={controllerStatus?.download?.progress ?? null}
-          onUpdate={() => runApply(false)}
-          onRefresh={handleRefreshRegistry}
-        />
-      )}
-
-      <InstallationDetailsDisclosure
-        record={installedRecord ?? null}
-        loading={installedPending}
-      />
-      <AdvancedDisclosure
-        installedVersion={installedRecord?.version ?? null}
-        availableSnapshot={availableSnapshot}
-        availablePending={availablePending}
-        availableErrorMessage={extractErrorMessage(
-          availableError,
-          registryState,
-        )}
-        availableFetching={availableFetching}
-        includePreReleases={includePreReleases}
-        registryState={registryState}
-        statusState={status?.state}
-        anyPending={anyPending}
-        registerPending={registerPending}
-        deregisterPending={deregisterServiceMutation.isPending}
-        onInstallVersion={(version) => runInstallVersion(version, false)}
-        onRegisterService={() => registerServiceMutation.mutate()}
-        onDeregisterService={() => deregisterServiceMutation.mutate()}
-        onRefreshAvailable={handleRefreshRegistry}
-        onIncludePreReleasesChange={setIncludePreReleases}
-      />
-
       <DoctorSheet
         open={doctorOpen}
         onOpenChange={setDoctorOpen}

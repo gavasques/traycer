@@ -8,12 +8,14 @@ import type { HostRpcError } from "@traycer-clients/shared/host-transport/host-m
 import type { HostClient } from "@traycer-clients/shared/host-client/host-client";
 import type { HostDirectoryEntry } from "@traycer-clients/shared/host-client/host-directory";
 import type {
-  PrepareWorkspaceFoldersRequest,
-  PrepareWorkspaceFoldersResponse,
   PreparedWorkspaceFolder,
   RemoveEpicRepoRequest,
   RemoveEpicRepoResponse,
 } from "@traycer/protocol/host/epic/unary-schemas";
+import type {
+  WorkspacePrepareFoldersRequestV11,
+  WorkspacePrepareFoldersResponseV11,
+} from "@traycer/protocol/host/workspace/unary-schemas";
 import type { HostRpcRegistry } from "@/lib/host";
 import { useHostClient } from "@/lib/host/runtime";
 import { useHostMutation } from "@/hooks/host/use-host-query";
@@ -31,13 +33,24 @@ interface MutationContext {
   readonly hostId: string | null;
 }
 
+/**
+ * Result of a user-initiated folder pick+prepare. `hostId` is the host that
+ * was bound at dispatch (and re-validated after every await) — callers MUST
+ * stamp folder rows with this value, never re-read the mutable client.
+ */
+export type PrepareFoldersWithHostResult = {
+  readonly folders: readonly PreparedWorkspaceFolder[];
+  readonly repoIdentifiers: WorkspacePrepareFoldersResponseV11["repoIdentifiers"];
+  readonly hostId: string;
+};
+
 export interface WorkspaceFolderActions {
   readonly isPreparing: boolean;
   readonly isRemoving: boolean;
   readonly prepareFoldersMutation: UseMutationResult<
-    PrepareWorkspaceFoldersResponse,
+    WorkspacePrepareFoldersResponseV11,
     HostRpcError,
-    PrepareWorkspaceFoldersRequest,
+    WorkspacePrepareFoldersRequestV11,
     MutationContext
   >;
   readonly removeEpicRepoMutation: UseMutationResult<
@@ -46,7 +59,7 @@ export interface WorkspaceFolderActions {
     RemoveEpicRepoRequest,
     MutationContext
   >;
-  readonly pickAndPrepareFolders: () => Promise<PrepareWorkspaceFoldersResponse | null>;
+  readonly pickAndPrepareFolders: () => Promise<PrepareFoldersWithHostResult | null>;
 }
 
 export function useWorkspaceFolderActions(): WorkspaceFolderActions {
@@ -139,8 +152,12 @@ export function useWorkspaceFolderActionsForClient(
   const { mutateAsync: prepareFoldersAsync } = prepareFoldersMutation;
 
   const pickAndPrepareFolders = useCallback(async () => {
-    const activeHost = client?.getActiveHost() ?? null;
-    if (client === null || activeHost === null) {
+    // Capture host identity at dispatch. Every post-await re-read must match
+    // this id; otherwise refuse so we never stamp A-prepared paths as B.
+    // Any bound host qualifies, not just a local one: a remote host reaches its
+    // own filesystem through the RPC-backed folder browser below.
+    const dispatchHost = client?.getActiveHost() ?? null;
+    if (client === null || dispatchHost === null) {
       reportableErrorToast("Select a host to add folders.", undefined, {
         title: "Could not add workspace folders",
         message: "No host was selected.",
@@ -149,48 +166,73 @@ export function useWorkspaceFolderActionsForClient(
       });
       return null;
     }
+    const dispatchHostId = dispatchHost.hostId;
 
     // Local/mock hosts share the client machine, so the native OS directory
-    // dialog picks real host paths. Every other host is remote from this
-    // client's point of view.
-    if (!canAssociateLocalWorkspaces(activeHost)) {
-      // The RPC-backed remote picker is a surface for shells WITHOUT a
-      // native folder dialog (mobile/browser). Desktop keeps its native
-      // dialog and the switch-to-local guidance for remote hosts.
-      if (runnerHost.workspaceFolders.canPickNatively) {
-        reportableErrorToast(
-          "Select the local host to add folders.",
-          undefined,
-          {
-            title: "Could not add workspace folders",
-            message: "The local host was not selected.",
-            code: null,
-            source: "Workspace folders",
-          },
-        );
-        return null;
-      }
-      // Hand the picker THIS client: in a tab it is host-bound for life, and
-      // the picked path is submitted through the same client below - the
-      // globally mounted dialog must browse that host, not whichever host is
-      // app-wide-active at the time.
+    // dialog picks real host paths. Every other host - a remote box, or any
+    // host seen from a shell with no native dialog at all (phone/browser) -
+    // is browsed over `workspace.browseFolders` instead. Both resolve to the
+    // same `readonly string[]` as `IRunnerHost.workspaceFolders.pickFolders()`,
+    // so everything downstream (`workspace.prepareFolders`,
+    // `addResolvedFolders`, ...) runs unchanged.
+    //
+    // The browser is handed THIS client: in a tab it is host-bound for life,
+    // and the picked path is submitted through the same client below - the
+    // globally mounted dialog must browse that host, not whichever host is
+    // app-wide-active at the time.
+    let folderPaths: readonly string[];
+    if (canAssociateLocalWorkspaces(dispatchHost)) {
+      folderPaths = await runnerHost.workspaceFolders.pickFolders();
+    } else {
       const pickedPath = await useRemoteFolderPickerStore
         .getState()
         .requestPick(client);
-      if (pickedPath === null) return null;
-      return prepareFoldersAsync({ folderPaths: [pickedPath] }).catch(
-        () => null,
-      );
+      folderPaths = pickedPath === null ? [] : [pickedPath];
     }
-
-    const folderPaths = await runnerHost.workspaceFolders.pickFolders();
     if (folderPaths.length === 0) {
       return null;
     }
+    if (!hostStillBound(client, dispatchHostId)) {
+      reportableErrorToast(
+        "Host changed while choosing folders. Try again.",
+        undefined,
+        {
+          title: "Could not add workspace folders",
+          message: "The active host changed while choosing folders.",
+          code: null,
+          source: "Workspace folders",
+        },
+      );
+      return null;
+    }
 
-    return prepareFoldersAsync({ folderPaths: [...folderPaths] }).catch(
-      () => null,
-    );
+    const response = await prepareFoldersAsync({
+      operation: "prepare",
+      folderPaths: [...folderPaths],
+      path: null,
+    }).catch(() => null);
+    if (response === null) {
+      return null;
+    }
+    if (!hostStillBound(client, dispatchHostId)) {
+      reportableErrorToast(
+        "Host changed while adding folders. Try again.",
+        undefined,
+        {
+          title: "Could not add workspace folders",
+          message: "The active host changed while adding folders.",
+          code: null,
+          source: "Workspace folders",
+        },
+      );
+      return null;
+    }
+
+    return {
+      folders: response.folders,
+      repoIdentifiers: response.repoIdentifiers,
+      hostId: dispatchHostId,
+    };
   }, [client, runnerHost, prepareFoldersAsync]);
 
   return {
@@ -204,13 +246,24 @@ export function useWorkspaceFolderActionsForClient(
 
 export function preparedWorkspaceFolderToWorkspaceFolderInfo(
   folder: PreparedWorkspaceFolder,
+  hostId: string | null,
 ): WorkspaceFolderInfo {
   return {
     path: folder.workspacePath,
     name: folder.workspaceName,
     repoIdentifier: folder.repoIdentifier,
+    hostId,
   };
 }
+
+function hostStillBound(
+  client: HostClient<HostRpcRegistry> | null,
+  dispatchHostId: string,
+): boolean {
+  if (client === null) return false;
+  return client.getActiveHostId() === dispatchHostId;
+}
+
 function canAssociateLocalWorkspaces(
   activeHost: HostDirectoryEntry | null,
 ): activeHost is HostDirectoryEntry & {
@@ -224,4 +277,17 @@ function canAssociateLocalWorkspaces(
 
 function readWorkspaceActionErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unknown error";
+}
+
+/**
+ * Pure helper for tests: stamp prepared folders with a dispatch-time host id.
+ * Mirrors the production post-prepare mapping without re-reading a client.
+ */
+export function stampPreparedFoldersWithDispatchHost(
+  folders: readonly PreparedWorkspaceFolder[],
+  dispatchHostId: string,
+): readonly WorkspaceFolderInfo[] {
+  return folders.map((folder) =>
+    preparedWorkspaceFolderToWorkspaceFolderInfo(folder, dispatchHostId),
+  );
 }

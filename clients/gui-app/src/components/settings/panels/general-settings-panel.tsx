@@ -5,7 +5,10 @@ import { toast } from "sonner";
 import { useShallow } from "zustand/react/shallow";
 import { SettingsPanelShell } from "@/components/settings/settings-panel-shell";
 import { SettingsRow } from "@/components/settings/settings-row";
+import { SettingsGroup } from "@/components/settings/settings-group";
 import { VoiceSettingsSection } from "@/components/settings/voice-settings-section";
+import { useSettingsDensity } from "@/providers/settings-density-context";
+import { cn } from "@/lib/utils";
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
 import { Button } from "@/components/ui/button";
 import { ConfirmDestructiveDialog } from "@/components/ui/confirm-destructive-dialog";
@@ -14,7 +17,7 @@ import { useRunnerHost } from "@/providers/use-runner-host";
 import { useRunnerUninstallTraycer } from "@/hooks/runner/use-runner-uninstall-traycer-mutation";
 import { requestAppQuit } from "@/lib/desktop-app-lifecycle";
 import { useHostQuery, useHostMutation } from "@/hooks/host/use-host-query";
-import { useHostClient, type HostRpcRegistry } from "@/lib/host";
+import type { HostRpcRegistry } from "@/lib/host";
 import {
   hostQueryKeys,
   runnerMutationKeys,
@@ -39,10 +42,17 @@ import { useSettingsStore } from "@/stores/settings/settings-store";
 import { useAuthStore } from "@/stores/auth/auth-store";
 import { useLocalSnapshotClearStore } from "@/stores/settings/local-snapshot-clear-store";
 import { useOnboardingStore } from "@/stores/onboarding/onboarding-store";
+import { SettingsHostSelect } from "./settings-host-select";
+import { useSettingsHostScope } from "./use-settings-host-scope";
 import { trackSettingChanged, type AnalyticsSetting } from "@/lib/analytics";
+import { modLabel } from "@/lib/keybindings/platform";
+import { getFeatureSettingsBridge } from "@/lib/desktop-feature-settings";
+import { useRunnerFeatureSettingsQuery } from "@/hooks/runner/use-runner-feature-settings-query";
+import { useRunnerAgentRolesSet } from "@/hooks/runner/use-runner-agent-roles-set-mutation";
 
 const MIGRATION_PROGRESS_LABEL = "Migrating tasks";
 const SNAPSHOTS_LOCAL_STORAGE_PARAMS = {};
+const MOD_ENTER_LABEL = `${modLabel()}+Enter`;
 
 interface ClearLocalSnapshotsMutationContext {
   readonly hostId: string | null;
@@ -103,136 +113,219 @@ export function GeneralSettingsPanel() {
   );
   const quoteReplyEnabled = useSettingsStore((s) => s.quoteReplyEnabled);
   const setQuoteReplyEnabled = useSettingsStore((s) => s.setQuoteReplyEnabled);
+  const steerOnModEnterEnabled = useSettingsStore(
+    (s) => s.steerOnModEnterEnabled,
+  );
+  const setSteerOnModEnterEnabled = useSettingsStore(
+    (s) => s.setSteerOnModEnterEnabled,
+  );
+  const compact = useSettingsDensity() === "compact";
+  const featureSettings = useRunnerFeatureSettingsQuery();
+  const setAgentRoles = useRunnerAgentRolesSet();
+  const featureSettingsAvailable = getFeatureSettingsBridge() !== null;
 
   return (
-    <SettingsPanelShell title="General">
-      <SettingsRow
-        label="Prevent sleep while running"
-        description="Keep the computer awake while an agent is running, so work continues when you step away."
-        control={
-          <Switch
-            checked={preventSleepWhileRunning}
-            onCheckedChange={(value) => {
-              trackGeneralSetting("preventSleepWhileRunning");
-              setPreventSleepWhileRunning(value);
-            }}
-            aria-label="Prevent sleep while running"
-          />
-        }
-      />
-      <SettingsRow
-        label="Show global resources button"
-        description="Show the app-wide resource monitor in the header."
-        control={
-          <Switch
-            checked={showGlobalResourceMonitor}
-            onCheckedChange={(value) => {
-              trackGeneralSetting("showGlobalResourceMonitor");
-              setShowGlobalResourceMonitor(value);
-            }}
-            aria-label="Show global resources button"
-          />
-        }
-      />
-      <SettingsRow
-        label="Show navigator resource stats"
-        description="Show compact live CPU and memory chips in task navigator rows."
-        control={
-          <Switch
-            checked={showNavigatorResourceStats}
-            onCheckedChange={(value) => {
-              trackGeneralSetting("showNavigatorResourceStats");
-              setShowNavigatorResourceStats(value);
-            }}
-            aria-label="Show navigator resource stats"
-          />
-        }
-      />
-      <SettingsRow
-        label="Pin context usage breakdown"
-        description="Keep the context window breakdown visible near the chat composer when usage data is available."
-        control={
-          <Switch
-            checked={pinContextUsageBreakdown}
-            onCheckedChange={(value) => {
-              trackGeneralSetting("pinContextUsageBreakdown");
-              setPinContextUsageBreakdown(value);
-            }}
-            aria-label="Pin context usage breakdown"
-          />
-        }
-      />
-      <SettingsRow
-        label="Quote reply on text selection"
-        description="Selecting assistant text shows a quote button that inserts the selection into the composer."
-        control={
-          <Switch
-            checked={quoteReplyEnabled}
-            onCheckedChange={(value) => {
-              trackGeneralSetting("quoteReplyEnabled");
-              setQuoteReplyEnabled(value);
-            }}
-            aria-label="Quote reply on text selection"
-          />
-        }
-      />
-      <VoiceSettingsSection />
-      <SettingsRow
-        label="Data migration"
-        description={
-          migrationProgressLabel ??
-          "Retry moving local SQLite tasks and epics to cloud."
-        }
-        control={
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={migrationIsRunning}
-            data-testid="settings-reattempt-migration"
-            onClick={() => {
-              startMigrationRun();
-            }}
-          >
-            {migrationIsRunning ? (
-              <AgentSpinningDots
-                className="text-muted-foreground"
-                testId="settings-reattempt-migration-spinner"
-                variant={undefined}
+    <SettingsPanelShell
+      title="General"
+      description="App behavior, agent activity, and local data controls."
+      bodyClassName="overflow-visible rounded-none border-none bg-transparent"
+    >
+      <div className={cn("flex flex-col", compact ? "gap-3.5" : "gap-5")}>
+        <SettingsGroup
+          title="Chat & composer"
+          tone="default"
+          dataTestId={undefined}
+          fill={false}
+        >
+          <VoiceSettingsSection />
+          <SettingsRow
+            label="Quote reply on text selection"
+            description="Selecting assistant text shows a quote button that inserts the selection into the composer."
+            control={
+              <Switch
+                checked={quoteReplyEnabled}
+                onCheckedChange={(value) => {
+                  trackGeneralSetting("quoteReplyEnabled");
+                  setQuoteReplyEnabled(value);
+                }}
+                aria-label="Quote reply on text selection"
               />
-            ) : null}
-            Re-attempt migration
-          </Button>
-        }
-      />
-      <SettingsRow
-        label="Product tour"
-        description="Replay the first-launch onboarding tour."
-        control={
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            data-testid="settings-replay-onboarding"
-            onClick={() => {
-              restartOnboarding();
-              void navigate({
-                to: "/onboarding",
-                search: { replay: true },
-              });
-            }}
+            }
+          />
+          <SettingsRow
+            label={`Steer with ${MOD_ENTER_LABEL}`}
+            description={`While a turn is running on a supported harness, ${MOD_ENTER_LABEL} sends the composer text as a same-turn steering message that jumps the queue. Plain Enter keeps queueing.`}
+            control={
+              <Switch
+                checked={steerOnModEnterEnabled}
+                onCheckedChange={(value) => {
+                  trackGeneralSetting("steerOnModEnterEnabled");
+                  setSteerOnModEnterEnabled(value);
+                }}
+                aria-label={`Steer with ${MOD_ENTER_LABEL}`}
+              />
+            }
+          />
+          <SettingsRow
+            label="Pin context usage breakdown"
+            description="Keep the context window breakdown visible near the chat composer when usage data is available."
+            control={
+              <Switch
+                checked={pinContextUsageBreakdown}
+                onCheckedChange={(value) => {
+                  trackGeneralSetting("pinContextUsageBreakdown");
+                  setPinContextUsageBreakdown(value);
+                }}
+                aria-label="Pin context usage breakdown"
+              />
+            }
+          />
+        </SettingsGroup>
+
+        <SettingsGroup
+          title="Running agents"
+          tone="default"
+          dataTestId={undefined}
+          fill={false}
+        >
+          <SettingsRow
+            label="Prevent sleep while running"
+            description="Keep the computer awake while an agent is running, so work continues when you step away."
+            control={
+              <Switch
+                checked={preventSleepWhileRunning}
+                onCheckedChange={(value) => {
+                  trackGeneralSetting("preventSleepWhileRunning");
+                  setPreventSleepWhileRunning(value);
+                }}
+                aria-label="Prevent sleep while running"
+              />
+            }
+          />
+          <SettingsRow
+            label="Show global resources button"
+            description="Show the app-wide resource monitor in the header."
+            control={
+              <Switch
+                checked={showGlobalResourceMonitor}
+                onCheckedChange={(value) => {
+                  trackGeneralSetting("showGlobalResourceMonitor");
+                  setShowGlobalResourceMonitor(value);
+                }}
+                aria-label="Show global resources button"
+              />
+            }
+          />
+          <SettingsRow
+            label="Show navigator resource stats"
+            description="Show compact live CPU and memory chips in task navigator rows."
+            control={
+              <Switch
+                checked={showNavigatorResourceStats}
+                onCheckedChange={(value) => {
+                  trackGeneralSetting("showNavigatorResourceStats");
+                  setShowNavigatorResourceStats(value);
+                }}
+                aria-label="Show navigator resource stats"
+              />
+            }
+          />
+        </SettingsGroup>
+
+        {featureSettingsAvailable ? (
+          <SettingsGroup
+            title="Experimental"
+            tone="default"
+            dataTestId={undefined}
+            fill={false}
           >
-            Replay tour
-          </Button>
-        }
-      />
-      <DangerZoneSection />
+            <SettingsRow
+              label="Agent roles"
+              description={
+                featureSettings.isError
+                  ? "Couldn't read feature settings. Repair ~/.traycer/cli/config.json, or back it up before resetting it, then reopen Settings."
+                  : "Let agents claim durable responsibilities and coordinate through role-aware tools and prompts."
+              }
+              control={
+                <Switch
+                  checked={featureSettings.data?.agentRoles === true}
+                  disabled={
+                    featureSettings.data === undefined ||
+                    setAgentRoles.isPending
+                  }
+                  onCheckedChange={(enabled) => {
+                    setAgentRoles.mutate(enabled);
+                  }}
+                  aria-label="Agent roles"
+                />
+              }
+            />
+          </SettingsGroup>
+        ) : null}
+
+        <SettingsGroup
+          title="Setup & migration"
+          tone="default"
+          dataTestId={undefined}
+          fill={false}
+        >
+          <SettingsRow
+            label="Product tour"
+            description="Replay the first-launch onboarding tour."
+            control={
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                data-testid="settings-replay-onboarding"
+                onClick={() => {
+                  restartOnboarding();
+                  void navigate({
+                    to: "/onboarding",
+                    search: { replay: true },
+                  });
+                }}
+              >
+                Replay tour
+              </Button>
+            }
+          />
+          <SettingsRow
+            label="Data migration"
+            description={
+              migrationProgressLabel ??
+              "Retry moving local SQLite tasks and epics to cloud."
+            }
+            control={
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={migrationIsRunning}
+                data-testid="settings-reattempt-migration"
+                onClick={() => {
+                  startMigrationRun();
+                }}
+              >
+                {migrationIsRunning ? (
+                  <AgentSpinningDots
+                    className="text-muted-foreground"
+                    testId="settings-reattempt-migration-spinner"
+                    variant={undefined}
+                  />
+                ) : null}
+                Re-attempt migration
+              </Button>
+            }
+          />
+        </SettingsGroup>
+
+        <DangerZoneSection />
+      </div>
     </SettingsPanelShell>
   );
 }
 
-// Destructive local actions live inline so the settings panel keeps one
-// rounded outer border while each action still reads as its own row.
 function DangerZoneSection() {
   const { hostManagement } = useRunnerHost();
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -240,10 +333,12 @@ function DangerZoneSection() {
 
   return (
     <>
-      <section className="bg-destructive/5" data-testid="settings-danger-zone">
-        <div className="border-b border-border/40 px-5 py-4">
-          <h2 className="text-ui font-semibold text-foreground">Danger Zone</h2>
-        </div>
+      <SettingsGroup
+        title="Danger Zone"
+        tone="danger"
+        dataTestId="settings-danger-zone"
+        fill={false}
+      >
         <SettingsFileEditSnapshotsSection />
         <SettingsLocalAppStateSection />
         {hostManagement === null ? null : (
@@ -255,7 +350,7 @@ function DangerZoneSection() {
             }}
           />
         )}
-      </section>
+      </SettingsGroup>
       {hostManagement === null ? null : (
         <ConfirmDestructiveDialog
           open={confirmOpen}
@@ -336,7 +431,8 @@ function RemoveTraycerDangerRow(props: {
 
 function SettingsFileEditSnapshotsSection() {
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const client = useHostClient();
+  const { hosts, effectiveId, setSelectedId, hostLabel, status, client } =
+    useSettingsHostScope();
   const queryClient = useQueryClient();
   const currentUserId = useAuthStore(
     (state) => state.contextMetadata?.userId ?? state.profile?.userId ?? null,
@@ -362,7 +458,7 @@ function SettingsFileEditSnapshotsSection() {
     options: {
       mutationKey: snapshotsMutationKeys.clearLocalSnapshots(),
       onMutate: () => ({
-        hostId: client.getActiveHostId(),
+        hostId: client === null ? null : client.getActiveHostId(),
         userId: currentUserId,
       }),
       onSuccess: (result, _variables, context) => {
@@ -397,9 +493,30 @@ function SettingsFileEditSnapshotsSection() {
     <>
       <SettingsRow
         label="File Edit Snapshots"
-        description="Pre-edit file snapshots for Undo and cached long plan content on this device. This data stays local and is not synced."
+        description={`Pre-edit file snapshots for Undo and cached long plan content on ${hostLabel}. This data stays local and is not synced.`}
         control={
           <div className="flex flex-col items-end gap-2">
+            {hosts.length > 0 ? (
+              <SettingsHostSelect
+                hosts={hosts}
+                value={effectiveId}
+                onChange={setSelectedId}
+                ariaLabel="File edit snapshots host"
+              />
+            ) : (
+              <span className="text-ui-xs text-muted-foreground">
+                Host: {hostLabel}
+              </span>
+            )}
+            {status === "unavailable" ? (
+              <span
+                className="text-ui-xs text-destructive"
+                data-testid="settings-file-edit-snapshots-host-unavailable"
+              >
+                {hostLabel} is no longer available - pick a different host
+                above.
+              </span>
+            ) : null}
             <div
               className="font-mono text-code-xs text-muted-foreground"
               data-testid="settings-local-snapshots-size"
@@ -410,7 +527,7 @@ function SettingsFileEditSnapshotsSection() {
               type="button"
               variant="destructive"
               size="sm"
-              disabled={clearSnapshotsMutation.isPending}
+              disabled={client === null || clearSnapshotsMutation.isPending}
               data-testid="settings-clear-file-edit-snapshots"
               onClick={() => {
                 setConfirmOpen(true);
@@ -431,8 +548,8 @@ function SettingsFileEditSnapshotsSection() {
       <ConfirmDestructiveDialog
         open={confirmOpen}
         onOpenChange={setConfirmOpen}
-        title="Clear file edit snapshots?"
-        description="Cleared snapshots cannot be restored. Existing conversation history and checkpoint records remain visible, but Undo will be disabled for your past turns on this device."
+        title={`Clear file edit snapshots for ${hostLabel}?`}
+        description={`Cleared snapshots on ${hostLabel} cannot be restored. Existing conversation history and checkpoint records remain visible, but Undo will be disabled for past turns on that host.`}
         cascadeSummary={null}
         actionLabel="Clear file edit snapshots"
         isPending={clearSnapshotsMutation.isPending}

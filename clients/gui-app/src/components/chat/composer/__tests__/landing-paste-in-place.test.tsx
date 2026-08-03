@@ -49,10 +49,10 @@ vi.mock("@/lib/composer/landing-image-gc", async (importActual) => {
   return {
     ...actual,
     scheduleLandingImageReconcile: mocks.scheduleLandingImageReconcile,
-    // Budget always allows paste fixtures (store tests cover real budget).
-    reserveLandingImageBudget: () => true,
   };
 });
+// Paste fixtures are tiny (well under 64 MiB); use the real
+// `reserveLandingImageBudget` so this stays an integration test of admission.
 
 const idbData = vi.hoisted(() => new Map<string, unknown>());
 
@@ -490,7 +490,7 @@ function makeLandingEditor(jobs: Array<Promise<void>>): Editor {
     element,
     extensions: buildComposerExtensions({
       pickerStore,
-      placeholder: "test",
+      getPlaceholder: () => "test",
       onSubmit: { current: () => undefined },
       slashProviderId: "claude",
       getHasPastedImageBytes: () => null,
@@ -513,7 +513,7 @@ function makeEditorWithoutIngest(): Editor {
     element,
     extensions: buildComposerExtensions({
       pickerStore: createComposerPickerStore(),
-      placeholder: "test",
+      getPlaceholder: () => "test",
       onSubmit: { current: () => undefined },
       slashProviderId: "claude",
       getHasPastedImageBytes: () => null,

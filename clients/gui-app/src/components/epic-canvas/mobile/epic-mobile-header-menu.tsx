@@ -1,4 +1,4 @@
-import { useEffect, useState, type SyntheticEvent } from "react";
+import { useCallback, useEffect, useState, type SyntheticEvent } from "react";
 import { EllipsisVertical } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -24,7 +24,13 @@ import {
   useRegisteredEpicTitle,
 } from "@/lib/epic-selectors";
 import { isEditableRole } from "@/lib/epic-permissions";
-import { NewTerminalPickerBody } from "@/components/epic-canvas/sidebar/new-terminal-picker";
+import { NewTerminalPickerBody } from "@/components/epic-canvas/sidebar/new-terminal-picker-body";
+import {
+  buildTerminalTileRef,
+  type TerminalLaunchTarget,
+} from "@/components/epic-canvas/sidebar/new-terminal-tile-ref";
+import { useEpicNestedFocusNavigation } from "@/hooks/epic/use-epic-nested-focus-navigation";
+import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
 import { useNewConversationModalOpenStore } from "@/stores/epics/new-conversation-modal-open-store";
 import { useNewConversationModalStore } from "@/stores/epics/new-conversation-modal-store";
 import { ACTIVE_TILE_PLACEMENT } from "@/lib/canvas/conversation-tile-placement";
@@ -142,6 +148,28 @@ interface NewTerminalDialogProps {
  */
 function NewTerminalDialog(props: NewTerminalDialogProps) {
   const { epicId, tabId, open, onOpenChange } = props;
+  const navigateNested = useEpicNestedFocusNavigation();
+  const prepareOpenTileInTabFocusTarget = useEpicCanvasStore(
+    (s) => s.prepareOpenTileInTabFocusTarget,
+  );
+  // Same launch wiring as the sidebar "+" popover (`NewTerminalPicker`): the
+  // shared body only reports the picked target; opening the tile is the
+  // shell's job.
+  const handleLaunch = useCallback(
+    (target: TerminalLaunchTarget) => {
+      navigateNested(epicId, tabId, () =>
+        prepareOpenTileInTabFocusTarget(tabId, buildTerminalTileRef(target)),
+      );
+      onOpenChange(false);
+    },
+    [
+      navigateNested,
+      prepareOpenTileInTabFocusTarget,
+      epicId,
+      tabId,
+      onOpenChange,
+    ],
+  );
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
@@ -158,12 +186,7 @@ function NewTerminalDialog(props: NewTerminalDialogProps) {
           </DialogDescription>
         </DialogHeader>
         {open ? (
-          <NewTerminalPickerBody
-            epicId={epicId}
-            tabId={tabId}
-            onLaunched={null}
-            onClose={() => onOpenChange(false)}
-          />
+          <NewTerminalPickerBody epicId={epicId} onLaunch={handleLaunch} />
         ) : null}
       </DialogContent>
     </Dialog>

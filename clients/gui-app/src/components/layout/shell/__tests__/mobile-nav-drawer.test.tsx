@@ -98,6 +98,8 @@ function historyItem(overrides: {
     updatedBucket: "earlier",
     linkedRepos: [],
     linkedWorkspaces: [],
+  worktreeBranches: [],
+  worktreePaths: [],
     pullRequestNumbers: [],
     ownership: "mine",
     permissionRole: null,

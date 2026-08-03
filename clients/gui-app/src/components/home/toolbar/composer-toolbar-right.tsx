@@ -71,6 +71,7 @@ function ComposerToolbarRightImpl(props: ComposerToolbarRightProps) {
         registerActivation
         createProfileHostId={createProfileHostId}
         runTargetHostId={runTargetHostId}
+        profileAdmission={null}
       />
       {dictation !== null ? <ComposerMicButton control={dictation} /> : null}
       {dictation === null && dictationPreparing !== null ? (

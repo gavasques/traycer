@@ -63,7 +63,7 @@ export function TileCanvas(props: TileCanvasProps) {
   const renderLive = snapshotLoaded || hasActiveHandoff;
   return (
     <div
-      className="canvas-token-scope relative h-full min-h-0 w-full overflow-hidden rounded-t-lg border border-canvas-border/70 bg-canvas text-canvas-foreground max-md:rounded-none max-md:border-0"
+      className="canvas-token-scope relative h-full min-h-0 w-full overflow-hidden border border-canvas-border/70 bg-canvas text-canvas-foreground max-md:border-0"
       data-testid="tile-canvas"
     >
       <TileCanvasBody
@@ -207,7 +207,7 @@ function EmptyShell(props: EmptyShellProps) {
     id: getEmptyShellDropId(epicId, tabId),
     data: dropData,
   });
-  const active = useEmptyShellDropActive();
+  const active = useEmptyShellDropActive(tabId);
 
   return (
     <div

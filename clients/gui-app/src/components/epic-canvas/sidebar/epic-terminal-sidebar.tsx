@@ -25,7 +25,10 @@ import {
   Terminal as TerminalIcon,
   Trash2,
 } from "lucide-react";
-import type { CanonicalTerminalSessionInfo } from "@traycer/protocol/host/terminal/unary-schemas";
+import type {
+  CanonicalTerminalSessionInfo,
+  CanonicalTerminalSessionInfoWithCurrentCwd,
+} from "@traycer/protocol/host/terminal/unary-schemas";
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
 import { ReportIssueAction } from "@/components/report-issue/report-issue-action";
 import { createReportIssueContext } from "@/lib/report-issue-context";
@@ -53,6 +56,7 @@ import { SnapshotGate } from "@/components/epic-canvas/snapshots/snapshot-loadin
 import { TerminalsPanelSkeleton } from "@/components/epic-canvas/skeletons/terminals-panel-skeleton";
 import {
   getTerminalTileDragId,
+  getPaneScopedDndId,
   TERMINAL_TILE_DND_TYPE,
   type EpicCanvasTerminalTileDragData,
 } from "@/components/epic-canvas/dnd/dnd";
@@ -73,10 +77,15 @@ import { cn } from "@/lib/utils";
 import {
   findOpenArtifactInTab,
   useEpicCanvasStore,
-  useIsActiveEpicArtifact,
+  useIsActiveTile,
 } from "@/stores/epics/canvas/store";
+import {
+  useEpicLeftPanelStore,
+  useLeftPanelSectionCollapsed,
+} from "@/stores/epics/left-panel-store";
 import { useSettingsStore } from "@/stores/settings/settings-store";
 import type { EpicTerminalRef } from "@/stores/epics/canvas/types";
+import { providerLoginTerminalProviderId } from "@/stores/providers/provider-login-terminals";
 import {
   SidebarContextMenuItems,
   SidebarDropdownMenuItems,
@@ -107,6 +116,14 @@ function TerminalsPanelBodyLive(props: {
   const { epicId, tabId } = props;
   const hostClient = useHostClient();
   const list = useTerminalList({ kind: "epic", epicId }, hostClient);
+  // Manual escape hatch for a stranded error state: host-scoped queries get
+  // no automatic retry/refetch routes (transport already retried), so without
+  // this the only recoveries are accidental (collapse/re-expand remounts the
+  // body) or the stream-driven `availability-recovered` invalidation.
+  const refetchList = list.refetch;
+  const retryList = useCallback(() => {
+    void refetchList();
+  }, [refetchList]);
   const navigateNested = useEpicNestedFocusNavigation();
   const prepareOpenTileInTabFocusTarget = useEpicCanvasStore(
     (s) => s.prepareOpenTileInTabFocusTarget,
@@ -160,6 +177,8 @@ function TerminalsPanelBodyLive(props: {
             isLoading={list.isPending}
             isError={list.isError}
             errorMessage={list.error?.message ?? null}
+            isRetrying={list.isFetching}
+            onRetry={retryList}
             sessions={sessions}
             epicId={epicId}
             tabId={tabId}
@@ -180,11 +199,19 @@ function TerminalsPanelBodyLive(props: {
  * every host list update.
  */
 export function TerminalsPanelActions(props: LeftPanelSlotProps) {
+  const collapsed = useLeftPanelSectionCollapsed("terminals");
+  const setPanelSectionCollapsed = useEpicLeftPanelStore(
+    (state) => state.setPanelSectionCollapsed,
+  );
+  const expandBeforeOpen = useCallback(() => {
+    if (collapsed) setPanelSectionCollapsed("terminals", false);
+  }, [collapsed, setPanelSectionCollapsed]);
   return (
     <NewTerminalPicker
       epicId={props.epicId}
       tabId={props.tabId}
       onLaunched={null}
+      onBeforeOpen={expandBeforeOpen}
     />
   );
 }
@@ -193,6 +220,8 @@ interface TerminalSidebarBodyProps {
   readonly isLoading: boolean;
   readonly isError: boolean;
   readonly errorMessage: string | null;
+  readonly isRetrying: boolean;
+  readonly onRetry: () => void;
   readonly sessions: ReadonlyArray<CanonicalTerminalSessionInfo>;
   readonly epicId: string;
   readonly tabId: string;
@@ -216,22 +245,41 @@ function TerminalSidebarBody(props: TerminalSidebarBodyProps) {
   if (props.isError) {
     return (
       <div
-        className="flex items-center gap-2 px-2 py-1.5 text-ui-sm text-destructive"
+        className="flex flex-col gap-2 px-2 py-1.5 text-ui-sm text-destructive"
         data-testid="epic-terminal-sidebar-error"
       >
-        <span className="min-w-0 flex-1">
+        <span className="min-w-0">
           {props.errorMessage ?? "Failed to load terminals."}
         </span>
-        <ReportIssueAction
-          context={createReportIssueContext({
-            title: "Failed to load terminals",
-            message: "The terminal list could not be loaded.",
-            code: null,
-            source: "Terminals",
-          })}
-          presentation="icon"
-          className="text-current"
-        />
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={props.isRetrying}
+            data-testid="epic-terminal-sidebar-retry"
+            onClick={props.onRetry}
+          >
+            {props.isRetrying ? (
+              <AgentSpinningDots
+                className="shrink-0"
+                testId={undefined}
+                variant={undefined}
+              />
+            ) : null}
+            Retry
+          </Button>
+          <ReportIssueAction
+            context={createReportIssueContext({
+              title: "Failed to load terminals",
+              message: "The terminal list could not be loaded.",
+              code: null,
+              source: "Terminals",
+            })}
+            presentation="icon"
+            className="text-current"
+          />
+        </div>
       </div>
     );
   }
@@ -277,7 +325,7 @@ function TerminalRow(props: TerminalRowProps) {
   const { hostId, epicId, tabId, session, onOpen } = props;
   // Per-row boolean subscription so selecting a session re-renders only the two
   // rows whose active state flips, not every row.
-  const isActive = useIsActiveEpicArtifact(tabId, session.sessionId);
+  const isActive = useIsActiveTile(tabId, session.sessionId);
   const kill = useTerminalKill();
   const rename = useTerminalRename();
   const navigateNested = useEpicNestedFocusNavigation();
@@ -311,7 +359,7 @@ function TerminalRow(props: TerminalRowProps) {
     setNodeRef: dragRef,
     isDragging,
   } = useDraggable({
-    id: getTerminalTileDragId(session.sessionId),
+    id: getPaneScopedDndId(tabId, getTerminalTileDragId(session.sessionId)),
     data: dragData,
     disabled: isRenaming,
   });
@@ -501,6 +549,7 @@ function terminalRowMenuEntries(
       label: "Rename",
       icon: <Pencil className="size-3.5" />,
       disabled: false,
+      disabledTooltip: null,
       variant: "default",
       testIds: {
         dropdown: `epic-terminal-sidebar-rename-${props.sessionId}`,
@@ -515,6 +564,7 @@ function terminalRowMenuEntries(
       label: "Close",
       icon: <Trash2 className="size-3.5" />,
       disabled: props.closePending,
+      disabledTooltip: null,
       variant: "destructive",
       testIds: {
         dropdown: `epic-terminal-sidebar-kill-menu-${props.sessionId}`,
@@ -525,10 +575,14 @@ function terminalRowMenuEntries(
   ];
 }
 
-function deriveTerminalLabel(session: CanonicalTerminalSessionInfo): string {
+function deriveTerminalLabel(
+  session:
+    CanonicalTerminalSessionInfo | CanonicalTerminalSessionInfoWithCurrentCwd,
+): string {
   return terminalSessionTitle({
     title: session.title,
     activeProcessName: session.activeProcessName,
+    currentCwd: "currentCwd" in session ? session.currentCwd : session.cwd,
   });
 }
 
@@ -537,6 +591,15 @@ function makeTerminalRef(
   hostId: string,
   instanceId: string,
 ): EpicTerminalRef {
+  // `terminal.list` cannot say who created a session, so a sign-in terminal
+  // reopened from here would otherwise become an ordinary tile that believes it
+  // owns the PTY - and re-creates the id as a bare shell once the host loses
+  // it. The renderer's own record of host-created sign-in terminals supplies
+  // what the wire does not.
+  const signInProviderId = providerLoginTerminalProviderId(
+    hostId,
+    session.sessionId,
+  );
   return {
     id: session.sessionId,
     instanceId,
@@ -545,5 +608,11 @@ function makeTerminalRef(
     titleSource: deriveTitleSourceFromSessionTitle(session.title),
     hostId,
     cwd: session.cwd,
+    ...(signInProviderId === null
+      ? {}
+      : {
+          origin: "provider-login" as const,
+          originProviderId: signInProviderId,
+        }),
   };
 }

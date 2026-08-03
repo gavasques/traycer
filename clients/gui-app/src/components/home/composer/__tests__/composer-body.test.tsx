@@ -34,6 +34,8 @@ vi.mock("@/components/home/composer/composer-shell", () => ({
     readonly onDragEnter: DragEventHandler<HTMLElement>;
     readonly onDragLeave: DragEventHandler<HTMLElement>;
     readonly dragOverlayVariant: FileTransferDragOverlayVariant | null;
+    readonly utilityRail: ReactNode;
+    readonly attachmentsStrip: ReactNode;
     readonly editor: ReactNode;
     readonly toolbar: ReactNode;
   }) => (
@@ -47,6 +49,8 @@ vi.mock("@/components/home/composer/composer-shell", () => ({
       onDragEnter={props.onDragEnter}
       onDragLeave={props.onDragLeave}
     >
+      <div data-testid="composer-utility-overlay">{props.utilityRail}</div>
+      <div data-testid="composer-attachment-rail">{props.attachmentsStrip}</div>
       {props.editor}
       {props.toolbar}
     </div>
@@ -90,13 +94,16 @@ function makePaste(): UseComposerPasteResult {
 interface RenderComposerBodyOptions {
   readonly composerMode: ComposerMode;
   readonly paste: UseComposerPasteResult;
-  readonly header: ReactNode;
-  readonly topBanner: ReactNode;
-  readonly toolbarLayout: "full" | "collapsed";
+  readonly header?: ReactNode;
+  readonly topBanner?: ReactNode;
+  readonly stashControl?: ReactNode;
+  /** Omitted means the desktop toolbar, which is what most cases exercise. */
+  readonly toolbarLayout?: "full" | "collapsed";
 }
 
 function renderComposerBody(options: RenderComposerBodyOptions) {
-  const { composerMode, paste, header, topBanner, toolbarLayout } = options;
+  const { composerMode, paste, header, topBanner, stashControl } = options;
+  const toolbarLayout = options.toolbarLayout ?? "full";
   const toolbarStore = createComposerToolbarStore({
     seedKey: "test",
     values: {
@@ -104,7 +111,6 @@ function renderComposerBody(options: RenderComposerBodyOptions) {
       selection: { harnessId: "claude", modelSlug: "", profileId: null },
       reasoning: "",
       serviceTier: "",
-      agentMode: "regular",
     },
     onSettingsChange: null,
     tuiOnly: composerMode === "terminal",
@@ -127,6 +133,7 @@ function renderComposerBody(options: RenderComposerBodyOptions) {
       header={header}
       topBanner={topBanner}
       toolbarLayout={toolbarLayout}
+      stashControl={stashControl}
       attachmentsStrip={null}
       workspaceControls={null}
       dictationControl={null}
@@ -137,7 +144,9 @@ function renderComposerBody(options: RenderComposerBodyOptions) {
       onEditorReady={null}
       onSubmit={vi.fn()}
       onStartTerminal={vi.fn()}
-      onSnapshot={vi.fn()}
+      onDocumentChange={vi.fn()}
+
+      onSelectionChange={vi.fn()}
     />,
   );
 }
@@ -145,13 +154,7 @@ function renderComposerBody(options: RenderComposerBodyOptions) {
 describe("ComposerBody file-transfer routing", () => {
   it("does not dispatch file transfers to the hidden chat editor in terminal mode", () => {
     const paste = makePaste();
-    renderComposerBody({
-      composerMode: "terminal",
-      paste,
-      header: null,
-      topBanner: null,
-      toolbarLayout: "full",
-    });
+    renderComposerBody({ composerMode: "terminal", paste });
 
     const shell = screen.getByRole("region", { name: "Composer shell" });
     fireEvent.dragEnter(shell);
@@ -172,13 +175,7 @@ describe("ComposerBody file-transfer routing", () => {
 
   it("keeps file-transfer handling active in chat mode", () => {
     const paste = makePaste();
-    renderComposerBody({
-      composerMode: "chat",
-      paste,
-      header: null,
-      topBanner: null,
-      toolbarLayout: "full",
-    });
+    renderComposerBody({ composerMode: "chat", paste });
 
     const shell = screen.getByRole("region", { name: "Composer shell" });
     fireEvent.dragEnter(shell);
@@ -198,13 +195,7 @@ describe("ComposerBody file-transfer routing", () => {
 
 describe("ComposerBody image-attachment caret stabilization", () => {
   it("enables caret stabilization on the underlying prompt editor", () => {
-    renderComposerBody({
-      composerMode: "chat",
-      paste: makePaste(),
-      header: null,
-      topBanner: null,
-      toolbarLayout: "full",
-    });
+    renderComposerBody({ composerMode: "chat", paste: makePaste() });
 
     const editor = screen.getByRole("textbox", { name: "Prompt editor" });
     expect(editor.getAttribute("data-stabilize-caret")).toBe("true");
@@ -217,8 +208,6 @@ describe("ComposerBody topBanner placement", () => {
       composerMode: "chat",
       paste: makePaste(),
       header: <div data-testid="mode-switch-header">header</div>,
-      topBanner: null,
-      toolbarLayout: "full",
     });
 
     expect(screen.queryByTestId("rate-limit-banner")).toBeNull();
@@ -232,7 +221,6 @@ describe("ComposerBody topBanner placement", () => {
       paste: makePaste(),
       header: <div data-testid="mode-switch-header">header</div>,
       topBanner: <div data-testid="rate-limit-banner">banner</div>,
-      toolbarLayout: "full",
     });
     const header = screen.getByTestId("mode-switch-header");
     const banner = screen.getByTestId("rate-limit-banner");
@@ -300,5 +288,41 @@ describe("ComposerBody toolbar layout", () => {
     // carries the same class and appears first.
     const toolbar = screen.getByTestId("mobile-toolbar");
     expect(toolbar.parentElement?.className).toContain("hidden");
+  });
+});
+
+describe("ComposerBody overlay utility visibility", () => {
+  it("shows prompt utilities in the chat overlay", () => {
+    renderComposerBody({
+      composerMode: "chat",
+      paste: makePaste(),
+      stashControl: (
+        <div role="status" aria-label="Stashed prompts">
+          Stash 2
+        </div>
+      ),
+    });
+    const stash = screen.getByRole("status", { name: "Stashed prompts" });
+    expect(
+      stash.closest('[data-testid="composer-utility-overlay"]'),
+    ).not.toBeNull();
+    expect(
+      stash.closest('[data-testid="composer-attachment-rail"]'),
+    ).toBeNull();
+  });
+
+  it("omits prompt utilities in terminal mode", () => {
+    renderComposerBody({
+      composerMode: "terminal",
+      paste: makePaste(),
+      stashControl: (
+        <div role="status" aria-label="Stashed prompts">
+          Stash 2
+        </div>
+      ),
+    });
+    expect(
+      screen.queryByRole("status", { name: "Stashed prompts" }),
+    ).toBeNull();
   });
 });

@@ -44,11 +44,12 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { TooltipWrapper } from "@/components/ui/tooltip-wrapper";
 import type {
   ChatActiveTurn,
   ChatQueuedItem,
 } from "@traycer/protocol/host/agent/gui/subscribe";
-import { QueuedMessageContentPreview } from "@/components/chat/queued-message-content-preview";
+import { ComposerContentPreview } from "@/components/chat/composer/composer-content-preview";
 import { isReceivedAgentResponse } from "@/components/chat/chat-queue-utils";
 import {
   QUEUED_MESSAGE_DND_MODIFIERS,
@@ -188,8 +189,9 @@ export function QueuedMessagePanel(props: QueuedMessagePanelProps) {
       <CollapsibleContent>
         <div
           data-testid="queued-message-list"
+          data-native-scrollbar="true"
           className={cn(
-            "overflow-y-auto border-t border-border/50 chat-scrollbar-native-thin",
+            "overflow-y-auto border-t border-border/50",
             props.scrollRegionMaxHeightClass,
           )}
         >
@@ -300,49 +302,55 @@ function QueuedMessageHeader(props: {
   });
 
   const header = (
-    <div
-      className="flex items-stretch"
-      data-testid="queued-message-header"
-      title={tooltip ?? undefined}
-    >
-      <CollapsibleTrigger
-        className="group/queue flex min-w-0 flex-1 items-center gap-2 px-3 py-1.5 text-left transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-        data-testid="queued-message-header-toggle"
+    <div className="flex items-stretch" data-testid="queued-message-header">
+      {/* On the collapse trigger, not the header strip: the strip also holds
+          Resume/Pause, and a strip-wide trigger surfaced this queue-state text
+          while hovering either of those buttons. */}
+      <TooltipWrapper
+        label={tooltip}
+        side="top"
+        sideOffset={undefined}
+        align={undefined}
       >
-        <ChevronDown
-          aria-hidden
-          className={cn(
-            "size-3 shrink-0 text-muted-foreground/70 transition-transform",
-            open ? null : "-rotate-90",
-          )}
-        />
-        {queueStatus === "running" ? (
-          <LivePulse
-            size="xs"
-            tone="active"
-            ariaLabel="Queue running"
-            className={undefined}
-          />
-        ) : null}
-        <span className="shrink-0 text-ui-xs font-medium text-foreground/85">
-          Message Queue
-        </span>
-        <span
-          aria-hidden
-          data-testid="queued-message-header-divider"
-          className="shrink-0 text-muted-foreground/40"
+        <CollapsibleTrigger
+          className="group/queue flex min-w-0 flex-1 items-center gap-2 px-3 py-1.5 text-left transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          data-testid="queued-message-header-toggle"
         >
-          ·
-        </span>
-        <ListOrdered
-          className="size-3.5 shrink-0 text-muted-foreground/70"
-          data-testid="queued-message-header-status-icon"
-          aria-hidden
-        />
-        <span className="min-w-0 flex-1 truncate text-ui-xs text-muted-foreground">
-          {count === 1 ? "1 message" : `${count} messages`}
-        </span>
-      </CollapsibleTrigger>
+          <ChevronDown
+            aria-hidden
+            className={cn(
+              "size-3 shrink-0 text-muted-foreground/70 transition-transform",
+              open ? null : "-rotate-90",
+            )}
+          />
+          {queueStatus === "running" ? (
+            <LivePulse
+              size="xs"
+              tone="active"
+              ariaLabel="Queue running"
+              className={undefined}
+            />
+          ) : null}
+          <span className="shrink-0 text-ui-xs font-medium text-foreground/85">
+            Message Queue
+          </span>
+          <span
+            aria-hidden
+            data-testid="queued-message-header-divider"
+            className="shrink-0 text-muted-foreground/40"
+          >
+            ·
+          </span>
+          <ListOrdered
+            className="size-3.5 shrink-0 text-muted-foreground/70"
+            data-testid="queued-message-header-status-icon"
+            aria-hidden
+          />
+          <span className="min-w-0 flex-1 truncate text-ui-xs text-muted-foreground">
+            {count === 1 ? "1 message" : `${count} messages`}
+          </span>
+        </CollapsibleTrigger>
+      </TooltipWrapper>
       {readOnly ? (
         <span className="flex shrink-0 items-center px-3 text-ui-xs text-muted-foreground">
           Owner manages queue
@@ -560,8 +568,9 @@ function QueuedMessageRowContent(props: {
         </div>
       ) : null}
       <div
-        className="max-h-[3lh] overflow-y-auto pr-1 text-ui-sm leading-5 wrap-break-word chat-scrollbar-native-thin"
+        className="max-h-[3lh] overflow-y-auto pr-1 text-ui-sm leading-5 wrap-break-word"
         data-testid="queued-message-content-scroll"
+        data-native-scrollbar="true"
       >
         {showFloatingChrome ? (
           <QueuedMessageFloatingChrome
@@ -592,7 +601,12 @@ function QueuedMessageRowContent(props: {
             ) : null}
           </QueuedMessageFloatingChrome>
         ) : null}
-        <QueuedMessageContentPreview content={props.item.message.content} />
+        <ComposerContentPreview
+          content={props.item.message.content}
+          emptyLabel="Queued message"
+          testId="queued-message-content-preview"
+          className={undefined}
+        />
       </div>
     </div>
   );
@@ -714,13 +728,20 @@ function ReceivedAgentBadge(props: {
       ? props.sender.displayName
       : `${props.sender.agentId.slice(0, 8)}…`;
   return (
-    <span
-      className="inline-flex shrink-0 items-center gap-1 rounded-sm border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-ui-xs font-medium text-primary"
-      title={`Response received from ${name}`}
+    <TooltipWrapper
+      label={`Response received from ${name}`}
+      side="top"
+      sideOffset={undefined}
+      align={undefined}
     >
-      <Inbox className="size-3" aria-hidden />
-      <span className="max-w-[8rem] truncate">{name}</span>
-    </span>
+      <span
+        className="inline-flex shrink-0 items-center gap-1 rounded-sm border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-ui-xs font-medium text-primary"
+        data-testid="queued-message-sender-badge"
+      >
+        <Inbox className="size-3" aria-hidden />
+        <span className="max-w-[8rem] truncate">{name}</span>
+      </span>
+    </TooltipWrapper>
   );
 }
 
@@ -831,7 +852,6 @@ function QueuedMessageAbortSteerButton(props: {
             variant="ghost"
             className="size-7 shrink-0 text-muted-foreground"
             aria-label="Cancel steer"
-            title="Cancel steer"
             onClick={props.onAbortSteer}
           >
             <Undo2 className="size-3.5" />
@@ -857,30 +877,42 @@ function QueuedMessageRowActions(props: {
   return (
     <div className="ml-auto flex shrink-0 items-center justify-end gap-0.5">
       <span className="flex shrink-0 items-center gap-0.5">
-        <Button
-          type="button"
-          size="icon"
-          variant="ghost"
-          className="size-7 shrink-0 text-muted-foreground"
-          disabled={props.actionsDisabled}
-          aria-label={props.editLabel}
-          title={props.editTitle}
-          onClick={props.onEdit}
+        <TooltipWrapper
+          label={props.editTitle}
+          side="top"
+          sideOffset={6}
+          align={undefined}
         >
-          <Pencil className="size-3.5" />
-        </Button>
-        <Button
-          type="button"
-          size="icon"
-          variant="ghost"
-          className="size-7 shrink-0 text-muted-foreground"
-          disabled={props.actionsDisabled}
-          aria-label="Delete queued message"
-          title="Delete queued message"
-          onClick={props.onCancel}
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            className="size-7 shrink-0 text-muted-foreground"
+            disabled={props.actionsDisabled}
+            aria-label={props.editLabel}
+            onClick={props.onEdit}
+          >
+            <Pencil className="size-3.5" />
+          </Button>
+        </TooltipWrapper>
+        <TooltipWrapper
+          label="Delete queued message"
+          side="top"
+          sideOffset={6}
+          align={undefined}
         >
-          <Trash2 className="size-3.5" />
-        </Button>
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            className="size-7 shrink-0 text-muted-foreground"
+            disabled={props.actionsDisabled}
+            aria-label="Delete queued message"
+            onClick={props.onCancel}
+          >
+            <Trash2 className="size-3.5" />
+          </Button>
+        </TooltipWrapper>
       </span>
       <Tooltip>
         <TooltipTrigger asChild>
@@ -892,7 +924,6 @@ function QueuedMessageRowActions(props: {
               className="size-7 shrink-0 text-muted-foreground"
               disabled={props.steerNowDisabled}
               aria-label="Steer queued message now"
-              title="Steer queued message now"
               onClick={props.onSteerNow}
             >
               <SendHorizontal className="size-3.5" />

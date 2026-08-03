@@ -9,6 +9,7 @@ import type {
 } from "../host-transport/host-messenger";
 import { HostRpcError as HostRpcErrorCtor } from "../host-transport/host-messenger";
 import type { HostDirectoryEntry } from "./host-directory";
+import { isRemoteHostDirectoryEntry } from "./remote-fetcher";
 import {
   HostBindingAuthorityRegistry,
   StaleHostBindingAuthorityError,
@@ -297,6 +298,25 @@ export class HostClient<Registry extends VersionedRpcRegistry> {
       previousHostId: this.activeHost.hostId,
       currentHostId: this.activeHost.hostId,
       reason: "availability-recovered",
+    });
+  }
+
+  /**
+   * {@link notifyAvailabilityRecovered} for an explicitly-named host. Tabs
+   * bind a `hostId` for life, so a durable per-tab stream can heartbeat (and
+   * observe recovering) a host that is NOT the active one - that host's
+   * stranded unary queries are keyed by ITS id and would never be reached by
+   * the active-host variant. For the active host this delegates (including
+   * the change event); for any other host it invalidates that host's scope so
+   * active observers refetch, without announcing an active-host change.
+   */
+  notifyHostAvailabilityRecovered(hostId: string): void {
+    if (this.activeHost !== null && this.activeHost.hostId === hostId) {
+      this.notifyAvailabilityRecovered();
+      return;
+    }
+    this.invalidator.invalidateHostScope(hostId, {
+      refetchActive: true,
     });
   }
 
@@ -627,6 +647,17 @@ function sameHostId(
   return previous.hostId === next.hostId;
 }
 
+/**
+ * `publicKey` is compared separately from the base fields (R-1): a remote
+ * host's static Noise key can rotate (re-enrollment / corruption recovery -
+ * `registerOrAdoptHost` overwrites the key on the same `hostId`) while every
+ * base field - including `websocketUrl`, since every remote host shares one
+ * fixed relay attach URL - stays identical. Treating that as "same transport"
+ * would swallow the `host-updated` `emitChange` this rotation must fire,
+ * leaving every `onChange` subscriber (the app-wide stream provider, the
+ * reactive active-host-id projection, the epic session mount) permanently
+ * pinned to the stale key with no signal that anything changed.
+ */
 function sameHostTransport(
   previous: HostDirectoryEntry | null,
   next: HostDirectoryEntry | null,
@@ -639,6 +670,11 @@ function sameHostTransport(
     previous.kind === next.kind &&
     previous.websocketUrl === next.websocketUrl &&
     previous.version === next.version &&
-    previous.status === next.status
+    previous.status === next.status &&
+    remotePublicKeyOf(previous) === remotePublicKeyOf(next)
   );
+}
+
+function remotePublicKeyOf(entry: HostDirectoryEntry): string | null {
+  return isRemoteHostDirectoryEntry(entry) ? entry.publicKey : null;
 }

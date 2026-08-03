@@ -14,6 +14,10 @@ import {
   withConfiguredHostName,
   withDefaultHostName,
 } from "./host-display-name";
+import {
+  isProcessStartIdentity,
+  type ProcessStartIdentity,
+} from "@traycer/protocol/host/lifecycle";
 import type { DesktopLocalHostSnapshot } from "../../ipc-contracts/host-types";
 import {
   isCurrentHostWebsocketUrl,
@@ -29,8 +33,23 @@ export { isCurrentHostWebsocketUrl } from "./host-endpoint-reachability";
  * user's shell as part of bootstrap, so this needs to absorb the user's
  * full rc-file init cost. 60s is sized for slow oh-my-zsh setups +
  * Prisma/native init.
+ *
+ * It is a QUIET budget, not a wall-clock one: `notifyProvisioningActivity`
+ * re-arms it, exactly the way the CLI's own inactivity guard re-arms on every
+ * NDJSON progress event. A first install downloads ~800MB and extracts a
+ * multi-gigabyte runtime tree, which on a slow or AV-scanned machine takes
+ * minutes - a flat 60s deadline declared "Could not start Traycer Host" while
+ * that install was demonstrably still progressing (traycer#862, and again in
+ * traycer#858's desktop log).
  */
 const HOST_READY_TIMEOUT_MS = 60_000;
+/**
+ * Ceiling on the total wait regardless of progress, so an installer that
+ * emits events forever can never hold bootstrap open indefinitely. Sized well
+ * above a realistic worst-case first install (the field report that motivated
+ * the sliding budget took ~3m17s) while still bounded.
+ */
+const HOST_READY_MAX_WAIT_MS = 15 * 60_000;
 const HOST_POLL_INTERVAL_MS = 250;
 const HOST_ENDPOINT_CHECK_TIMEOUT_MS = 750;
 const CLI_START_STOP_TIMEOUT_MS = 60_000;
@@ -175,6 +194,12 @@ export class HostLifecycle extends EventEmitter {
   private disposed = false;
   private reachabilityRetryTimer: NodeJS.Timeout | null = null;
   private reachabilityRetryDelayMs = REACHABILITY_RETRY_INITIAL_MS;
+  /**
+   * Epoch ms of the last reported host-provisioning progress event, or 0 when
+   * none has been seen. Read only by `waitForReady`, which treats it as the
+   * point its quiet budget restarts from.
+   */
+  private lastProvisioningActivityAt = 0;
 
   constructor(options: HostLifecycleOptions) {
     super();
@@ -245,6 +270,24 @@ export class HostLifecycle extends EventEmitter {
   }
 
   /**
+   * Report that host provisioning made progress just now.
+   *
+   * Wired from `HostController.onMutationProgress` at startup - the CLI emits
+   * an NDJSON progress event per download chunk / extraction stage, and the
+   * desktop already re-arms its inactivity-SIGKILL guard off that same stream.
+   * `waitForReady` re-arms its own budget here for the same reason: an install
+   * that is demonstrably still moving is not a host that failed to start.
+   *
+   * Deliberately a plain timestamp rather than a "provisioning in flight"
+   * boolean. A lane that hangs without emitting anything must still time out,
+   * and only a per-event stamp distinguishes progress from a wedged lane.
+   */
+  notifyProvisioningActivity(): void {
+    if (this.disposed) return;
+    this.lastProvisioningActivityAt = Date.now();
+  }
+
+  /**
    * Path to the pid-metadata file this lifecycle is bound to. Exposed
    * so the SMAppService respawn handler can drive its own
    * `waitForHostReady` poll against the same on-disk source of truth
@@ -253,6 +296,15 @@ export class HostLifecycle extends EventEmitter {
    */
   get pidMetadataFile(): string {
     return this.options.layout.pidMetadataFile;
+  }
+
+  /**
+   * The host's durable enrollment record. Read-only, and unlike `pid.json` it
+   * outlives the host process - which is what makes it answerable while the
+   * host is stopped.
+   */
+  get identityEnrollmentFile(): string {
+    return this.options.layout.identityEnrollmentFile;
   }
 
   /**
@@ -342,14 +394,14 @@ export class HostLifecycle extends EventEmitter {
       this.options.layout.pidMetadataFile,
     );
     const raw = readState.kind === "parsed" ? readState.snapshot : null;
-    const publishedAt =
-      readState.kind === "parsed" ? readState.startedAt : null;
+    const startIdentity =
+      readState.kind === "parsed" ? readState.startIdentity : null;
     // Filter an unreachable / wrong-shaped host out of what the renderer sees,
     // so the host gate treats it as not-ready and fires `ensureHost`. A
     // reachable host is surfaced regardless of its version stamp - the renderer
     // negotiates protocol compatibility over the WS handshake and prompts for a
     // restart only if the running host is genuinely incompatible.
-    const next = await this.toReachableSnapshot(raw, publishedAt);
+    const next = await this.toReachableSnapshot(raw, startIdentity);
     // Superseded by a newer reload (or disposed): skip the emit so we never
     // clobber newer state, but still RETURN what THIS read derived. A caller
     // awaiting us - the host-busy surfacing in host-ensure-ipc - must judge
@@ -424,7 +476,7 @@ export class HostLifecycle extends EventEmitter {
 
   private async toReachableSnapshot(
     raw: DesktopLocalHostSnapshot | null,
-    publishedAt: string | null,
+    startIdentity: ProcessStartIdentity | null,
   ): Promise<DesktopLocalHostSnapshot | null> {
     if (raw === null) {
       return null;
@@ -434,7 +486,7 @@ export class HostLifecycle extends EventEmitter {
       !(await isPublishedHostEndpointReachable(
         raw.websocketUrl,
         raw.pid,
-        publishedAt,
+        startIdentity,
         probe,
       ))
     ) {
@@ -475,8 +527,9 @@ export class HostLifecycle extends EventEmitter {
   }
 
   private async waitForReady(): Promise<void> {
-    const deadline = Date.now() + this.readyTimeoutMs;
-    while (Date.now() < deadline) {
+    const startedAt = Date.now();
+    let extendedFrom: number | null = null;
+    for (;;) {
       if (this.disposed) {
         return;
       }
@@ -484,12 +537,39 @@ export class HostLifecycle extends EventEmitter {
       if (this.isCompatible(this.currentSnapshot)) {
         return;
       }
+      // The budget runs from the last EVIDENCE that host provisioning is still
+      // doing work, not from bootstrap. A fresh install can legitimately hold
+      // this loop open for minutes while the CLI downloads and extracts the
+      // runtime, and reporting "did not start" over a live installer is a
+      // false failure the user cannot act on.
+      const now = Date.now();
+      const lastActivityAt = Math.max(
+        startedAt,
+        this.lastProvisioningActivityAt,
+      );
+      const quietMs = now - lastActivityAt;
+      const waitedMs = now - startedAt;
+      if (
+        quietMs >= this.readyTimeoutMs ||
+        waitedMs >= HOST_READY_MAX_WAIT_MS
+      ) {
+        throw new HostStartupException(
+          "HOST_NOT_READY",
+          `Traycer Host did not start within ${waitedMs}ms (${quietMs}ms with no installer progress) - run \`traycer host doctor\` to recover.`,
+        );
+      }
+      if (extendedFrom === null && lastActivityAt > startedAt) {
+        extendedFrom = lastActivityAt;
+        log.info(
+          "[host] extending the startup budget while host provisioning reports progress",
+          {
+            readyTimeoutMs: this.readyTimeoutMs,
+            maxWaitMs: HOST_READY_MAX_WAIT_MS,
+          },
+        );
+      }
       await sleep(HOST_POLL_INTERVAL_MS);
     }
-    throw new HostStartupException(
-      "HOST_NOT_READY",
-      `Traycer Host did not start within ${this.readyTimeoutMs}ms - run \`traycer host doctor\` to recover.`,
-    );
   }
 
   private reloadSnapshotFromWatcher(): void {
@@ -619,6 +699,13 @@ type PidMetadataRead =
       readonly kind: "parsed";
       readonly snapshot: DesktopLocalHostSnapshot;
       readonly startedAt: string | null;
+      /**
+       * The publishing process's kernel-recorded creation stamp, when the
+       * host that wrote this file was new enough to publish one. `null` for
+       * every `pid.json` written before the field existed - which readers
+       * must treat as "cannot compare identity", never as a mismatch.
+       */
+      readonly startIdentity: ProcessStartIdentity | null;
     }
   | { readonly kind: "absent" }
   | { readonly kind: "indeterminate" };
@@ -668,6 +755,9 @@ export async function readPidMetadataState(
     kind: "parsed",
     snapshot: withDefaultHostName({ hostId, websocketUrl, version, pid }),
     startedAt: typeof startedAt === "string" ? startedAt : null,
+    startIdentity: isProcessStartIdentity(obj.processStartIdentity)
+      ? obj.processStartIdentity
+      : null,
   };
 }
 

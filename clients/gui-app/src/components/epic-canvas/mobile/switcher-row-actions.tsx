@@ -158,6 +158,7 @@ export function SwitcherRowActions(props: SwitcherRowActionsProps) {
       label: "Rename",
       icon: <Pencil className="size-3.5" />,
       disabled: false,
+      disabledTooltip: null,
       variant: "default",
       testIds: {
         dropdown: `switcher-rename-${nodeId}`,
@@ -172,6 +173,7 @@ export function SwitcherRowActions(props: SwitcherRowActionsProps) {
       label: deleteLabel,
       icon: <Trash2 className="size-3.5" />,
       disabled: isTerminal ? killTerminal.isPending : false,
+      disabledTooltip: null,
       variant: "destructive",
       testIds: {
         dropdown: `switcher-delete-${nodeId}`,

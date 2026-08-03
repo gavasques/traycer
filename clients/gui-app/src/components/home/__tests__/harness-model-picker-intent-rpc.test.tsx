@@ -387,7 +387,6 @@ function renderPickerWithFixture(
       selection,
       reasoning: "",
       serviceTier: "",
-      agentMode: "regular",
     },
     onSettingsChange: null,
     tuiOnly: false,
@@ -406,6 +405,7 @@ function renderPickerWithFixture(
             registerActivation={false}
             createProfileHostId={null}
             runTargetHostId={null}
+            profileAdmission={null}
           />
         </TooltipProvider>
       </SurfaceActivityProvider>

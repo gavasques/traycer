@@ -77,6 +77,7 @@ import { WorkspaceFolderSummaryControl } from "../workspace-folder-summary-contr
 import { WorkspaceSummaryTrigger } from "../workspace-summary-trigger";
 import type { WorkspaceRunItem } from "../workspace-run-item";
 
+import { tooltipTextNear } from "@/components/ui/__tests__/tooltip-probe";
 const NOOP = (): void => undefined;
 const NOOP_ADD = (): Promise<boolean> => Promise.resolve(false);
 const EMPTY_COUNTS: ReadonlyMap<string, number> = new Map();
@@ -429,7 +430,10 @@ describe("FolderRow", () => {
     expect(identity.children[1].className).toContain("text-foreground/90");
     expect(location.className).toContain("var(--color-muted-foreground)");
     expect(branch.className).toContain("text-foreground/75");
-    expect(identity.getAttribute("title")).toBe("/repo");
+    // The path tooltip is scoped to the NAME now, not the whole chip - the
+    // chip also carries the copy-path button and missing-folder warning, each
+    // with a tooltip of its own.
+    expect(tooltipTextNear(identity.children[1])).toBe("/repo");
   });
 
   it("reserves two stable trailing action slots", () => {
@@ -1282,6 +1286,7 @@ describe("WorkspaceFolderSummaryControl", () => {
           updatePending={false}
           onDiscardStaged={null}
           onEditEnvironment={NOOP}
+          refresh={null}
           popoverTestId="workspace-rows-popover"
           popoverSide="top"
         />
@@ -1311,6 +1316,7 @@ describe("WorkspaceFolderSummaryControl", () => {
           updatePending={false}
           onDiscardStaged={null}
           onEditEnvironment={NOOP}
+          refresh={null}
           popoverTestId="workspace-rows-popover"
           popoverSide="top"
         />
@@ -1390,6 +1396,7 @@ describe("WorkspaceFolderSummaryControl", () => {
           updatePending={false}
           onDiscardStaged={null}
           onEditEnvironment={NOOP}
+          refresh={null}
           popoverTestId="workspace-rows-popover"
           popoverSide="top"
         />
@@ -1427,6 +1434,7 @@ describe("WorkspaceFolderSummaryControl", () => {
           updatePending={false}
           onDiscardStaged={null}
           onEditEnvironment={NOOP}
+          refresh={null}
           popoverTestId="workspace-rows-popover"
           popoverSide="top"
         />
@@ -1458,6 +1466,7 @@ describe("WorkspaceFolderSummaryControl", () => {
           updatePending={false}
           onDiscardStaged={null}
           onEditEnvironment={NOOP}
+          refresh={null}
           popoverTestId="workspace-rows-popover"
           popoverSide="top"
         />
@@ -1505,6 +1514,7 @@ describe("WorkspaceFolderSummaryControl", () => {
           updatePending={false}
           onDiscardStaged={null}
           onEditEnvironment={NOOP}
+          refresh={null}
           popoverTestId="workspace-rows-popover"
           popoverSide="top"
         />
@@ -1532,6 +1542,7 @@ describe("WorkspaceFolderSummaryControl", () => {
           updatePending={false}
           onDiscardStaged={null}
           onEditEnvironment={NOOP}
+          refresh={null}
           popoverTestId="workspace-rows-popover"
           popoverSide="top"
         />
@@ -1561,6 +1572,7 @@ describe("WorkspaceFolderSummaryControl", () => {
           updatePending={false}
           onDiscardStaged={null}
           onEditEnvironment={NOOP}
+          refresh={null}
           popoverTestId="workspace-rows-popover"
           popoverSide="top"
         />
@@ -1585,6 +1597,7 @@ describe("WorkspaceFolderSummaryControl", () => {
           updatePending={false}
           onDiscardStaged={null}
           onEditEnvironment={NOOP}
+          refresh={null}
           popoverTestId="workspace-rows-popover"
           popoverSide="top"
         />
@@ -1617,6 +1630,7 @@ describe("WorkspaceFolderSummaryControl", () => {
           updatePending={false}
           onDiscardStaged={null}
           onEditEnvironment={NOOP}
+          refresh={null}
           popoverTestId="workspace-rows-popover"
           popoverSide="top"
         />
@@ -1641,6 +1655,7 @@ describe("WorkspaceFolderSummaryControl", () => {
           updatePending={false}
           onDiscardStaged={null}
           onEditEnvironment={NOOP}
+          refresh={null}
           popoverTestId="workspace-rows-popover"
           popoverSide="top"
         />

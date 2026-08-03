@@ -69,14 +69,12 @@ function ComposerMobileToolbarImpl(props: ComposerMobileToolbarProps) {
   const [optionsOpen, setOptionsOpen] = useState(false);
 
   const permission = useStore(store, (s) => s.permission);
-  const agentMode = useStore(store, (s) => s.agentMode);
   const supportedPermissionModes = useStore(
     store,
     (s) => s.supportedPermissionModes,
   );
   const harnessLabel = useStore(store, (s) => s.harnessLabel);
   const setPermission = useStore(store, (s) => s.setPermission);
-  const setAgentMode = useStore(store, (s) => s.setAgentMode);
   // Same gate as `ComposerToolbarRight`: an empty slug is the transient
   // "catalog still loading" marker and must never reach the wire as `model: ""`.
   const modelResolved = useStore(
@@ -145,6 +143,8 @@ function ComposerMobileToolbarImpl(props: ComposerMobileToolbarProps) {
           registerActivation
           createProfileHostId={createProfileHostId}
           runTargetHostId={runTargetHostId}
+          // Per-row profile admission is the TUI fork dialog's concern only.
+          profileAdmission={null}
           // Model name only: the row has room for it, but the thinking-effort
           // suffix the desktop pill adds reads as clutter at this width.
           labelDisplay="model-only"
@@ -166,8 +166,6 @@ function ComposerMobileToolbarImpl(props: ComposerMobileToolbarProps) {
       <ComposerOptionsSheet
         open={optionsOpen}
         onOpenChange={setOptionsOpen}
-        agentMode={agentMode}
-        onAgentModeChange={setAgentMode}
         permission={permission}
         onPermissionChange={setPermission}
         supportedPermissionModes={supportedPermissionModes}

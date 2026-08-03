@@ -17,11 +17,37 @@ import {
   validateAuthTokenIdentityAccessOnceAbortable,
   validateAuthTokenIdentityAccessOnly,
 } from "@traycer-clients/shared/auth/auth-validation";
+import {
+  listUserSessionsViaHttp,
+  mintHostCredentialViaHttp,
+  requestStepUpChallengeViaHttp,
+  revokeAllSessionsViaHttp,
+  revokeUserSessionViaHttp,
+  toRetainedStepUpVerifyResult,
+  verifyStepUpChallengeViaHttp,
+  type ListUserSessionsFetchResult,
+  type MintHostCredentialFetchResult,
+  type RetainedStepUpVerifyFetchResult,
+  type RevokeAllSessionsFetchResult,
+  type RevokeUserSessionFetchResult,
+  type StepUpChallengeFetchResult,
+} from "@traycer-clients/shared/auth/devices-sessions-fetcher";
+import type { MintHostCredentialRequest } from "@traycer/protocol/auth/devices-sessions";
+import {
+  fetchRegisteredHostsViaHttp,
+  type HostListFetchResult,
+} from "@traycer-clients/shared/host-client/remote-fetcher";
+import {
+  updateHostVersionPolicyViaHttp,
+  type UpdateHostVersionPolicyFetchResult,
+  type UpdateHostVersionPolicyInput,
+} from "@traycer-clients/shared/host-client/host-version-policy-fetcher";
 import type {
   CredentialsMigrationOutcome,
   DeviceFlowAuthorization,
   DeviceFlowResult,
   DeviceFlowSession,
+  HostRestartRequestResult,
   IDeviceFlowHost,
   IHostPicker,
   INotificationHost,
@@ -45,41 +71,30 @@ export interface MobileRunnerHostOptions {
   readonly signInUrl: string;
   readonly authnBaseUrl: string;
   readonly hostLabel: string;
+  /** The relay's fixed WS attach endpoint (`IRunnerHost.relayBaseUrl`). */
+  readonly relayBaseUrl: string;
+}
+
+const STEP_UP_EXPIRY_SKEW_MS = 5_000;
+
+interface RetainedStepUpCredential {
+  readonly accessToken: string;
+  readonly expiresAtMs: number;
 }
 
 /**
- * INCOMPLETE against the current `IRunnerHost`, and therefore this package does
- * not compile. Written before `main` landed remote-host support, this satisfies
- * 27 of the interface's 37 members; merging `development` into `mobile-app`
- * surfaced the gap. Filling it was deliberately deferred rather than stubbed,
- * so that the decisions below get made rather than defaulted.
- *
- * Missing members, grouped by what the phone actually needs:
- *
- *   Genuinely required - the phone only ever reaches a host over the relay:
- *     - `relayBaseUrl`
- *     - `listRegisteredHosts`  (see `fetchRegisteredHostsViaHttp` in
- *       `@traycer-clients/shared/host-client/remote-fetcher`)
- *
- *   Meaningless here - both concern a host on this same machine, which a phone
- *   never has (`hasLocalHost` is `false` below), so these are inert:
- *     - `updateHostVersionPolicy`
- *     - `getLastKnownLocalHostId`
- *
- *   Open product questions - the desktop surfaces UI for each; whether the
- *   phone should is undecided:
- *     - `listUserSessions`, `revokeUserSession`, `revokeAllSessions`
- *     - `requestStepUpChallenge`, `verifyStepUpChallenge`
- *     - `mintHostCredential`
- *
- * Four existing members also drifted and need updating in place:
- * `requestHostRespawn`'s return type (now `HostRestartRequestResult`), the
- * token-refresh call's `clientKind` argument, `notifications.onForegroundDisplay`,
- * and the `RemoteHostFetcher` shape used by `src/web/main.tsx`.
+ * The phone shell's `IRunnerHost`. Unlike the desktop, which routes these calls
+ * through Electron main to escape renderer-origin CORS, this shell owns its
+ * requests in-process and calls the shared `*ViaHttp` helpers directly - the
+ * same posture `MockRunnerHost` takes, and the one the interface's doc comments
+ * name for browser/dev shells. Nothing here reimplements a request: every
+ * member below delegates to the helper the desktop's main process also uses, so
+ * the two boundaries cannot drift.
  */
 export class MobileRunnerHost implements IRunnerHost {
   readonly signInUrl: string;
   readonly authnBaseUrl: string;
+  readonly relayBaseUrl: string;
   readonly hasLocalHost = false;
   readonly secureStorage: ISecureStorage = buildSecureStorage();
   readonly tokenStore: ITokenStore;
@@ -111,10 +126,12 @@ export class MobileRunnerHost implements IRunnerHost {
   readonly hostManagement = null;
   readonly hostTray = null;
   readonly deviceFlow: IDeviceFlowHost;
+  private retainedStepUpCredential: RetainedStepUpCredential | null = null;
 
   constructor(options: MobileRunnerHostOptions) {
     this.signInUrl = options.signInUrl;
     this.authnBaseUrl = options.authnBaseUrl;
+    this.relayBaseUrl = options.relayBaseUrl;
     this.tokenStore = new MobileTokenStore(
       this.secureStorage,
       options.authnBaseUrl,
@@ -137,6 +154,130 @@ export class MobileRunnerHost implements IRunnerHost {
     // caller routes the refresh spend through the locked `tokenStore.rotate`,
     // so validation can never consume a refresh token.
     return validateAuthTokenIdentityAccessOnly(this.authnBaseUrl, token);
+  }
+
+  listRegisteredHosts(bearerToken: string): Promise<HostListFetchResult> {
+    // In-process shell: no CORS boundary to escape, so the shared HTTP helper
+    // runs directly (browser/dev parity with the validator above).
+    return fetchRegisteredHostsViaHttp(this.authnBaseUrl, bearerToken);
+  }
+
+  listUserSessions(
+    bearerToken: string,
+    signal: AbortSignal,
+  ): Promise<ListUserSessionsFetchResult> {
+    // Owning the request in-process, this hands the caller's signal straight to
+    // `fetch` and aborts for real - the desktop can only settle its caller.
+    return listUserSessionsViaHttp(this.authnBaseUrl, bearerToken, signal);
+  }
+
+  async revokeUserSession(
+    bearerToken: string,
+    familyId: string,
+    useStepUpCredential: boolean,
+  ): Promise<RevokeUserSessionFetchResult> {
+    const stepUpToken = useStepUpCredential
+      ? this.activeRetainedStepUpToken()
+      : null;
+    const result = await revokeUserSessionViaHttp(
+      this.authnBaseUrl,
+      stepUpToken ?? bearerToken,
+      familyId,
+    );
+    // Parity with the desktop main-process handler (`auth-ipc.ts`): a
+    // step-up-required verdict on a retained credential means the server just
+    // rejected it, so holding it would re-send a credential known to be dead
+    // and re-prompt in a loop.
+    if (result.kind === "step-up-required" && useStepUpCredential) {
+      this.retainedStepUpCredential = null;
+    }
+    return result;
+  }
+
+  async revokeAllSessions(
+    bearerToken: string,
+  ): Promise<RevokeAllSessionsFetchResult> {
+    const result = await revokeAllSessionsViaHttp(
+      this.authnBaseUrl,
+      this.activeRetainedStepUpToken() ?? bearerToken,
+    );
+    this.retainedStepUpCredential = null;
+    return result;
+  }
+
+  mintHostCredential(
+    bearerToken: string,
+    request: MintHostCredentialRequest,
+  ): Promise<MintHostCredentialFetchResult> {
+    // The caller's own bearer: the mint is not step-up gated, so a retained
+    // step-up credential must not be substituted here.
+    return mintHostCredentialViaHttp(this.authnBaseUrl, bearerToken, request);
+  }
+
+  requestStepUpChallenge(
+    bearerToken: string,
+  ): Promise<StepUpChallengeFetchResult> {
+    return requestStepUpChallengeViaHttp(this.authnBaseUrl, bearerToken);
+  }
+
+  async verifyStepUpChallenge(
+    bearerToken: string,
+    code: string,
+  ): Promise<RetainedStepUpVerifyFetchResult> {
+    const result = await verifyStepUpChallengeViaHttp(
+      this.authnBaseUrl,
+      bearerToken,
+      code,
+    );
+    if (result.kind === "ok") {
+      this.retainedStepUpCredential = {
+        accessToken: result.response.access_token,
+        expiresAtMs:
+          Date.now() +
+          Math.max(
+            0,
+            result.response.expires_in * 1_000 - STEP_UP_EXPIRY_SKEW_MS,
+          ),
+      };
+    }
+    // Only expiry metadata crosses back out; the bearer stays in here.
+    return toRetainedStepUpVerifyResult(result);
+  }
+
+  /**
+   * Self-nulls on expiry so a dead credential is never re-sent, matching the
+   * desktop closure and `MockRunnerHost` - the three must not drift.
+   */
+  private activeRetainedStepUpToken(): string | null {
+    if (this.retainedStepUpCredential === null) {
+      return null;
+    }
+    if (this.retainedStepUpCredential.expiresAtMs <= Date.now()) {
+      this.retainedStepUpCredential = null;
+      return null;
+    }
+    return this.retainedStepUpCredential.accessToken;
+  }
+
+  updateHostVersionPolicy(
+    bearerToken: string,
+    hostId: string,
+    input: UpdateHostVersionPolicyInput,
+  ): Promise<UpdateHostVersionPolicyFetchResult> {
+    // Addresses any registered host by id, not a local one, so the phone can
+    // drive it the same as any other shell.
+    return updateHostVersionPolicyViaHttp(
+      this.authnBaseUrl,
+      bearerToken,
+      hostId,
+      input,
+    );
+  }
+
+  async getLastKnownLocalHostId(): Promise<string | null> {
+    // A phone never runs a host, so there is no pid metadata to read and no
+    // "my own host, currently down" case to disambiguate.
+    return null;
   }
 
   async openExternalLink(url: string): Promise<void> {
@@ -175,8 +316,14 @@ export class MobileRunnerHost implements IRunnerHost {
     return disposable();
   }
 
-  async requestHostRespawn(): Promise<void> {
-    // The selected dev slot owns the host lifecycle.
+  async requestHostRespawn(): Promise<HostRestartRequestResult> {
+    // Nothing on the phone can restart a host: the machine running it owns its
+    // lifecycle. `declined` carries that back as a normal outcome the calling
+    // surface renders - the lane never rejects.
+    return {
+      kind: "declined",
+      message: "Restart this host from the machine running it.",
+    };
   }
 }
 
@@ -417,6 +564,7 @@ class MobileTokenStore implements ITokenStore {
       authnBaseUrl: this.authnBaseUrl,
       token: stored.token,
       refreshToken: stored.refreshToken,
+      clientKind: null,
       signal: null,
     });
     if (refreshed.kind === "network-error") {
@@ -469,6 +617,7 @@ class MobileTokenStore implements ITokenStore {
       authnBaseUrl: this.authnBaseUrl,
       token: legacy.token,
       refreshToken: legacy.refreshToken,
+      clientKind: null,
       signal: null,
     });
     if (refreshed.kind === "network-error") return "retryable";
@@ -555,14 +704,29 @@ function parseStoredCredentials(raw: string | null): StoredCredentials | null {
 
 function buildNotifications(): INotificationHost {
   return {
-    show: async (title, body, payload, replaceKey, deliveryKey) => {
+    show: async (
+      title,
+      body,
+      payload,
+      replaceKey,
+      deliveryKey,
+      foregroundAppLocal,
+    ) => {
       void title;
       void body;
       void payload;
       void replaceKey;
       void deliveryKey;
+      void foregroundAppLocal;
     },
     onClick: (handler) => {
+      void handler;
+      return disposable();
+    },
+    onForegroundDisplay: (handler) => {
+      // The cross-window relay exists because a desktop shell can have another
+      // Traycer window focused. A phone shows one surface at a time, so nothing
+      // ever emits here.
       void handler;
       return disposable();
     },

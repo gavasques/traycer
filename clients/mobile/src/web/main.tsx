@@ -5,7 +5,10 @@ import {
   hostRpcRegistry,
   setMobileApp,
 } from "@traycer-clients/gui-app";
-import type { RemoteHostFetcher } from "@traycer-clients/shared/host-client/remote-fetcher";
+import type {
+  RemoteHostFetcher,
+  RemoteHostFetchOutcome,
+} from "@traycer-clients/shared/host-client/remote-fetcher";
 import "./index.css";
 import { MobileRunnerHost } from "../mobile-runner-host";
 
@@ -16,12 +19,17 @@ const config = __TRAYCER_GUI_APP_DEV_CONFIG__;
 // host's pid.json per request, so each directory refresh gets the live port.
 // BROWSER-TESTING SCAFFOLDING (dev web entry only): superseded by real
 // remote-host discovery in the shipped mobile client.
+const bakedHost: RemoteHostFetchOutcome = {
+  kind: "hosts",
+  entries: [config.host],
+};
+
 const remoteFetcher: RemoteHostFetcher = async () => {
   try {
     const response = await fetch(config.devHostPath);
-    if (!response.ok) return [config.host];
+    if (!response.ok) return bakedHost;
     const parsed: unknown = await response.json();
-    if (parsed === null || typeof parsed !== "object") return [config.host];
+    if (parsed === null || typeof parsed !== "object") return bakedHost;
     const record = parsed as Record<string, unknown>;
     const { hostId, version, websocketUrl } = record;
     if (
@@ -29,11 +37,16 @@ const remoteFetcher: RemoteHostFetcher = async () => {
       typeof version !== "string" ||
       typeof websocketUrl !== "string"
     ) {
-      return [config.host];
+      return bakedHost;
     }
-    return [{ ...config.host, hostId, version, websocketUrl }];
+    return {
+      kind: "hosts",
+      entries: [{ ...config.host, hostId, version, websocketUrl }],
+    };
   } catch {
-    return [config.host];
+    // The baked entry, not `failed`: this scaffolding's whole point is that the
+    // dev host is reachable at a known port even when the pid re-read misses.
+    return bakedHost;
   }
 };
 
@@ -47,6 +60,7 @@ function bootstrap(): void {
     signInUrl: config.signInUrl,
     authnBaseUrl: config.authnBaseUrl,
     hostLabel: config.host.label,
+    relayBaseUrl: config.relayBaseUrl,
   });
   const container = document.getElementById("root");
   if (container === null) {

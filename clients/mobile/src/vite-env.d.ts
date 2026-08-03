@@ -3,6 +3,8 @@
 interface TraycerGuiAppDevConfig {
   readonly authnBaseUrl: string;
   readonly signInUrl: string;
+  /** The relay's WS attach endpoint, baked the way the desktop bakes its own. */
+  readonly relayBaseUrl: string;
   /** Dev-server endpoint returning the host's CURRENT pid.json contents. */
   readonly devHostPath: string;
   readonly host: {

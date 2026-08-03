@@ -7,6 +7,7 @@ import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import { defineConfig, type Plugin, type UserConfig } from "vite";
 import { sanitizeDevDesktopSlot } from "../shared/platform/dev-desktop-slot";
+import { devRelayBaseUrlFromEnv } from "../shared/platform/dev-backend-urls";
 
 // Dev-server endpoint that re-reads the host's pid.json on every request. The
 // baked define config only captures the host port as of Vite startup; the dev
@@ -18,6 +19,8 @@ import { sanitizeDevDesktopSlot } from "../shared/platform/dev-desktop-slot";
 // against a local `make dev-desktop` host. The shipped mobile client reaches
 // remote hosts through real host discovery and must not depend on this.
 const DEV_HOST_PATH = "/__traycer/dev-host";
+/** Mirrors the desktop's baked value (`clients/desktop/src/config.ts`). */
+const RELAY_BASE_URL = "wss://relay.traycer.ai/attach";
 
 interface DevHostPid {
   readonly hostId: string;
@@ -141,6 +144,15 @@ async function guiAppDevConfig(): Promise<TraycerGuiAppDevConfig> {
   return {
     authnBaseUrl,
     signInUrl: new URL("/sign-in", cloudUiBaseUrl).toString(),
+    // Same dev-gated posture as the desktop's `config.ts`: the shipped relay
+    // endpoint unless this run exports its own (`make dev-remote` does). This
+    // config only ever builds in dev, so the environment argument is fixed.
+    relayBaseUrl: devRelayBaseUrlFromEnv(
+      "dev",
+      "TRAYCER_DEV_RELAY_BASE_URL",
+      RELAY_BASE_URL,
+      process.env,
+    ),
     devHostPath: DEV_HOST_PATH,
     host: {
       hostId: host.hostId,

@@ -33,6 +33,7 @@ function runner(): MobileRunnerHost {
     signInUrl: "http://localhost:32352/sign-in",
     authnBaseUrl: "http://localhost:32350",
     hostLabel: "test-slot",
+    relayBaseUrl: "ws://localhost:8787/attach",
   });
 }
 

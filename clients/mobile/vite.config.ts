@@ -157,7 +157,13 @@ async function guiAppDevConfig(): Promise<TraycerGuiAppDevConfig> {
     host: {
       hostId: host.hostId,
       label: slot,
-      kind: "remote",
+      // `local`, not `remote`: this entry IS a 127.0.0.1 host the browser
+      // dials directly on its own `websocketUrl`, which is what `local` means
+      // (`host-client/host-directory.ts`). `remote` now denotes the relay
+      // path - an authn-minted attach grant plus a Noise-NK handshake against
+      // the host's registry-published public key - and never dials this URL,
+      // so a local address behind `remote` has no transport to build.
+      kind: "local",
       websocketUrl: host.websocketUrl,
       version: host.version,
       status: "available",

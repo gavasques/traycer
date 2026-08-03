@@ -10,7 +10,7 @@ interface TraycerGuiAppDevConfig {
   readonly host: {
     readonly hostId: string;
     readonly label: string;
-    readonly kind: "remote";
+    readonly kind: "local";
     readonly websocketUrl: string;
     readonly version: string;
     readonly status: "available";

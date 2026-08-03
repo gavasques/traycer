@@ -181,7 +181,12 @@ export function useWorkspaceFolderActionsForClient(
     // globally mounted dialog must browse that host, not whichever host is
     // app-wide-active at the time.
     let folderPaths: readonly string[];
-    if (canAssociateLocalWorkspaces(dispatchHost)) {
+    if (
+      canAssociateLocalWorkspaces(
+        dispatchHost,
+        runnerHost.workspaceFolders.canPickNatively,
+      )
+    ) {
       folderPaths = await runnerHost.workspaceFolders.pickFolders();
     } else {
       const pickedPath = await useRemoteFolderPickerStore
@@ -264,13 +269,20 @@ function hostStillBound(
   return client.getActiveHostId() === dispatchHostId;
 }
 
+// Sharing the client machine is necessary but not sufficient: the shell must
+// also HAVE a native dialog to open. A browser/phone shell installs a no-op
+// `pickFolders` and reports `canPickNatively: false`
+// (`IWorkspaceFoldersHost`), so a local host seen from one still browses over
+// RPC - otherwise the pick resolves empty and the add silently does nothing.
 function canAssociateLocalWorkspaces(
   activeHost: HostDirectoryEntry | null,
+  canPickNatively: boolean,
 ): activeHost is HostDirectoryEntry & {
   readonly kind: "local" | "mock";
 } {
   return (
     activeHost !== null &&
+    canPickNatively &&
     (activeHost.kind === "local" || activeHost.kind === "mock")
   );
 }

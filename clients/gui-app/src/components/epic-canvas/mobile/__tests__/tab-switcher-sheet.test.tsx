@@ -171,7 +171,12 @@ function seedCanvas(
   useEpicCanvasStore.setState({
     tabsById: { [TAB_ID]: { tabId: TAB_ID, epicId: "epic-1", name: "Epic 1" } },
     canvasByTabId: {
-      [TAB_ID]: { root, activePaneId: "pane-A", tilesByInstanceId, sizesByGroupId: {} },
+      [TAB_ID]: {
+        root,
+        activePaneId: "pane-A",
+        tilesByInstanceId,
+        sizesByGroupId: {},
+      },
     },
   });
 }

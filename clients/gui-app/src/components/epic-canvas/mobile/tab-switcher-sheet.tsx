@@ -187,11 +187,19 @@ function SwitcherCategoryBody(props: SwitcherCategoryBodyProps) {
       );
     case "terminals":
       return (
-        <SwitcherTerminalsList epicId={epicId} tabId={tabId} onClose={onClose} />
+        <SwitcherTerminalsList
+          epicId={epicId}
+          tabId={tabId}
+          onClose={onClose}
+        />
       );
     case "artifacts":
       return (
-        <SwitcherArtifactsList epicId={epicId} tabId={tabId} onClose={onClose} />
+        <SwitcherArtifactsList
+          epicId={epicId}
+          tabId={tabId}
+          onClose={onClose}
+        />
       );
     case "file-tree":
       return (

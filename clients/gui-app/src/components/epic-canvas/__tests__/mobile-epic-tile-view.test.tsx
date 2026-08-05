@@ -165,7 +165,10 @@ describe("selectMobileTile", () => {
       kind: "group",
       id: "g",
       direction: "horizontal",
-      children: [makePane("pane-A", [], null), makePane("pane-B", [spec(3)], "inst-3")],
+      children: [
+        makePane("pane-A", [], null),
+        makePane("pane-B", [spec(3)], "inst-3"),
+      ],
     };
     const selection = selectMobileTile({
       root,

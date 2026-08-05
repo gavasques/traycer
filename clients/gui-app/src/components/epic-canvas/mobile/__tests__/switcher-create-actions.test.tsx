@@ -39,12 +39,20 @@ describe("<SwitcherNewAgentButton />", () => {
   it("opens the New Conversation modal (chat mode, active-tile placement) and closes the sheet", () => {
     const onClose = vi.fn();
     render(
-      <SwitcherNewAgentButton epicId="epic-1" tabId="tab-1" onClose={onClose} />,
+      <SwitcherNewAgentButton
+        epicId="epic-1"
+        tabId="tab-1"
+        onClose={onClose}
+      />,
     );
     fireEvent.click(screen.getByTestId("switcher-new-agent"));
     expect(spies.setComposerMode).toHaveBeenCalledWith("epic-1", "chat");
     expect(spies.openModal).toHaveBeenCalledWith(
-      expect.objectContaining({ epicId: "epic-1", tabId: "tab-1", parentId: null }),
+      expect.objectContaining({
+        epicId: "epic-1",
+        tabId: "tab-1",
+        parentId: null,
+      }),
     );
     expect(onClose).toHaveBeenCalledTimes(1);
   });
@@ -53,7 +61,11 @@ describe("<SwitcherNewAgentButton />", () => {
 describe("<SwitcherNewArtifactMenu />", () => {
   it("creates the chosen artifact kind through the shared create hook", () => {
     render(
-      <SwitcherNewArtifactMenu epicId="epic-1" tabId="tab-1" onClose={() => {}} />,
+      <SwitcherNewArtifactMenu
+        epicId="epic-1"
+        tabId="tab-1"
+        onClose={() => {}}
+      />,
     );
     fireEvent.pointerDown(screen.getByTestId("switcher-new-artifact"));
     fireEvent.click(screen.getByTestId("switcher-new-artifact-spec"));

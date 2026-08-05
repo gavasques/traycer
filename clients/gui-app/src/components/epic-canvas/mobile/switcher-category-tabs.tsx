@@ -19,7 +19,9 @@ const NO_EDGES: ScrollEdges = { left: false, right: false };
  * cut off (a static both-ends mask would fade the first/last tab even when
  * fully scrolled to that side).
  */
-function useHorizontalScrollEdges(ref: React.RefObject<HTMLDivElement | null>): ScrollEdges {
+function useHorizontalScrollEdges(
+  ref: React.RefObject<HTMLDivElement | null>,
+): ScrollEdges {
   const [edges, setEdges] = useState<ScrollEdges>(NO_EDGES);
   useEffect(() => {
     const el = ref.current;

@@ -9,12 +9,7 @@ import { traycerClientsImportBoundaryRestrictions } from "../../eslint/traycer-c
 
 export default tseslint.config(
   {
-    ignores: [
-      ...commonIgnores,
-      "android/**",
-      "ios/**",
-      "web/**",
-    ],
+    ignores: [...commonIgnores, "android/**", "ios/**", "web/**"],
   },
   linterOptionsConfig,
   {

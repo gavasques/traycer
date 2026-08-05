@@ -57,7 +57,10 @@ function EpicRouteActiveEffects(props: EpicRouteSessionBodyProps) {
       <NewConversationModalHost epicId={props.epicId} tabId={props.tabId} />
       {/* Fills the mobile header's right-actions slot (⋮ New chat / Rename) for
           the active epic; self-gates on mobile, so desktop renders nothing. */}
-      <MobileEpicHeaderActionsBinder epicId={props.epicId} tabId={props.tabId} />
+      <MobileEpicHeaderActionsBinder
+        epicId={props.epicId}
+        tabId={props.tabId}
+      />
       <NewTerminalDialogHost epicId={props.epicId} tabId={props.tabId} />
     </>
   );

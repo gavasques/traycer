@@ -1437,7 +1437,8 @@ describe("useLandingDraftStore", () => {
 
     it("returns the newest draft on a lastTouchedAt tie (later entry wins)", () => {
       setMobileApp(true);
-      const { createDraft, createDraftWithId } = useLandingDraftStore.getState();
+      const { createDraft, createDraftWithId } =
+        useLandingDraftStore.getState();
       // Restore paths can stamp several drafts within one millisecond;
       // drafts are append-ordered, so the later entry is the newer one.
       createDraftWithId("restored-older", null);
@@ -1453,7 +1454,8 @@ describe("useLandingDraftStore", () => {
 
     it("still honors explicit restore ids in the mobile app", () => {
       setMobileApp(true);
-      const { createDraft, createDraftWithId } = useLandingDraftStore.getState();
+      const { createDraft, createDraftWithId } =
+        useLandingDraftStore.getState();
       createDraft(null);
       const restored = createDraftWithId("restored-draft", null);
       expect(restored).toBe("restored-draft");

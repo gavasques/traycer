@@ -30,15 +30,13 @@ interface Holder {
   activateCalls: ActivateCall[];
 }
 
-const holder = vi.hoisted(
-  (): Holder => ({
-    records: [],
-    sessions: [],
-    activeId: null,
-    role: "owner",
-    activateCalls: [],
-  }),
-);
+const holder = vi.hoisted((): Holder => ({
+  records: [],
+  sessions: [],
+  activeId: null,
+  role: "owner",
+  activateCalls: [],
+}));
 
 vi.mock("@/lib/epic-selectors", () => ({
   useEpicArtifactRecords: () => holder.records,
@@ -65,7 +63,8 @@ vi.mock("@/lib/epic-selectors", () => ({
   }),
 }));
 vi.mock("@/stores/epics/canvas/canvas-selectors", () => ({
-  useIsActiveEpicArtifact: (_tabId: string, id: string) => holder.activeId === id,
+  useIsActiveEpicArtifact: (_tabId: string, id: string) =>
+    holder.activeId === id,
   findOpenArtifactInTab: () => null,
 }));
 vi.mock("@/components/epic-canvas/mobile/use-switcher-activate", () => ({
@@ -137,16 +136,41 @@ afterEach(cleanup);
 describe("<SwitcherAgentsList />", () => {
   beforeEach(() => {
     holder.records = [
-      { id: "chat-1", parentId: null, name: "Alpha", type: "chat", status: null, hostId: "host-A" },
-      { id: "tui-1", parentId: null, name: "Beta", type: "terminal-agent", status: null, hostId: "host-A" },
-      { id: "spec-1", parentId: null, name: "Spec", type: "spec", status: null, hostId: "host-A" },
+      {
+        id: "chat-1",
+        parentId: null,
+        name: "Alpha",
+        type: "chat",
+        status: null,
+        hostId: "host-A",
+      },
+      {
+        id: "tui-1",
+        parentId: null,
+        name: "Beta",
+        type: "terminal-agent",
+        status: null,
+        hostId: "host-A",
+      },
+      {
+        id: "spec-1",
+        parentId: null,
+        name: "Spec",
+        type: "spec",
+        status: null,
+        hostId: "host-A",
+      },
     ];
   });
 
   it("renders chats + terminal-agents interleaved by recency (artifacts excluded)", () => {
     render(<SwitcherAgentsList {...PROPS} />);
-    expect(screen.getByTestId("switcher-agent-row-chat-1").textContent).toContain("Alpha");
-    expect(screen.getByTestId("switcher-agent-row-tui-1").textContent).toContain("Beta");
+    expect(
+      screen.getByTestId("switcher-agent-row-chat-1").textContent,
+    ).toContain("Alpha");
+    expect(
+      screen.getByTestId("switcher-agent-row-tui-1").textContent,
+    ).toContain("Beta");
     expect(screen.queryByTestId("switcher-agent-row-spec-1")).toBeNull();
     // tui-1 (updatedAt 1) is more recent than chat-1 (updatedAt 0), so the list
     // interleaves by recency rather than grouping all chats before agents.
@@ -184,7 +208,12 @@ describe("<SwitcherAgentsList />", () => {
 describe("<SwitcherTerminalsList />", () => {
   it("renders a row per visible PTY session and taps open a terminal ref", () => {
     holder.sessions = [
-      { sessionId: "term-1", title: "Build", activeProcessName: null, cwd: "/repo" },
+      {
+        sessionId: "term-1",
+        title: "Build",
+        activeProcessName: null,
+        cwd: "/repo",
+      },
     ];
     render(<SwitcherTerminalsList {...PROPS} />);
     const row = screen.getByTestId("switcher-terminal-row-term-1");
@@ -204,8 +233,22 @@ describe("<SwitcherTerminalsList />", () => {
 describe("<SwitcherArtifactsList />", () => {
   it("renders artifact rows with a status dot for a ticket", () => {
     holder.records = [
-      { id: "chat-1", parentId: null, name: "Alpha", type: "chat", status: null, hostId: "host-A" },
-      { id: "tk-1", parentId: null, name: "Ticket One", type: "ticket", status: 1, hostId: "host-A" },
+      {
+        id: "chat-1",
+        parentId: null,
+        name: "Alpha",
+        type: "chat",
+        status: null,
+        hostId: "host-A",
+      },
+      {
+        id: "tk-1",
+        parentId: null,
+        name: "Ticket One",
+        type: "ticket",
+        status: 1,
+        hostId: "host-A",
+      },
     ];
     render(<SwitcherArtifactsList {...PROPS} />);
     // Chats are excluded from the artifacts list.
@@ -219,7 +262,14 @@ describe("<SwitcherArtifactsList />", () => {
 describe("switcher create affordances (editor-gated)", () => {
   it("shows New agent for an editor and hides it for a viewer", () => {
     holder.records = [
-      { id: "chat-1", parentId: null, name: "Alpha", type: "chat", status: null, hostId: "host-A" },
+      {
+        id: "chat-1",
+        parentId: null,
+        name: "Alpha",
+        type: "chat",
+        status: null,
+        hostId: "host-A",
+      },
     ];
     const editor = render(<SwitcherAgentsList {...PROPS} />);
     expect(screen.getByTestId("new-agent-action")).toBeTruthy();

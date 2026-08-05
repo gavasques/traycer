@@ -34,21 +34,27 @@ afterEach(() => {
 describe("MobileTerminalKeyBar", () => {
   it("sends the key's sequence on pointer down", () => {
     const input = setupTarget("normal");
-    render(<MobileTerminalKeyBar instanceId={INSTANCE_ID} keyboardOpen={false} />);
+    render(
+      <MobileTerminalKeyBar instanceId={INSTANCE_ID} keyboardOpen={false} />,
+    );
     fireEvent.pointerDown(screen.getByTestId("terminal-key-esc"));
     expect(input).toHaveBeenCalledExactlyOnceWith("\x1b");
   });
 
   it("encodes arrows for the target's cursor-key mode", () => {
     const input = setupTarget("application");
-    render(<MobileTerminalKeyBar instanceId={INSTANCE_ID} keyboardOpen={false} />);
+    render(
+      <MobileTerminalKeyBar instanceId={INSTANCE_ID} keyboardOpen={false} />,
+    );
     fireEvent.pointerDown(screen.getByTestId("terminal-key-arrow-up"));
     expect(input).toHaveBeenCalledExactlyOnceWith("\x1bOA");
   });
 
   it("applies a latched Ctrl to the next bar key, one-shot", () => {
     const input = setupTarget("application");
-    render(<MobileTerminalKeyBar instanceId={INSTANCE_ID} keyboardOpen={false} />);
+    render(
+      <MobileTerminalKeyBar instanceId={INSTANCE_ID} keyboardOpen={false} />,
+    );
     const ctrl = screen.getByTestId("terminal-key-ctrl");
     fireEvent.pointerDown(ctrl);
     expect(ctrl.getAttribute("aria-pressed")).toBe("true");
@@ -61,7 +67,9 @@ describe("MobileTerminalKeyBar", () => {
 
   it("sends Shift+Tab as back-tab", () => {
     const input = setupTarget("normal");
-    render(<MobileTerminalKeyBar instanceId={INSTANCE_ID} keyboardOpen={false} />);
+    render(
+      <MobileTerminalKeyBar instanceId={INSTANCE_ID} keyboardOpen={false} />,
+    );
     fireEvent.pointerDown(screen.getByTestId("terminal-key-shift"));
     fireEvent.pointerDown(screen.getByTestId("terminal-key-tab"));
     expect(input).toHaveBeenCalledExactlyOnceWith("\x1b[Z");
@@ -69,7 +77,9 @@ describe("MobileTerminalKeyBar", () => {
 
   it("latches modifiers on keyboard activation too (click with detail 0)", () => {
     setupTarget("normal");
-    render(<MobileTerminalKeyBar instanceId={INSTANCE_ID} keyboardOpen={false} />);
+    render(
+      <MobileTerminalKeyBar instanceId={INSTANCE_ID} keyboardOpen={false} />,
+    );
     const ctrl = screen.getByTestId("terminal-key-ctrl");
     fireEvent.click(ctrl, { detail: 0 });
     expect(ctrl.getAttribute("aria-pressed")).toBe("true");
@@ -81,7 +91,9 @@ describe("MobileTerminalKeyBar", () => {
 
   it("clears a still-armed latch when the bar unmounts", () => {
     setupTarget("normal");
-    const view = render(<MobileTerminalKeyBar instanceId={INSTANCE_ID} keyboardOpen={false} />);
+    const view = render(
+      <MobileTerminalKeyBar instanceId={INSTANCE_ID} keyboardOpen={false} />,
+    );
     fireEvent.pointerDown(screen.getByTestId("terminal-key-ctrl"));
     view.unmount();
     expect(getTerminalKeyBarModifiers()).toEqual({
@@ -93,7 +105,9 @@ describe("MobileTerminalKeyBar", () => {
 
   it("does not double-send for the click that follows a pointer tap", () => {
     const input = setupTarget("normal");
-    render(<MobileTerminalKeyBar instanceId={INSTANCE_ID} keyboardOpen={false} />);
+    render(
+      <MobileTerminalKeyBar instanceId={INSTANCE_ID} keyboardOpen={false} />,
+    );
     const esc = screen.getByTestId("terminal-key-esc");
     fireEvent.pointerDown(esc);
     fireEvent.pointerUp(esc);
@@ -103,14 +117,18 @@ describe("MobileTerminalKeyBar", () => {
 
   it("still sends on keyboard activation (click with detail 0)", () => {
     const input = setupTarget("normal");
-    render(<MobileTerminalKeyBar instanceId={INSTANCE_ID} keyboardOpen={false} />);
+    render(
+      <MobileTerminalKeyBar instanceId={INSTANCE_ID} keyboardOpen={false} />,
+    );
     fireEvent.click(screen.getByTestId("terminal-key-enter"), { detail: 0 });
     expect(input).toHaveBeenCalledExactlyOnceWith("\r");
   });
 
   it("no-ops when no engine is registered for the instance", () => {
     resetTerminalKeyInputRegistryForTests();
-    render(<MobileTerminalKeyBar instanceId={INSTANCE_ID} keyboardOpen={false} />);
+    render(
+      <MobileTerminalKeyBar instanceId={INSTANCE_ID} keyboardOpen={false} />,
+    );
     expect(() =>
       fireEvent.pointerDown(screen.getByTestId("terminal-key-esc")),
     ).not.toThrow();
@@ -130,7 +148,9 @@ describe("MobileTerminalKeyBar", () => {
     vi.useFakeTimers();
     try {
       const input = setupTarget("normal");
-      render(<MobileTerminalKeyBar instanceId={INSTANCE_ID} keyboardOpen={false} />);
+      render(
+        <MobileTerminalKeyBar instanceId={INSTANCE_ID} keyboardOpen={false} />,
+      );
       const down = screen.getByTestId("terminal-key-arrow-down");
       fireEvent.pointerDown(down);
       expect(input).toHaveBeenCalledTimes(1);

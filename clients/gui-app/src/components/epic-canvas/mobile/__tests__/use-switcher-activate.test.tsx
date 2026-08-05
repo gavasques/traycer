@@ -44,7 +44,10 @@ function singlePaneCanvas(): EpicCanvasState {
   return {
     root,
     activePaneId: "pane-A",
-    tilesByInstanceId: { "inst-1": spec(1, "inst-1"), "inst-2": spec(2, "inst-2") },
+    tilesByInstanceId: {
+      "inst-1": spec(1, "inst-1"),
+      "inst-2": spec(2, "inst-2"),
+    },
     sizesByGroupId: {},
   };
 }

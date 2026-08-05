@@ -57,18 +57,14 @@ describe("AppHeader mobile/desktop switch", () => {
   it("renders the mobile hamburger header below md", () => {
     mobileState.value = true;
     render(<AppHeader variant="app" />);
-    expect(
-      screen.getByRole("button", { name: "Open menu" }),
-    ).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Open menu" })).not.toBeNull();
     expect(screen.queryByRole("tablist", { name: "Open tabs" })).toBeNull();
   });
 
   it("renders the desktop tab-strip header at >=md", () => {
     mobileState.value = false;
     render(<AppHeader variant="app" />);
-    expect(
-      screen.getByRole("tablist", { name: "Open tabs" }),
-    ).not.toBeNull();
+    expect(screen.getByRole("tablist", { name: "Open tabs" })).not.toBeNull();
     expect(screen.queryByRole("button", { name: "Open menu" })).toBeNull();
   });
 

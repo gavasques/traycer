@@ -66,7 +66,7 @@ Supporting pieces, all viewport-agnostic where possible:
   above the detail pane. `EnvOverrideEditor` rows restack onto two lines below
   `sm` and hide the column header.
 - `settings-touch-targets.css` (imported by `settings-layout.tsx`, scoped
-  under `[data-settings-touch-scope]`) enlarges the *hit areas* of
+  under `[data-settings-touch-scope]`) enlarges the _hit areas_ of
   switch/button/select-trigger primitives to >=44px on coarse-pointer devices
   without changing any visual size - settings-only, the shared primitives in
   `src/components/ui/` are untouched.

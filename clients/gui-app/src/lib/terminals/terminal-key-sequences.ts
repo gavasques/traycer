@@ -42,10 +42,7 @@ export type TerminalKeyBarActionKey =
   | "arrow-right";
 
 type TerminalArrowKey =
-  | "arrow-up"
-  | "arrow-down"
-  | "arrow-left"
-  | "arrow-right";
+  "arrow-up" | "arrow-down" | "arrow-left" | "arrow-right";
 
 const ARROW_FINAL_BYTE: Record<TerminalArrowKey, string> = {
   "arrow-up": "A",

@@ -32,7 +32,8 @@ import { useEpicNestedFocusNavigation } from "@/hooks/epic/use-epic-nested-focus
 import { findOpenArtifactInTab } from "@/stores/epics/canvas/canvas-selectors";
 import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
 
-export type SwitcherRowKind = "chat" | "terminal-agent" | "artifact" | "terminal";
+export type SwitcherRowKind =
+  "chat" | "terminal-agent" | "artifact" | "terminal";
 
 interface SwitcherRowActionsProps {
   readonly epicId: string;
@@ -114,7 +115,10 @@ export function SwitcherRowActions(props: SwitcherRowActionsProps) {
 
   const confirmDelete = useCallback(() => {
     if (kind === "chat")
-      deleteChat.mutate({ epicId, chatId: nodeId }, { onSuccess: closeOpenTile });
+      deleteChat.mutate(
+        { epicId, chatId: nodeId },
+        { onSuccess: closeOpenTile },
+      );
     else if (kind === "terminal-agent")
       deleteTuiAgent.mutate(
         { epicId, tuiAgentId: nodeId },
@@ -149,7 +153,9 @@ export function SwitcherRowActions(props: SwitcherRowActionsProps) {
   const isTerminal = kind === "terminal";
   const deleteLabel = isTerminal ? "Close" : "Delete";
   const deletePending =
-    deleteChat.isPending || deleteTuiAgent.isPending || deleteArtifact.isPending;
+    deleteChat.isPending ||
+    deleteTuiAgent.isPending ||
+    deleteArtifact.isPending;
 
   const entries: ReadonlyArray<SidebarRowMenuEntry> = [
     {

@@ -12,7 +12,10 @@ import { useSwitcherCreateArtifact } from "@/components/epic-canvas/mobile/use-s
 import { useNewConversationModalStore } from "@/stores/epics/new-conversation-modal-store";
 import { useNewConversationModalOpenStore } from "@/stores/epics/new-conversation-modal-open-store";
 import { ACTIVE_TILE_PLACEMENT } from "@/lib/canvas/conversation-tile-placement";
-import { EPIC_NODE_ICONS, EPIC_NODE_LABELS } from "@/lib/artifacts/node-display";
+import {
+  EPIC_NODE_ICONS,
+  EPIC_NODE_LABELS,
+} from "@/lib/artifacts/node-display";
 
 const ARTIFACT_KINDS: ReadonlyArray<EpicArtifactKind> = [
   "spec",

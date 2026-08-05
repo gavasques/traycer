@@ -23,7 +23,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 function buildRouter(initialPath: string) {
   const rootRoute = createRootRoute({
-    component: () => <SettingsSidebar mode={{ kind: "route" }} variant="rail" />,
+    component: () => (
+      <SettingsSidebar mode={{ kind: "route" }} variant="rail" />
+    ),
   });
   const settingsRoute = createRoute({
     getParentRoute: () => rootRoute,

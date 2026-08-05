@@ -167,8 +167,12 @@ export function MobileTerminalKeyBar(props: MobileTerminalKeyBarProps) {
               className={KEY_BUTTON_CLASS}
               onPointerDown={(event) => handleActionPointerDown(event, def)}
               onPointerUp={def.repeatable ? handleActionPointerEnd : undefined}
-              onPointerLeave={def.repeatable ? handleActionPointerEnd : undefined}
-              onPointerCancel={def.repeatable ? handleActionPointerEnd : undefined}
+              onPointerLeave={
+                def.repeatable ? handleActionPointerEnd : undefined
+              }
+              onPointerCancel={
+                def.repeatable ? handleActionPointerEnd : undefined
+              }
               onClick={(event) => {
                 // Pointer taps already sent on pointerdown; `detail === 0`
                 // identifies keyboard/AT activation, which only fires click.

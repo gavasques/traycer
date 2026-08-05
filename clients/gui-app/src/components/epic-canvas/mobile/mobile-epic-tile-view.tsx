@@ -54,7 +54,9 @@ export function MobileEpicTileView(props: MobileEpicTileViewProps) {
   // same on mobile instead of a blank dead-end. `PaneOpener` is fully fluid
   // (flex column, no fixed widths), so it is usable at phone width as-is.
   if (selection === null) {
-    return <MobileEmptyEpicPane epicId={epicId} tabId={tabId} root={canvas.root} />;
+    return (
+      <MobileEmptyEpicPane epicId={epicId} tabId={tabId} root={canvas.root} />
+    );
   }
 
   const isTerminalTile =

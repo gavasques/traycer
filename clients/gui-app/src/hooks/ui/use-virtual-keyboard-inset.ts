@@ -31,9 +31,7 @@ export function readVirtualKeyboardInset(): number {
   // pinch bypasses maximum-scale=1), so bail to 0 rather than mis-measure.
   if (viewport.scale !== 1) return 0;
   const layoutHeight = document.documentElement.clientHeight;
-  const inset = Math.round(
-    layoutHeight - viewport.height - viewport.offsetTop,
-  );
+  const inset = Math.round(layoutHeight - viewport.height - viewport.offsetTop);
   return inset < MIN_KEYBOARD_INSET_PX ? 0 : inset;
 }
 

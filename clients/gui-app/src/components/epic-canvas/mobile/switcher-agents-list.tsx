@@ -44,8 +44,7 @@ export function SwitcherAgentsList(props: SwitcherListProps) {
   const filtered = useMemo(
     () =>
       records.filter(
-        (record) =>
-          record.type === "chat" || record.type === "terminal-agent",
+        (record) => record.type === "chat" || record.type === "terminal-agent",
       ),
     [records],
   );

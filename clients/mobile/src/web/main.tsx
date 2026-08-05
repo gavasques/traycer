@@ -1,5 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { Capacitor } from "@capacitor/core";
+import { PushNotifications } from "@capacitor/push-notifications";
 import {
   TraycerApp,
   hostRpcRegistry,
@@ -9,8 +11,42 @@ import type {
   RemoteHostFetcher,
   RemoteHostFetchOutcome,
 } from "@traycer-clients/shared/host-client/remote-fetcher";
+import {
+  registerDevicePushTokenViaHttp,
+  removeDevicePushTokenViaHttp,
+} from "@traycer-clients/shared/auth/push-token-fetcher";
 import "./index.css";
 import { MobileRunnerHost } from "../mobile-runner-host";
+import { MobilePushRegistration } from "../push-registration";
+
+/**
+ * OS push exists only inside the native shells - the dev web entry has no
+ * push plugin, so it gets `null` and the runner host's click sink stays the
+ * familiar no-op.
+ *
+ * The APNs environment tracks the build flavor: a dev-served bundle rides a
+ * debug-signed native build whose `aps-environment` is `development`, so its
+ * tokens only deliver through Apple's sandbox gateway; a production web build
+ * ships in release signing, which is the production gateway. Android has no
+ * such split and always registers `production` (authn rejects anything else).
+ */
+function buildPushRegistration(
+  authnBaseUrl: string,
+): MobilePushRegistration | null {
+  const platform = Capacitor.getPlatform();
+  if (platform !== "ios" && platform !== "android") {
+    return null;
+  }
+  return new MobilePushRegistration({
+    plugin: PushNotifications,
+    authnBaseUrl,
+    platform,
+    environment:
+      platform === "ios" && import.meta.env.DEV ? "sandbox" : "production",
+    registerToken: registerDevicePushTokenViaHttp,
+    removeToken: removeDevicePushTokenViaHttp,
+  });
+}
 
 const config = __TRAYCER_GUI_APP_DEV_CONFIG__;
 
@@ -56,12 +92,18 @@ function bootstrap(): void {
   // single-composer draft model. See gui-app's `src/lib/mobile-app.ts` for
   // how this differs from the viewport signal.
   setMobileApp(true);
+  const pushRegistration = buildPushRegistration(config.authnBaseUrl);
   const host = new MobileRunnerHost({
     signInUrl: config.signInUrl,
     authnBaseUrl: config.authnBaseUrl,
     hostLabel: config.host.label,
     relayBaseUrl: config.relayBaseUrl,
+    pushRegistration,
   });
+  // After the host exists: registration follows the token store (sign-in,
+  // app start while signed in, sign-out), and the plugin listeners attach
+  // now so a cold-start tap is captured before the GUI mounts.
+  pushRegistration?.start(host.tokenStore);
   const container = document.getElementById("root");
   if (container === null) {
     throw new Error("#root element not found in index.html");

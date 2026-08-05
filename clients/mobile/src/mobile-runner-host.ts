@@ -66,6 +66,7 @@ import type {
   TrayIndicatorState,
 } from "@traycer-clients/shared/platform/runner-host";
 import type { Disposable } from "@traycer-clients/shared/platform/uri-callback";
+import type { MobilePushRegistration } from "./push-registration";
 
 export interface MobileRunnerHostOptions {
   readonly signInUrl: string;
@@ -73,6 +74,12 @@ export interface MobileRunnerHostOptions {
   readonly hostLabel: string;
   /** The relay's fixed WS attach endpoint (`IRunnerHost.relayBaseUrl`). */
   readonly relayBaseUrl: string;
+  /**
+   * OS push lifecycle owner, or `null` where pushes cannot exist (the dev web
+   * entry, tests). Only its click relay is consumed here - registration
+   * follows the token store on its own once `start()` runs in bootstrap.
+   */
+  readonly pushRegistration: MobilePushRegistration | null;
 }
 
 const STEP_UP_EXPIRY_SKEW_MS = 5_000;
@@ -98,7 +105,7 @@ export class MobileRunnerHost implements IRunnerHost {
   readonly hasLocalHost = false;
   readonly secureStorage: ISecureStorage = buildSecureStorage();
   readonly tokenStore: ITokenStore;
-  readonly notifications: INotificationHost = buildNotifications();
+  readonly notifications: INotificationHost;
   readonly tray: ITrayState = new MobileNoopTrayState();
   readonly hostPicker: IHostPicker = new MobileHostPicker();
   readonly workspaceFolders: IWorkspaceFoldersHost = {
@@ -132,6 +139,7 @@ export class MobileRunnerHost implements IRunnerHost {
     this.signInUrl = options.signInUrl;
     this.authnBaseUrl = options.authnBaseUrl;
     this.relayBaseUrl = options.relayBaseUrl;
+    this.notifications = buildNotifications(options.pushRegistration);
     this.tokenStore = new MobileTokenStore(
       this.secureStorage,
       options.authnBaseUrl,
@@ -336,7 +344,7 @@ class MobileDeviceFlowHost implements IDeviceFlowHost {
   async start(): Promise<DeviceFlowSession | null> {
     const authorization = await startDeviceAuthorization(
       this.authnBaseUrl,
-      { clientId: "desktop", hostLabel: this.hostLabel },
+      { clientId: "mobile", hostLabel: this.hostLabel },
       { signal: undefined, timeoutMs: DEFAULT_DEVICE_REQUEST_TIMEOUT_MS },
     );
     if (authorization.kind !== "started") {
@@ -408,7 +416,7 @@ class MobileDeviceFlowSession implements DeviceFlowSession {
       const poll = await pollDeviceToken(
         this.authnBaseUrl,
         this.started.deviceCode,
-        "desktop",
+        "mobile",
         {
           signal: this.abortController.signal,
           timeoutMs: DEFAULT_DEVICE_REQUEST_TIMEOUT_MS,
@@ -702,8 +710,13 @@ function parseStoredCredentials(raw: string | null): StoredCredentials | null {
   };
 }
 
-function buildNotifications(): INotificationHost {
+function buildNotifications(
+  push: MobilePushRegistration | null,
+): INotificationHost {
   return {
+    // `show` stays a no-op ON PURPOSE: OS-level notifications on the phone
+    // arrive as remote pushes from the cloud fan-out, not from the renderer's
+    // display path - a foregrounded app shows its in-app surfaces instead.
     show: async (
       title,
       body,
@@ -719,10 +732,11 @@ function buildNotifications(): INotificationHost {
       void deliveryKey;
       void foregroundAppLocal;
     },
-    onClick: (handler) => {
-      void handler;
-      return disposable();
-    },
+    // The click sink is REAL here: tapped pushes re-enter the GUI through the
+    // same channel a desktop native-notification click uses, buffered across
+    // cold start by the push-registration module.
+    onClick: (handler) =>
+      push === null ? disposable() : push.onClick(handler),
     onForegroundDisplay: (handler) => {
       // The cross-window relay exists because a desktop shell can have another
       // Traycer window focused. A phone shows one surface at a time, so nothing

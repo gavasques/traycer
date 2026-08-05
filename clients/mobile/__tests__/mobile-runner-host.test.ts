@@ -34,6 +34,9 @@ function runner(): MobileRunnerHost {
     authnBaseUrl: "http://localhost:32350",
     hostLabel: "test-slot",
     relayBaseUrl: "ws://localhost:8787/attach",
+    // Push lifecycle is exercised in push-registration.test.ts; the host's
+    // click sink with `null` is the dev-web no-op these tests always had.
+    pushRegistration: null,
   });
 }
 

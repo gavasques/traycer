@@ -124,7 +124,6 @@ function ComposerMobileToolbarImpl(props: ComposerMobileToolbarProps) {
           must stay reachable; the sheet's own rows carry the lock. */}
       <ToolbarPillButton
         aria-label={`Permissions: ${permissionOption.label}`}
-        title={permissionOption.label}
         data-testid="composer-mobile-options-trigger"
         className="size-8 shrink-0 justify-center px-0"
         onClick={() => {

@@ -17,9 +17,12 @@ This workspace may:
   CSS.
 
 It must not change or duplicate the RPC protocol, host lifecycle, authn
-service, cloud UI, remote-host service, or root `dev-desktop` allocator. Android,
-push, Sentry, deep-link auth callbacks, store signing, and release automation
-are outside the current milestone.
+service, cloud UI, remote-host service, or root `dev-desktop` allocator. Android
+builds, Sentry, deep-link auth callbacks, store signing, and release automation
+are outside the current milestone. OS push (permission, APNs token
+registration, tap-to-open) is IN the milestone — see `src/push-registration.ts`;
+its registration flow is written platform-agnostically for the later Android
+milestone.
 
 ## Host and auth model
 
@@ -35,13 +38,24 @@ are outside the current milestone.
   payload-free and sign-in must complete by polling even if no return signal is
   delivered.
 - Capacitor's native HTTP patch keeps auth requests out of WKWebView CORS.
-- The shared device-auth client currently supports `"desktop"` and `"cli"`;
-  mobile reuses `"desktop"` without changing shared/backend contracts.
+- The shared device-auth client supports `"cli"`, `"desktop"`, and `"mobile"`;
+  this shell signs in as `"mobile"` (authn shows mobile-specific approval copy
+  and the session lists as a mobile device).
+- Push tokens register against authn's `/api/v3/user/push-tokens` bound to the
+  login session. Sign-out unregisters via `POST .../remove` and that call is
+  the primary cleanup — plain sign-out is local-only and revokes nothing, so a
+  failed remove lingers deliverable until the session family is revoked
+  (sessions panel), the token rebinds, or authn's reaper collects it after the
+  family's sessions expire. Explicit session revocation does cascade the row
+  away server-side.
 
 ## Important files
 
 - `src/mobile-runner-host.ts` — current `IRunnerHost`, device-flow controller,
   and native secure token storage.
+- `src/push-registration.ts` — OS push lifecycle: permission, provider-token
+  registration following the token store, and the tap→activation relay the
+  GUI consumes through `notifications.onClick` (cold-start taps buffered).
 - `src/web/main.tsx` — mounts the shared GUI and supplies the one-host fetcher.
 - `src/web/index.css` — Tailwind entrypoint; its `@source` for `gui-app` is
   required or shared utility classes disappear from the mobile bundle.
@@ -77,8 +91,10 @@ Electron testing is also needed.
 - Import shared contracts; do not redefine them.
 - Keep unsupported mobile capabilities as explicit no-ops/nulls matching
   `IRunnerHost`.
-- Keep the production mobile code free of Android/release/push/telemetry
-  scaffolding until those milestones are explicitly approved.
+- Keep the production mobile code free of Android-build/release/telemetry
+  scaffolding until those milestones are explicitly approved. (Push was
+  approved with the notifications milestone and lives in
+  `src/push-registration.ts`.)
 - Follow root type-safety rules: no `any`, unsafe assertions, optional function
   parameters, or default parameter values.
 - Tests live under `__tests__/` and mock native plugins at the package boundary.

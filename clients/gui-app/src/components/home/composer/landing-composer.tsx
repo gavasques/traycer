@@ -132,6 +132,22 @@ function promptStashIsDisabled(
   return isSubmitting || attachmentPending;
 }
 
+function landingComposerCanSubmit(args: {
+  readonly isSubmitting: boolean;
+  readonly attachmentPending: boolean;
+  readonly submitBlocked: boolean;
+  readonly workspaceCanStart: boolean;
+  readonly hasSubmittableContent: boolean;
+}): boolean {
+  return (
+    !args.isSubmitting &&
+    !args.attachmentPending &&
+    !args.submitBlocked &&
+    args.workspaceCanStart &&
+    args.hasSubmittableContent
+  );
+}
+
 export function LandingComposer(props: LandingComposerProps) {
   const editorRef = useRef<ComposerPromptEditorHandle | null>(null);
   const createdUnboundDraftIdRef = useRef<string | null>(null);
@@ -562,12 +578,13 @@ export function LandingComposer(props: LandingComposerProps) {
     packPreparingHint: packGate.hint,
     packBlocked: packGate.blocked,
   });
-  const canSubmit =
-    !isSubmitting &&
-    !attachmentPending &&
-    !submitBlocked &&
-    workspaceCanStart &&
-    hasSubmittableContent;
+  const canSubmit = landingComposerCanSubmit({
+    isSubmitting,
+    attachmentPending,
+    submitBlocked,
+    workspaceCanStart,
+    hasSubmittableContent,
+  });
 
   const actions = useLandingComposerActions();
   const { dictationControl, dictationPreparing } = useComposerDictation({

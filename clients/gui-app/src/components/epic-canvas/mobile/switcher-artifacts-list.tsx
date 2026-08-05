@@ -22,7 +22,6 @@ import {
 import { EPIC_NODE_ICONS } from "@/lib/artifacts/node-display";
 import {
   STATUS_DOT_CLASSES,
-  STATUS_LABELS,
   computeArtifactNodeStatusDot,
 } from "@/components/epic-canvas/sidebar/epic-sidebar-tree-shared";
 import { useIsActiveEpicArtifact } from "@/stores/epics/canvas/canvas-selectors";
@@ -152,11 +151,11 @@ function SwitcherArtifactIcon(props: {
       <Icon aria-hidden className="size-4 text-muted-foreground" />
       {showDot && status !== null ? (
         <span
+          aria-hidden
           className={cn(
             "absolute -right-1 -bottom-1 size-1.5 rounded-full ring-1 ring-popover",
             STATUS_DOT_CLASSES[status],
           )}
-          title={STATUS_LABELS[status]}
         />
       ) : null}
     </span>

@@ -201,6 +201,7 @@ function authoritativeLayout(): PersistedTabStripLayout {
     items: state.items,
     activeItemId: state.activeItemId,
     systemTabs: state.systemTabs,
+    activationHistory: state.activationHistory,
   };
 }
 
@@ -222,6 +223,7 @@ function currentLayout(): PersistedTabStripLayout {
     items: [],
     activeItemId: null,
     systemTabs: state.systemTabs,
+    activationHistory: [],
   });
 }
 
@@ -1707,6 +1709,7 @@ export class TabCommandCoordinator {
         items: layout.items,
         activeItemId: layout.activeItemId,
         systemTabs: layout.systemTabs,
+        activationHistory: layout.activationHistory,
         stripOrder: flattenLayoutRefs(layout),
       });
       return null;

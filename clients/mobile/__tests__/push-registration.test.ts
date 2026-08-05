@@ -15,10 +15,15 @@ import type {
   TokenStoreChange,
 } from "@traycer-clients/shared/platform/runner-host";
 import type { Disposable } from "@traycer-clients/shared/platform/uri-callback";
-import type { PushTokenFetchResult } from "@traycer-clients/shared/auth/push-token-fetcher";
+import type {
+  DevicePushEnvironment,
+  DevicePushPlatform,
+  PushTokenFetchResult,
+} from "@traycer-clients/shared/auth/push-token-fetcher";
 import {
   MobilePushRegistration,
   activationPayloadFromPushData,
+  pushRegistrationTarget,
   type PushNotificationAction,
   type PushNotificationsPluginSlice,
   type PushPermissionState,
@@ -101,9 +106,17 @@ class FakePlugin implements PushNotificationsPluginSlice {
   private action: ((action: PushNotificationAction) => void) | null = null;
 
   readonly requestPermissions: Mock<() => Promise<PermissionResult>>;
+  /**
+   * Set to make `register()` reject. That is the Android shape when Firebase
+   * never initialized (no `google-services.json`): the plugin call itself
+   * throws instead of reporting through the `registrationError` event.
+   */
+  registerError: Error | null = null;
   // The real OS answers `register()` through the `registration` event; the
   // tests emit that event explicitly via `emitRegistration`.
-  readonly register: Mock<() => Promise<void>> = vi.fn(async () => {});
+  readonly register: Mock<() => Promise<void>> = vi.fn(async () => {
+    if (this.registerError !== null) throw this.registerError;
+  });
 
   constructor(
     private readonly permission: PushPermissionState,
@@ -169,17 +182,28 @@ interface FetchCalls {
   removed: Array<{ bearer: string; token: string }>;
 }
 
+/** The iOS-sandbox default; `controllerFor` when the pair is what is tested. */
 function controller(input: {
   readonly plugin: FakePlugin;
   readonly registerResult: PushTokenFetchResult;
   readonly removeResult: PushTokenFetchResult;
 }): { push: MobilePushRegistration; calls: FetchCalls } {
+  return controllerFor({ ...input, platform: "ios", environment: "sandbox" });
+}
+
+function controllerFor(input: {
+  readonly plugin: FakePlugin;
+  readonly registerResult: PushTokenFetchResult;
+  readonly removeResult: PushTokenFetchResult;
+  readonly platform: DevicePushPlatform;
+  readonly environment: DevicePushEnvironment;
+}): { push: MobilePushRegistration; calls: FetchCalls } {
   const calls: FetchCalls = { registered: [], removed: [] };
   const push = new MobilePushRegistration({
     plugin: input.plugin,
     authnBaseUrl: AUTHN_URL,
-    platform: "ios",
-    environment: "sandbox",
+    platform: input.platform,
+    environment: input.environment,
     registerToken: async (authnBaseUrl, bearer, body) => {
       expect(authnBaseUrl).toBe(AUTHN_URL);
       calls.registered.push({ bearer, ...body });
@@ -425,6 +449,176 @@ describe("MobilePushRegistration", () => {
     // Warm taps flow straight through.
     plugin.emitAction({ entryId: "entry-2", epicId: "epic-2", chatId: null });
     expect(received).toHaveLength(2);
+  });
+});
+
+/**
+ * The controller is platform-agnostic by construction, so these cover the
+ * things that are genuinely Android-shaped rather than re-running the iOS
+ * suite: the `(platform, environment)` pair authn receives, the two distinct
+ * permission shapes API 33 draws a line between, and the way a build with no
+ * Firebase config fails - `register()` rejecting outright, which is a
+ * different path from the `registrationError` event iOS uses.
+ */
+describe("MobilePushRegistration on Android", () => {
+  function androidController(input: { readonly plugin: FakePlugin }): {
+    push: MobilePushRegistration;
+    calls: FetchCalls;
+  } {
+    return controllerFor({
+      plugin: input.plugin,
+      registerResult: OK,
+      removeResult: OK,
+      platform: "android",
+      environment: "production",
+    });
+  }
+
+  it("registers the FCM token as android/production", async () => {
+    // API 33+: POST_NOTIFICATIONS is still unanswered, so the plugin reports
+    // "prompt" and the runtime dialog is what grants it.
+    const plugin = fakePlugin({
+      permission: "prompt",
+      afterRequest: "granted",
+    });
+    const { push, calls } = androidController({ plugin });
+    const source = new FakeTokenSource();
+    await source.setSignedIn(credentials("user-1", "bearer-1"));
+
+    push.start(source);
+    await drain();
+    plugin.emitRegistration("fcm-token-1");
+    await drain();
+
+    expect(plugin.requestPermissions).toHaveBeenCalledTimes(1);
+    expect(calls.registered).toEqual([
+      {
+        bearer: "bearer-1",
+        token: "fcm-token-1",
+        platform: "android",
+        // Never "sandbox": authn rejects that pairing outright.
+        environment: "production",
+      },
+    ]);
+  });
+
+  it("skips the runtime prompt below API 33, where the plugin reports granted", async () => {
+    // Pre-Tiramisu the plugin short-circuits `checkPermissions` to "granted",
+    // so the controller must go straight to register() without a dialog.
+    const plugin = fakePlugin({
+      permission: "granted",
+      afterRequest: "granted",
+    });
+    const { push, calls } = androidController({ plugin });
+    const source = new FakeTokenSource();
+    await source.setSignedIn(credentials("user-1", "bearer-1"));
+
+    push.start(source);
+    await drain();
+    plugin.emitRegistration("fcm-token-1");
+    await drain();
+
+    expect(plugin.requestPermissions).not.toHaveBeenCalled();
+    expect(plugin.register).toHaveBeenCalledTimes(1);
+    expect(calls.registered).toHaveLength(1);
+  });
+
+  it("stops at a denied POST_NOTIFICATIONS without touching Firebase", async () => {
+    const plugin = fakePlugin({ permission: "prompt", afterRequest: "denied" });
+    const { push, calls } = androidController({ plugin });
+    const source = new FakeTokenSource();
+    await source.setSignedIn(credentials("user-1", "bearer-1"));
+
+    push.start(source);
+    await drain();
+
+    expect(plugin.requestPermissions).toHaveBeenCalledTimes(1);
+    expect(plugin.register).not.toHaveBeenCalled();
+    expect(calls.registered).toEqual([]);
+  });
+
+  it("survives a build with no google-services.json: register() rejects, nothing else breaks", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const plugin = fakePlugin({
+      permission: "granted",
+      afterRequest: "granted",
+    });
+    // What FirebaseMessaging.getInstance() raises when the google-services
+    // plugin was never applied, surfaced as a rejected plugin call.
+    plugin.registerError = new Error("Default FirebaseApp is not initialized");
+    const { push, calls } = androidController({ plugin });
+    const source = new FakeTokenSource();
+    await source.setSignedIn(credentials("user-1", "bearer-1"));
+
+    push.start(source);
+    await drain();
+
+    expect(plugin.register).toHaveBeenCalledTimes(1);
+    expect(calls.registered).toEqual([]);
+    expect(warn).toHaveBeenCalled();
+
+    // And a later signed-in app that DOES have the config still registers -
+    // the failure left no latch behind.
+    plugin.registerError = null;
+    await source.setSignedIn(credentials("user-1", "bearer-2"));
+    plugin.emitRegistration("fcm-token-1");
+    await drain();
+    expect(calls.registered).toEqual([
+      {
+        bearer: "bearer-2",
+        token: "fcm-token-1",
+        platform: "android",
+        environment: "production",
+      },
+    ]);
+  });
+
+  it("re-registers when FCM rotates the token", async () => {
+    const plugin = fakePlugin({
+      permission: "granted",
+      afterRequest: "granted",
+    });
+    const { push, calls } = androidController({ plugin });
+    const source = new FakeTokenSource();
+    await source.setSignedIn(credentials("user-1", "bearer-1"));
+
+    push.start(source);
+    await drain();
+    plugin.emitRegistration("fcm-token-1");
+    await drain();
+    plugin.emitRegistration("fcm-token-2");
+    await drain();
+
+    expect(calls.registered.map((call) => call.token)).toEqual([
+      "fcm-token-1",
+      "fcm-token-2",
+    ]);
+  });
+});
+
+describe("pushRegistrationTarget", () => {
+  it("pins Android to production and tracks the build flavor on iOS", () => {
+    expect(pushRegistrationTarget("android", true)).toEqual({
+      platform: "android",
+      environment: "production",
+    });
+    expect(pushRegistrationTarget("android", false)).toEqual({
+      platform: "android",
+      environment: "production",
+    });
+    expect(pushRegistrationTarget("ios", true)).toEqual({
+      platform: "ios",
+      environment: "sandbox",
+    });
+    expect(pushRegistrationTarget("ios", false)).toEqual({
+      platform: "ios",
+      environment: "production",
+    });
+  });
+
+  it("has no target off-device, so the web entry builds no controller", () => {
+    expect(pushRegistrationTarget("web", true)).toBeNull();
+    expect(pushRegistrationTarget("", false)).toBeNull();
   });
 });
 

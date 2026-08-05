@@ -17,32 +17,33 @@ import {
 } from "@traycer-clients/shared/auth/push-token-fetcher";
 import "./index.css";
 import { MobileRunnerHost } from "../mobile-runner-host";
-import { MobilePushRegistration } from "../push-registration";
+import {
+  MobilePushRegistration,
+  pushRegistrationTarget,
+} from "../push-registration";
 
 /**
  * OS push exists only inside the native shells - the dev web entry has no
- * push plugin, so it gets `null` and the runner host's click sink stays the
- * familiar no-op.
- *
- * The APNs environment tracks the build flavor: a dev-served bundle rides a
- * debug-signed native build whose `aps-environment` is `development`, so its
- * tokens only deliver through Apple's sandbox gateway; a production web build
- * ships in release signing, which is the production gateway. Android has no
- * such split and always registers `production` (authn rejects anything else).
+ * push plugin, so `pushRegistrationTarget` returns `null` for it and the
+ * runner host's click sink stays the familiar no-op. The per-platform
+ * `(platform, environment)` rule, including why Android is always
+ * `production`, lives with that function.
  */
 function buildPushRegistration(
   authnBaseUrl: string,
 ): MobilePushRegistration | null {
-  const platform = Capacitor.getPlatform();
-  if (platform !== "ios" && platform !== "android") {
+  const target = pushRegistrationTarget(
+    Capacitor.getPlatform(),
+    import.meta.env.DEV,
+  );
+  if (target === null) {
     return null;
   }
   return new MobilePushRegistration({
     plugin: PushNotifications,
     authnBaseUrl,
-    platform,
-    environment:
-      platform === "ios" && import.meta.env.DEV ? "sandbox" : "production",
+    platform: target.platform,
+    environment: target.environment,
     registerToken: registerDevicePushTokenViaHttp,
     removeToken: removeDevicePushTokenViaHttp,
   });

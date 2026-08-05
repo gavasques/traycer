@@ -86,6 +86,41 @@ export interface PushTokenSource {
   subscribe(listener: (change: TokenStoreChange) => void): Disposable;
 }
 
+export interface PushRegistrationTarget {
+  readonly platform: DevicePushPlatform;
+  readonly environment: DevicePushEnvironment;
+}
+
+/**
+ * How a Capacitor platform name becomes the `(platform, environment)` pair
+ * authn is told about, or `null` where OS push does not exist at all (the dev
+ * `web` entry).
+ *
+ * The two providers differ in exactly one way here. APNs really does have two
+ * gateways, and which one a token is valid on is fixed by the build's
+ * `aps-environment` entitlement: debug signing means `development`, so a
+ * dev-served bundle must say `sandbox` or the sender addresses the wrong
+ * gateway and the push silently vanishes. FCM has no such split - one project,
+ * one token namespace - so Android is always `production`, and authn actively
+ * rejects `android` + `sandbox` as a caller bug rather than accepting a value
+ * it cannot honour.
+ */
+export function pushRegistrationTarget(
+  capacitorPlatform: string,
+  isDevBuild: boolean,
+): PushRegistrationTarget | null {
+  if (capacitorPlatform === "ios") {
+    return {
+      platform: "ios",
+      environment: isDevBuild ? "sandbox" : "production",
+    };
+  }
+  if (capacitorPlatform === "android") {
+    return { platform: "android", environment: "production" };
+  }
+  return null;
+}
+
 export interface MobilePushRegistrationOptions {
   readonly plugin: PushNotificationsPluginSlice;
   readonly authnBaseUrl: string;
@@ -137,8 +172,9 @@ export class MobilePushRegistration {
       .catch(logPushFailure("attach registration listener"));
     void this.options.plugin
       .addListener("registrationError", (error) => {
-        // Missing entitlement/provisioning, or APNs unreachable. The app works
-        // without pushes; say why once instead of failing anything.
+        // iOS: missing entitlement/provisioning, or APNs unreachable. Android:
+        // Firebase reached but refused to mint a token. The app works without
+        // pushes; say why once instead of failing anything.
         console.warn("[push] registration failed", error.error);
       })
       .catch(logPushFailure("attach registrationError listener"));
@@ -203,11 +239,17 @@ export class MobilePushRegistration {
       }
       if (permission.receive !== "granted") {
         // Denial is remembered by the OS; `requestPermissions` on a denied
-        // state resolves without prompting, so this never nags.
+        // state resolves without prompting, so this never nags. Android 13+
+        // behaves the same way through POST_NOTIFICATIONS (and below API 33
+        // the plugin answers "granted" from `checkPermissions`, so the request
+        // branch is never reached there at all).
         return;
       }
       // Idempotent with the OS; the provider token arrives (again) on the
-      // `registration` event, which registers it below.
+      // `registration` event, which registers it below. This is also where an
+      // Android build with no `google-services.json` gives up: Firebase never
+      // initialized, so the call REJECTS rather than reporting through
+      // `registrationError`, and the catch below logs it.
       await this.options.plugin.register();
       await this.registerCurrentToken();
     } catch (error) {

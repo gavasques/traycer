@@ -33,13 +33,44 @@ without reinstalling. Capacitor config, plugin, Swift, signing, or Xcode-project
 changes still require a native rebuild. Build products and per-device Xcode
 state stay ignored and are recreated locally.
 
-The direct workspace command remains available when an explicit slot is
-needed:
+### Android
+
+Boot exactly one Android emulator instead (`adb devices` should list one), then
+from the same place:
+
+```bash
+make dev-android
+```
+
+It consumes the same slot and the same `run.json` through the same launcher
+plumbing. The one extra step is `adb reverse`: the emulator's loopback is its
+own, so every port the slot publishes is tunnelled back to this machine and the
+baked `http://localhost:<port>` URLs resolve unchanged. Re-run it after
+restarting the dev host, which reallocates its RPC port — the launcher warns if
+it cannot read that port.
+
+Run `bun run --cwd clients/mobile sync:android` before invoking `./gradlew`
+directly: the tracked Gradle files reference bun install paths and a gitignored
+plugin directory, both of which a sync regenerates.
+
+Push on Android needs an ops-provisioned
+`clients/mobile/android/app/google-services.json` (gitignored; see the tracked
+`.example` beside it for the shape). Without it the build still succeeds and
+the app runs — it just never obtains an FCM token.
+
+The Android platform has **not** been run in an emulator yet; see the
+verification status in `AGENTS.md` for what that leaves open.
+
+### Explicit slots
+
+The direct workspace commands remain available when an explicit slot is needed:
 
 ```bash
 bun run --cwd clients/mobile dev:ios -- --slot <slot>
+bun run --cwd clients/mobile dev:android -- --slot <slot>
 ```
 
-The current milestone is Simulator-only because the existing dev host binds to
-Mac loopback. Reaching it from a physical iPhone requires a future remote/tunnel
-path outside this client workspace.
+The current milestone is emulator/Simulator-only because the existing dev host
+binds to Mac loopback. Reaching it from a physical iPhone requires a future
+remote/tunnel path outside this client workspace. A physical Android device
+attached over USB is closer — `adb reverse` works there too — but is untested.

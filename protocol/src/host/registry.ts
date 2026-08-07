@@ -3,6 +3,7 @@ import {
   defineFloorAwareVersionedRpcRegistry,
   defineUpgradePath,
   type DowngradeResult,
+  type VersionedRpcRegistry,
 } from "@traycer/protocol/framework/index";
 import {
   defineVersionedStreamRpcRegistry,
@@ -84,9 +85,14 @@ import {
   agentListProviderProfilesUpgradeV20ToV30,
 } from "@traycer/protocol/host/agent/profiles";
 import {
+  agentInboxAckV10,
+  agentInboxReadDowngradeV20ToV10,
   agentInboxReadV10,
+  agentInboxReadUpgradeV10ToV20,
+  agentInboxReadV20,
   agentInboxSubscribeV10,
   agentInboxSubscribeV11,
+  agentInboxSubscribeV12,
 } from "@traycer/protocol/host/agent/inbox";
 import { agentActivitySubscribeV10 } from "@traycer/protocol/host/agent/activity";
 import {
@@ -196,6 +202,7 @@ import {
   epicCreateChatV10,
   epicCreateCommentThreadV10,
   epicCreateTuiAgentV10,
+  epicCreateTuiAgentV11,
   epicCreateV10,
   epicDeleteArtifactV10,
   epicDeleteChatV10,
@@ -253,6 +260,7 @@ import {
   workspacePrepareFoldersV10,
   workspacePrepareFoldersV11,
   workspaceReadFileV10,
+  workspaceWriteFileV10,
   workspaceResolvePathsByRepoIdentifiersV10,
   workspaceSearchPathsV10,
   workspaceSearchTextV10,
@@ -272,6 +280,7 @@ import {
   terminalListUpgradeV10ToV20,
   terminalListUpgradeV20ToV21,
   terminalListUpgradeV21ToV22,
+  terminalReadOutputV10,
   terminalRenameV10,
   terminalSubscribeV10,
   terminalSubscribeV11,
@@ -329,7 +338,10 @@ import {
 import { worktreeDeleteBatchByPathStreamV10 } from "@traycer/protocol/host/worktree-delete-batch-stream";
 import { worktreeDeleteByPathStreamV10 } from "@traycer/protocol/host/worktree-delete-stream";
 import { worktreeChangedV10 } from "@traycer/protocol/host/worktree-changed-stream";
-import { epicCommunicationGraphSubscribeV10 } from "@traycer/protocol/host/epic/communication-graph";
+import {
+  epicCommunicationGraphSubscribeV10,
+  hostCommunicationGraphCloudFeedSubscribeV10,
+} from "@traycer/protocol/host/epic/communication-graph";
 import { editorOpenPathsV10 } from "@traycer/protocol/host/editor/contracts";
 import {
   gitListChangedFilesV10,
@@ -337,6 +349,7 @@ import {
   gitListChangedFilesUpgradeV10ToV11,
   gitGetFileDiffV10,
   gitGetFileDiffsV10,
+  gitGetFileContentsV10,
   gitGetCapabilitiesV10,
   gitSubscribeStatusV10,
   gitSubscribeStatusV11,
@@ -451,7 +464,7 @@ import {
   providersEnsurePackRequestSchema,
   providersEnsurePackResponseSchema,
   providersListRequestSchema,
-  providersListRequestSchemaV30,
+  providersListRequestSchemaBeforeV70,
   providersListResponseSchema,
   providersListResponseSchemaV10,
   providersListResponseSchemaV20,
@@ -901,14 +914,14 @@ export const worktreeGetBindingV10 = defineRpcContract({
 export const providersListV10 = defineRpcContract({
   method: "providers.list",
   schemaVersion: { major: 1, minor: 0 } as const,
-  requestSchema: providersListRequestSchemaV30,
+  requestSchema: providersListRequestSchemaBeforeV70,
   responseSchema: providersListResponseSchemaV10,
 });
 
 export const providersListV20 = defineRpcContract({
   method: "providers.list",
   schemaVersion: { major: 2, minor: 0 } as const,
-  requestSchema: providersListRequestSchemaV30,
+  requestSchema: providersListRequestSchemaBeforeV70,
   responseSchema: providersListResponseSchemaV20,
 });
 
@@ -1064,7 +1077,7 @@ export const providersListDowngradeV2ToV1 = defineDowngradePath<
 export const providersListV30 = defineRpcContract({
   method: "providers.list",
   schemaVersion: { major: 3, minor: 0 } as const,
-  requestSchema: providersListRequestSchemaV30,
+  requestSchema: providersListRequestSchemaBeforeV70,
   responseSchema: providersListResponseSchemaV30,
 });
 
@@ -1121,7 +1134,12 @@ export const providersListDowngradeV3ToV1 = defineDowngradePath<
 export const providersListV40 = defineRpcContract({
   method: "providers.list",
   schemaVersion: { major: 4, minor: 0 } as const,
-  requestSchema: providersListRequestSchema,
+  // Frozen: `cli-v1.1.4` shipped this line, and `host-v1.1.10` re-froze it
+  // without `native`. It pointed at the live request schema until then, which
+  // is how the native list/discover carrier grew three already-released
+  // request lines at once - the response side of this same method was frozen
+  // per line for the identical reason (see `providersListV50`/`V60`).
+  requestSchema: providersListRequestSchemaBeforeV70,
   responseSchema: providersListResponseSchemaV40,
 });
 
@@ -1143,11 +1161,10 @@ export const providersListUpgradeV3ToV4 = defineUpgradePath<
   // model them, so a fill here is discarded - they are filled on the
   // v5.0 -> v6.0 hop instead, whose target is the live shape.
   //
-  // The REQUEST is not identity: the v4.0 line is pinned to the live request
-  // schema, which carries the `native` list/discover carrier. A v3.0 caller
-  // predates it, so it upgrades to `native: null` ("classic caller, no native
-  // query").
-  upgradeRequest: (request) => ({ ...request, native: null }),
+  // The request upgrade is identity: v3.0 and v4.0 are both pinned to
+  // `providersListRequestSchemaBeforeV70`. `native` rides v7.0 alone and is
+  // filled on the v6.0 -> v7.0 hop, the first bridge whose target models it.
+  upgradeRequest: (request) => request,
   upgradeResponse: (response) => ({
     providers: response.providers.map((provider) => ({
       ...provider,
@@ -1165,7 +1182,7 @@ export const providersListDowngradeV4ToV3 = defineDowngradePath<
   to: { major: 3, minor: 0 },
   downgradeRequest: (request) => ({
     ok: true,
-    value: providersListRequestSchemaV30.parse({
+    value: providersListRequestSchemaBeforeV70.parse({
       forceAuthRefresh: request.forceAuthRefresh,
     }),
   }),
@@ -1185,7 +1202,7 @@ export const providersListDowngradeV4ToV2 = defineDowngradePath<
   to: { major: 2, minor: 0 },
   downgradeRequest: (request) => ({
     ok: true,
-    value: providersListRequestSchemaV30.parse({
+    value: providersListRequestSchemaBeforeV70.parse({
       forceAuthRefresh: request.forceAuthRefresh,
     }),
   }),
@@ -1205,7 +1222,7 @@ export const providersListDowngradeV4ToV1 = defineDowngradePath<
   to: { major: 1, minor: 0 },
   downgradeRequest: (request) => ({
     ok: true,
-    value: providersListRequestSchemaV30.parse({
+    value: providersListRequestSchemaBeforeV70.parse({
       forceAuthRefresh: request.forceAuthRefresh,
     }),
   }),
@@ -1220,7 +1237,9 @@ export const providersListDowngradeV4ToV1 = defineDowngradePath<
 export const providersListV50 = defineRpcContract({
   method: "providers.list",
   schemaVersion: { major: 5, minor: 0 } as const,
-  requestSchema: providersListRequestSchema,
+  // Frozen without `native` for the same reason as the v4.0 line above:
+  // `host-v1.1.10` shipped this request shape.
+  requestSchema: providersListRequestSchemaBeforeV70,
   // Frozen: `cli-v1.1.8` shipped this line, so it must serve the v5.0 id set
   // rather than the live one. Before that release it pointed at the canonical
   // schema, which is exactly how `omp` first tried to ride v5.0.
@@ -1230,7 +1249,9 @@ export const providersListV50 = defineRpcContract({
 export const providersListV60 = defineRpcContract({
   method: "providers.list",
   schemaVersion: { major: 6, minor: 0 } as const,
-  requestSchema: providersListRequestSchema,
+  // Frozen without `native` for the same reason as the v4.0 line above:
+  // `host-v1.1.10` shipped this request shape.
+  requestSchema: providersListRequestSchemaBeforeV70,
   // Frozen: `cli-v1.1.9` shipped this line. It pointed at the canonical schema
   // until then, which is how the provider-pack-registry fields grew an
   // already-released version - the same way `omp` first tried to ride v5.0.
@@ -1284,7 +1305,13 @@ export const providersListUpgradeV6ToV7 = defineUpgradePath<
   // job is `nativeCapabilities` - the fill must not silently depend on a
   // re-parse that exists for another field. See
   // `upgradeLoginCapabilityFromV40`.
-  upgradeRequest: (request) => request,
+  //
+  // The REQUEST is not identity either, and for the same reason: v7.0 is the
+  // first line whose request models the `native` list/discover carrier, so a
+  // v6.0-or-older caller upgrades to `native: null` ("classic caller, no
+  // native query"). This fill used to sit on the v3.0 -> v4.0 hop, back when
+  // v4.0/v5.0/v6.0 were still pinned to the live request schema.
+  upgradeRequest: (request) => ({ ...request, native: null }),
   upgradeResponse: (response) => ({
     providers: upgradeProviderCliStateListToLatest(
       response.providers.map((provider) => ({
@@ -1381,7 +1408,16 @@ export const providersListDowngradeV7ToV6 = defineDowngradePath<
 >({
   from: { major: 7, minor: 0 },
   to: { major: 6, minor: 0 },
-  downgradeRequest: (request) => ({ ok: true, value: request }),
+  // v7.0 is the only line whose request models `native`; every target below
+  // it is pinned to `providersListRequestSchemaBeforeV70`. Re-parsed field by
+  // field rather than passed through, so the carrier can never reach a peer
+  // whose schema does not model it.
+  downgradeRequest: (request) => ({
+    ok: true,
+    value: providersListRequestSchemaBeforeV70.parse({
+      forceAuthRefresh: request.forceAuthRefresh,
+    }),
+  }),
   // The id sets are identical, so this hop exists purely to strip the
   // provider-pack-registry fields: reparsing through the frozen v6.0 schema
   // drops the keys it does not model, which is exactly what `cli-v1.1.9`
@@ -1400,7 +1436,16 @@ export const providersListDowngradeV7ToV5 = defineDowngradePath<
 >({
   from: { major: 7, minor: 0 },
   to: { major: 5, minor: 0 },
-  downgradeRequest: (request) => ({ ok: true, value: request }),
+  // v7.0 is the only line whose request models `native`; every target below
+  // it is pinned to `providersListRequestSchemaBeforeV70`. Re-parsed field by
+  // field rather than passed through, so the carrier can never reach a peer
+  // whose schema does not model it.
+  downgradeRequest: (request) => ({
+    ok: true,
+    value: providersListRequestSchemaBeforeV70.parse({
+      forceAuthRefresh: request.forceAuthRefresh,
+    }),
+  }),
   downgradeResponse: (response) => ({
     ok: true,
     value: providersListResponseSchemaV50.parse({
@@ -1415,7 +1460,16 @@ export const providersListDowngradeV7ToV4 = defineDowngradePath<
 >({
   from: { major: 7, minor: 0 },
   to: { major: 4, minor: 0 },
-  downgradeRequest: (request) => ({ ok: true, value: request }),
+  // v7.0 is the only line whose request models `native`; every target below
+  // it is pinned to `providersListRequestSchemaBeforeV70`. Re-parsed field by
+  // field rather than passed through, so the carrier can never reach a peer
+  // whose schema does not model it.
+  downgradeRequest: (request) => ({
+    ok: true,
+    value: providersListRequestSchemaBeforeV70.parse({
+      forceAuthRefresh: request.forceAuthRefresh,
+    }),
+  }),
   downgradeResponse: (response) => ({
     ok: true,
     value: providersListResponseSchemaV40.parse({
@@ -1430,7 +1484,16 @@ export const providersListDowngradeV7ToV3 = defineDowngradePath<
 >({
   from: { major: 7, minor: 0 },
   to: { major: 3, minor: 0 },
-  downgradeRequest: (request) => ({ ok: true, value: request }),
+  // v7.0 is the only line whose request models `native`; every target below
+  // it is pinned to `providersListRequestSchemaBeforeV70`. Re-parsed field by
+  // field rather than passed through, so the carrier can never reach a peer
+  // whose schema does not model it.
+  downgradeRequest: (request) => ({
+    ok: true,
+    value: providersListRequestSchemaBeforeV70.parse({
+      forceAuthRefresh: request.forceAuthRefresh,
+    }),
+  }),
   downgradeResponse: (response) => ({
     ok: true,
     value: providersListResponseSchemaV30.parse({
@@ -1445,7 +1508,16 @@ export const providersListDowngradeV7ToV2 = defineDowngradePath<
 >({
   from: { major: 7, minor: 0 },
   to: { major: 2, minor: 0 },
-  downgradeRequest: (request) => ({ ok: true, value: request }),
+  // v7.0 is the only line whose request models `native`; every target below
+  // it is pinned to `providersListRequestSchemaBeforeV70`. Re-parsed field by
+  // field rather than passed through, so the carrier can never reach a peer
+  // whose schema does not model it.
+  downgradeRequest: (request) => ({
+    ok: true,
+    value: providersListRequestSchemaBeforeV70.parse({
+      forceAuthRefresh: request.forceAuthRefresh,
+    }),
+  }),
   downgradeResponse: (response) => ({
     ok: true,
     value: providersListResponseSchemaV20.parse({
@@ -1460,7 +1532,16 @@ export const providersListDowngradeV7ToV1 = defineDowngradePath<
 >({
   from: { major: 7, minor: 0 },
   to: { major: 1, minor: 0 },
-  downgradeRequest: (request) => ({ ok: true, value: request }),
+  // v7.0 is the only line whose request models `native`; every target below
+  // it is pinned to `providersListRequestSchemaBeforeV70`. Re-parsed field by
+  // field rather than passed through, so the carrier can never reach a peer
+  // whose schema does not model it.
+  downgradeRequest: (request) => ({
+    ok: true,
+    value: providersListRequestSchemaBeforeV70.parse({
+      forceAuthRefresh: request.forceAuthRefresh,
+    }),
+  }),
   downgradeResponse: (response) => ({
     ok: true,
     value: providersListResponseSchemaV10.parse({
@@ -1476,8 +1557,8 @@ export const providersListUpgradeV4ToV5 = defineUpgradePath<
   from: { major: 4, minor: 0 },
   to: { major: 5, minor: 0 },
   // A v4.0 response without Hermes is a valid v5.0 response (purely
-  // additive), and both lines are pinned to the same live request schema -
-  // both upgrades are identity.
+  // additive), and both lines are pinned to the same frozen pre-v7.0 request
+  // schema - both upgrades are identity.
   upgradeRequest: (request) => request,
   upgradeResponse: (response) => response,
 });
@@ -2866,7 +2947,25 @@ export const workspacePrepareFoldersUpgradeV10ToV11 = defineUpgradePath<
   }),
 });
 
-const HOST_RPC_REGISTRY_DEFINITION = {
+// Additive upgrade from v1.0: a peer on the frozen v1.0 line predates fork
+// provenance entirely, so its creates carry no fork source. The newer side
+// runs this when bridging a v1.0 peer up to canonical (host: inbound v1.0
+// request). The response is unchanged across the two minors, so its upgrade is
+// identity.
+export const epicCreateTuiAgentUpgradeV10ToV11 = defineUpgradePath<
+  typeof epicCreateTuiAgentV10,
+  typeof epicCreateTuiAgentV11
+>({
+  from: epicCreateTuiAgentV10.schemaVersion,
+  to: epicCreateTuiAgentV11.schemaVersion,
+  upgradeRequest: (request) => ({
+    ...request,
+    forkSourceHarnessSessionId: null,
+  }),
+  upgradeResponse: (response) => response,
+});
+
+const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   "host.status": {
     1: {
       latestMinor: 1,
@@ -3770,6 +3869,29 @@ const HOST_RPC_REGISTRY_DEFINITION = {
       },
       downgradePathsFromLatest: {},
     },
+    2: {
+      latestMinor: 0,
+      versions: {
+        0: {
+          contract: agentInboxReadV20,
+          upgradeFromPreviousVersion: agentInboxReadUpgradeV10ToV20,
+        },
+      },
+      downgradePathsFromLatest: { 1: agentInboxReadDowngradeV20ToV10 },
+    },
+  },
+  "agent.inbox.ack": {
+    1: {
+      latestMinor: 0,
+      versions: {
+        0: {
+          contract: agentInboxAckV10,
+          upgradeFromPreviousVersion: null,
+        },
+      },
+      downgradePathsFromLatest: {},
+    },
+    degrade: { kind: "unsupported" },
   },
   "agent.stop": {
     1: {
@@ -4327,11 +4449,15 @@ const HOST_RPC_REGISTRY_DEFINITION = {
   },
   "epic.createTuiAgent": {
     1: {
-      latestMinor: 0,
+      latestMinor: 1,
       versions: {
         0: {
           contract: epicCreateTuiAgentV10,
           upgradeFromPreviousVersion: null,
+        },
+        1: {
+          contract: epicCreateTuiAgentV11,
+          upgradeFromPreviousVersion: epicCreateTuiAgentUpgradeV10ToV11,
         },
       },
       downgradePathsFromLatest: {},
@@ -4708,6 +4834,23 @@ const HOST_RPC_REGISTRY_DEFINITION = {
         },
       },
       downgradePathsFromLatest: { 1: terminalListDowngradeV22ToV10 },
+    },
+  },
+  // Brand-new v1.0 method on the same `degrade: unsupported` channel as
+  // `resources.kill` above: a host predating agent terminal reads simply
+  // lacks it, so the CLI gets per-call upgrade guidance instead of a fatal
+  // handshake mismatch.
+  "terminal.readOutput": {
+    degrade: { kind: "unsupported" },
+    1: {
+      latestMinor: 0,
+      versions: {
+        0: {
+          contract: terminalReadOutputV10,
+          upgradeFromPreviousVersion: null,
+        },
+      },
+      downgradePathsFromLatest: {},
     },
   },
   "terminal.rename": {
@@ -5610,10 +5753,52 @@ const HOST_RPC_REGISTRY_DEFINITION = {
   },
 } as const;
 
-export const hostRpcRegistry = defineFloorAwareVersionedRpcRegistry(
+const HOST_RPC_EDITING_REGISTRY_DEFINITION = {
+  // Additive, post-v1.0.0 optional method. Older hosts render the same file
+  // surfaces read-only; newer hosts provide conflict-safe in-place saves.
+  "workspace.writeFile": {
+    degrade: { kind: "unsupported" },
+    1: {
+      latestMinor: 0,
+      versions: {
+        0: {
+          contract: workspaceWriteFileV10,
+          upgradeFromPreviousVersion: null,
+        },
+      },
+      downgradePathsFromLatest: {},
+    },
+  },
+  // Optional edit hydration: full old/new/worktree text is fetched only when
+  // the user enters edit mode. Older hosts keep Git diffs read-only.
+  "git.getFileContents": {
+    degrade: { kind: "unsupported" },
+    1: {
+      latestMinor: 0,
+      versions: {
+        0: {
+          contract: gitGetFileContentsV10,
+          upgradeFromPreviousVersion: null,
+        },
+      },
+      downgradePathsFromLatest: {},
+    },
+  },
+} as const;
+
+type HostRpcRegistryDefinition = typeof HOST_RPC_REGISTRY_BASE_DEFINITION &
+  typeof HOST_RPC_EDITING_REGISTRY_DEFINITION;
+
+const HOST_RPC_REGISTRY_DEFINITION: HostRpcRegistryDefinition = {
+  ...HOST_RPC_REGISTRY_BASE_DEFINITION,
+  ...HOST_RPC_EDITING_REGISTRY_DEFINITION,
+};
+
+export const hostRpcRegistry: VersionedRpcRegistry<HostRpcRegistryDefinition> =
+  defineFloorAwareVersionedRpcRegistry(
   RELEASED_FLOOR_METHOD_NAMES,
   HOST_RPC_REGISTRY_DEFINITION,
-);
+  );
 
 export type HostRpcRegistry = typeof hostRpcRegistry;
 
@@ -5858,13 +6043,22 @@ const HOST_STREAM_RPC_REGISTRY_OTHER_DEFINITION = {
       // FROZEN: a monitor that negotiated it never receives the new kind, and
       // the resolver gates on the negotiated version rather than assuming the
       // peer will tolerate an unknown frame.
-      latestMinor: 1,
+      //
+      // @1.2 adds `eventId` to the EXISTING "message" item (not a new frame
+      // kind) - unlike a new frame kind, an unrecognized extra field inside an
+      // already-known object is silently dropped by a @1.0/@1.1 monitor's own
+      // non-strict zod parse, so the resolver builds the @1.2 shape
+      // unconditionally rather than branching on negotiated minor.
+      latestMinor: 2,
       versions: {
         0: {
           contract: agentInboxSubscribeV10,
         },
         1: {
           contract: agentInboxSubscribeV11,
+        },
+        2: {
+          contract: agentInboxSubscribeV12,
         },
       },
     },
@@ -5895,6 +6089,22 @@ const HOST_STREAM_RPC_REGISTRY_OTHER_DEFINITION = {
       versions: {
         0: {
           contract: epicCommunicationGraphSubscribeV10,
+        },
+      },
+    },
+  },
+  // Additive, post-v1.0.0 OPTIONAL stream method: the cloud-relayed
+  // counterpart of `epic.communicationGraph.subscribe` above. A host built
+  // without cloud replication, or one that predates this method, never
+  // advertises it, so the client's subscription degrades to `unsupported`
+  // and falls back to the local per-host stream. Never add it to the unary
+  // released floor - that list is fail-closed on the name set.
+  "host.communicationGraph.subscribe": {
+    1: {
+      latestMinor: 0,
+      versions: {
+        0: {
+          contract: hostCommunicationGraphCloudFeedSubscribeV10,
         },
       },
     },

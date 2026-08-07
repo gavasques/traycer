@@ -21,6 +21,8 @@ import {
   workspacePrepareFoldersResponseSchemaV11,
   workspaceReadFileRequestSchema,
   workspaceReadFileResponseSchema,
+  workspaceWriteFileRequestSchema,
+  workspaceWriteFileResponseSchema,
   workspaceResolvePathsByRepoIdentifiersRequestSchema,
   workspaceResolvePathsByRepoIdentifiersResponseSchema,
   workspaceSearchPathsRequestSchema,
@@ -132,6 +134,17 @@ export const workspaceReadFileV10 = defineRpcContract({
   schemaVersion: { major: 1, minor: 0 } as const,
   requestSchema: workspaceReadFileRequestSchema,
   responseSchema: workspaceReadFileResponseSchema,
+});
+
+/**
+ * Optional post-v1 file-edit capability. Older hosts omit it from their
+ * manifest and the GUI keeps file surfaces read-only.
+ */
+export const workspaceWriteFileV10 = defineRpcContract({
+  method: "workspace.writeFile",
+  schemaVersion: { major: 1, minor: 0 } as const,
+  requestSchema: workspaceWriteFileRequestSchema,
+  responseSchema: workspaceWriteFileResponseSchema,
 });
 
 export const workspaceSearchPathsV10 = defineRpcContract({

@@ -496,6 +496,11 @@ export const HOST_METHOD_POLL_TABLE = {
   },
   "agent.getTranscript": { ...LATEST_SCHEDULING, poll: null },
   "agent.inbox.read": { ...LATEST_SCHEDULING, poll: null },
+  "agent.inbox.ack": {
+    mode: "fifo",
+    joinResponseTimeoutMs: null,
+    poll: null,
+  },
   // Claiming a role persists responsibility and broadcasts awareness.
   "agent.roles.claim": {
     mode: "fifo",
@@ -541,6 +546,13 @@ export const HOST_METHOD_POLL_TABLE = {
   "workspace.listDirectory": { ...LATEST_SCHEDULING, poll: null },
   "workspace.browseFolders": { ...LATEST_SCHEDULING, poll: null },
   "workspace.readFile": { ...LATEST_SCHEDULING, poll: null },
+  // Saving a file writes to disk and each attempt carries the revision
+  // acknowledged by the previous save, so writes must not be coalesced.
+  "workspace.writeFile": {
+    mode: "fifo",
+    joinResponseTimeoutMs: null,
+    poll: null,
+  },
   "workspace.mentionFiles": { ...LATEST_SCHEDULING, poll: null },
   "workspace.mentionFolders": { ...LATEST_SCHEDULING, poll: null },
   "workspace.mentionWorktrees": { ...LATEST_SCHEDULING, poll: null },
@@ -720,6 +732,7 @@ export const HOST_METHOD_POLL_TABLE = {
   },
   "git.getFileDiff": { ...LATEST_SCHEDULING, poll: null },
   "git.getFileDiffs": { ...LATEST_SCHEDULING, poll: null },
+  "git.getFileContents": { ...LATEST_SCHEDULING, poll: null },
   "git.getCapabilities": { ...LATEST_SCHEDULING, poll: null },
   // A read of the local checkout, requested when the PR Files tab opens.
   // No poll: the PR detail stream is what notices a new push, and a re-render
@@ -730,6 +743,10 @@ export const HOST_METHOD_POLL_TABLE = {
   // Killing a terminal terminates a host PTY session.
   "terminal.kill": { mode: "fifo", joinResponseTimeoutMs: null, poll: null },
   "terminal.list": { ...LATEST_SCHEDULING, poll: null },
+  // A read that materializes the terminal's output to a file on the host.
+  // Latest-wins with no poll: it is issued on demand, and a superseded read
+  // has nothing worth waiting for - the next one rewrites the same file.
+  "terminal.readOutput": { ...LATEST_SCHEDULING, poll: null },
   // Renaming a terminal persists its display name.
   "terminal.rename": { mode: "fifo", joinResponseTimeoutMs: null, poll: null },
   "worktree.listByWorkspacePaths": { ...LATEST_SCHEDULING, poll: null },

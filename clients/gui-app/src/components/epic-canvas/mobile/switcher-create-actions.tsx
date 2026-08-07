@@ -45,6 +45,7 @@ export function SwitcherNewAgentButton(props: {
       tabId,
       placement: ACTIVE_TILE_PLACEMENT,
       parentId: null,
+      hostId: null,
     });
     onClose();
   };

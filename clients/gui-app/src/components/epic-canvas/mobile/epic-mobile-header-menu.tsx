@@ -82,6 +82,7 @@ export function EpicMobileHeaderMenu(props: EpicHeaderIdentity) {
       tabId,
       placement: ACTIVE_TILE_PLACEMENT,
       parentId: null,
+      hostId: null,
     });
   };
 

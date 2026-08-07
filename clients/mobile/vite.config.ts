@@ -22,6 +22,60 @@ const DEV_HOST_PATH = "/__traycer/dev-host";
 /** Mirrors the desktop's baked value (`clients/desktop/src/config.ts`). */
 const RELAY_BASE_URL = "wss://relay.traycer.ai/attach";
 
+/**
+ * Deployed backend sets for shipped bundles, selected with
+ * `TRAYCER_MOBILE_ENV=staging|production` (default: `dev`, the loopback
+ * scaffolding below). The values mirror the desktop's `config.ts` and the
+ * host's `set-deploy-target` targets — these three endpoints move together.
+ * A shipped bundle bakes its environment as a literal, so a stray env var
+ * cannot repoint an installed app; only the dev config reads `TRAYCER_DEV_*`
+ * overrides.
+ */
+const SHIPPED_ENVIRONMENTS = {
+  staging: {
+    authnBaseUrl: "https://authn.dev.traycer.ai",
+    cloudUiBaseUrl: "https://platform.dev.traycer.ai",
+    relayBaseUrl: "wss://relay.dev.traycer.ai/attach",
+  },
+  production: {
+    authnBaseUrl: "https://authn.traycer.ai",
+    cloudUiBaseUrl: "https://platform.traycer.ai",
+    relayBaseUrl: RELAY_BASE_URL,
+  },
+} as const;
+
+type MobileEnvironment = "dev" | keyof typeof SHIPPED_ENVIRONMENTS;
+
+function resolveMobileEnvironment(): MobileEnvironment {
+  const raw = process.env.TRAYCER_MOBILE_ENV;
+  if (raw === undefined || raw.trim().length === 0 || raw === "dev") {
+    return "dev";
+  }
+  if (raw === "staging" || raw === "production") {
+    return raw;
+  }
+  throw new Error(
+    `TRAYCER_MOBILE_ENV must be dev, staging or production (got "${raw}")`,
+  );
+}
+
+function shippedConfig(
+  environment: keyof typeof SHIPPED_ENVIRONMENTS,
+): TraycerMobileBakedConfig {
+  const backends = SHIPPED_ENVIRONMENTS[environment];
+  return {
+    environment,
+    authnBaseUrl: backends.authnBaseUrl,
+    signInUrl: new URL("/sign-in", backends.cloudUiBaseUrl).toString(),
+    relayBaseUrl: backends.relayBaseUrl,
+    // Authn shows this on the device-flow approval page as who is asking.
+    hostLabel: "Traycer Mobile",
+    // No loopback host to dial: the shipped client discovers hosts through
+    // the registry (`remoteFetcher={null}` → gui-app's default fetcher).
+    devHost: null,
+  };
+}
+
 interface DevHostPid {
   readonly hostId: string;
   readonly version: string;
@@ -126,7 +180,7 @@ function devHostEndpoint(slot: string): Plugin {
   };
 }
 
-async function guiAppDevConfig(): Promise<TraycerGuiAppDevConfig> {
+async function guiAppDevConfig(): Promise<TraycerMobileBakedConfig> {
   const rawSlot = requiredEnv("DEV_DESKTOP_SLOT");
   const slot = sanitizeDevDesktopSlot(rawSlot);
   if (slot.length === 0) {
@@ -142,6 +196,7 @@ async function guiAppDevConfig(): Promise<TraycerGuiAppDevConfig> {
   );
   const host = await readDevHost(slot);
   return {
+    environment: "dev",
     authnBaseUrl,
     signInUrl: new URL("/sign-in", cloudUiBaseUrl).toString(),
     // Same dev-gated posture as the desktop's `config.ts`: the shipped relay
@@ -153,39 +208,55 @@ async function guiAppDevConfig(): Promise<TraycerGuiAppDevConfig> {
       RELAY_BASE_URL,
       process.env,
     ),
-    devHostPath: DEV_HOST_PATH,
-    host: {
-      hostId: host.hostId,
-      label: slot,
-      // `local`, not `remote`: this entry IS a 127.0.0.1 host the browser
-      // dials directly on its own `websocketUrl`, which is what `local` means
-      // (`host-client/host-directory.ts`). `remote` now denotes the relay
-      // path - an authn-minted attach grant plus a Noise-NK handshake against
-      // the host's registry-published public key - and never dials this URL,
-      // so a local address behind `remote` has no transport to build.
-      kind: "local",
-      websocketUrl: host.websocketUrl,
-      version: host.version,
-      status: "available",
+    hostLabel: slot,
+    devHost: {
+      devHostPath: DEV_HOST_PATH,
+      host: {
+        hostId: host.hostId,
+        label: slot,
+        // `local`, not `remote`: this entry IS a 127.0.0.1 host the browser
+        // dials directly on its own `websocketUrl`, which is what `local` means
+        // (`host-client/host-directory.ts`). `remote` now denotes the relay
+        // path - an authn-minted attach grant plus a Noise-NK handshake against
+        // the host's registry-published public key - and never dials this URL,
+        // so a local address behind `remote` has no transport to build.
+        kind: "local",
+        websocketUrl: host.websocketUrl,
+        version: host.version,
+        status: "available",
+      },
     },
   };
 }
 
 export default defineConfig(async (): Promise<UserConfig> => {
-  const devConfig = await guiAppDevConfig();
-  const portRaw = requiredEnv("PORT");
-  const port = Number.parseInt(portRaw, 10);
-  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
-    throw new Error("PORT must be a valid TCP port");
+  const environment = resolveMobileEnvironment();
+  const config =
+    environment === "dev"
+      ? await guiAppDevConfig()
+      : shippedConfig(environment);
+
+  // The dev server (and its pid.json endpoint) exist only for the loopback
+  // scaffolding; a shipped build neither serves nor needs a port.
+  let server: UserConfig["server"];
+  if (environment === "dev") {
+    const portRaw = requiredEnv("PORT");
+    const port = Number.parseInt(portRaw, 10);
+    if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+      throw new Error("PORT must be a valid TCP port");
+    }
+    server = { host: "127.0.0.1", port, strictPort: true };
   }
 
   return {
     root: resolve(mobileRoot, "src", "web"),
     define: {
-      __TRAYCER_GUI_APP_DEV_CONFIG__: JSON.stringify(devConfig),
+      __TRAYCER_MOBILE_CONFIG__: JSON.stringify(config),
     },
     plugins: [
-      devHostEndpoint(devConfig.host.label),
+      ...(config.devHost === null
+        ? []
+        : [devHostEndpoint(config.devHost.host.label)]),
       tanstackRouter({
         enableRouteGeneration: false,
         target: "react",
@@ -218,10 +289,6 @@ export default defineConfig(async (): Promise<UserConfig> => {
       outDir: resolve(mobileRoot, "dist", "web"),
       sourcemap: false,
     },
-    server: {
-      host: "127.0.0.1",
-      port,
-      strictPort: true,
-    },
+    server,
   };
 });

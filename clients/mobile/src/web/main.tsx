@@ -31,10 +31,11 @@ import {
  */
 function buildPushRegistration(
   authnBaseUrl: string,
+  isDevSignedBuild: boolean,
 ): MobilePushRegistration | null {
   const target = pushRegistrationTarget(
     Capacitor.getPlatform(),
-    import.meta.env.DEV,
+    isDevSignedBuild,
   );
   if (target === null) {
     return null;
@@ -49,43 +50,52 @@ function buildPushRegistration(
   });
 }
 
-const config = __TRAYCER_GUI_APP_DEV_CONFIG__;
+const config = __TRAYCER_MOBILE_CONFIG__;
 
-// The baked `config.host` captures the port as of Vite startup, which goes
-// stale whenever the dev host restarts; the dev-server endpoint re-reads the
-// host's pid.json per request, so each directory refresh gets the live port.
-// BROWSER-TESTING SCAFFOLDING (dev web entry only): superseded by real
-// remote-host discovery in the shipped mobile client.
-const bakedHost: RemoteHostFetchOutcome = {
-  kind: "hosts",
-  entries: [config.host],
-};
-
-const remoteFetcher: RemoteHostFetcher = async () => {
-  try {
-    const response = await fetch(config.devHostPath);
-    if (!response.ok) return bakedHost;
-    const parsed: unknown = await response.json();
-    if (parsed === null || typeof parsed !== "object") return bakedHost;
-    const record = parsed as Record<string, unknown>;
-    const { hostId, version, websocketUrl } = record;
-    if (
-      typeof hostId !== "string" ||
-      typeof version !== "string" ||
-      typeof websocketUrl !== "string"
-    ) {
+// The baked dev host captures the port as of Vite startup, which goes stale
+// whenever the dev host restarts; the dev-server endpoint re-reads the host's
+// pid.json per request, so each directory refresh gets the live port.
+// BROWSER-TESTING SCAFFOLDING (dev entry only): a shipped build carries no
+// `devHost` and uses real remote-host discovery instead (see below).
+function buildDevHostFetcher(devHost: TraycerMobileDevHost): RemoteHostFetcher {
+  const bakedHost: RemoteHostFetchOutcome = {
+    kind: "hosts",
+    entries: [devHost.host],
+  };
+  return async () => {
+    try {
+      const response = await fetch(devHost.devHostPath);
+      if (!response.ok) return bakedHost;
+      const parsed: unknown = await response.json();
+      if (parsed === null || typeof parsed !== "object") return bakedHost;
+      const record = parsed as Record<string, unknown>;
+      const { hostId, version, websocketUrl } = record;
+      if (
+        typeof hostId !== "string" ||
+        typeof version !== "string" ||
+        typeof websocketUrl !== "string"
+      ) {
+        return bakedHost;
+      }
+      return {
+        kind: "hosts",
+        entries: [{ ...devHost.host, hostId, version, websocketUrl }],
+      };
+    } catch {
+      // The baked entry, not `failed`: this scaffolding's whole point is that
+      // the dev host is reachable at a known port even when the pid re-read
+      // misses.
       return bakedHost;
     }
-    return {
-      kind: "hosts",
-      entries: [{ ...config.host, hostId, version, websocketUrl }],
-    };
-  } catch {
-    // The baked entry, not `failed`: this scaffolding's whole point is that the
-    // dev host is reachable at a known port even when the pid re-read misses.
-    return bakedHost;
-  }
-};
+  };
+}
+
+// `null` hands discovery to gui-app's default fetcher — the registry list
+// (`GET /api/v3/hosts` through `MobileRunnerHost.listRegisteredHosts`)
+// projected into relay-backed `remote` entries. The same production path the
+// desktop shell is on.
+const remoteFetcher: RemoteHostFetcher | null =
+  config.devHost === null ? null : buildDevHostFetcher(config.devHost);
 
 function bootstrap(): void {
   document.documentElement.classList.add("traycer-mobile-client");
@@ -93,11 +103,17 @@ function bootstrap(): void {
   // single-composer draft model. See gui-app's `src/lib/mobile-app.ts` for
   // how this differs from the viewport signal.
   setMobileApp(true);
-  const pushRegistration = buildPushRegistration(config.authnBaseUrl);
+  // APNs addressing follows code signing, not the Vite mode: dev and staging
+  // installs are debug-signed (`aps-environment: development`), so only a
+  // production bundle registers against the production gateway.
+  const pushRegistration = buildPushRegistration(
+    config.authnBaseUrl,
+    config.environment !== "production",
+  );
   const host = new MobileRunnerHost({
     signInUrl: config.signInUrl,
     authnBaseUrl: config.authnBaseUrl,
-    hostLabel: config.host.label,
+    hostLabel: config.hostLabel,
     relayBaseUrl: config.relayBaseUrl,
     pushRegistration,
   });

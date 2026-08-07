@@ -70,7 +70,25 @@ bun run --cwd clients/mobile dev:ios -- --slot <slot>
 bun run --cwd clients/mobile dev:android -- --slot <slot>
 ```
 
-The current milestone is emulator/Simulator-only because the existing dev host
-binds to Mac loopback. Reaching it from a physical iPhone requires a future
-remote/tunnel path outside this client workspace. A physical Android device
-attached over USB is closer — `adb reverse` works there too — but is untested.
+The dev flow above is emulator/Simulator-only because the dev host binds to
+Mac loopback. A physical Android device attached over USB is closer —
+`adb reverse` works there too — but is untested.
+
+## Shipped builds (real devices via remote hosts)
+
+`TRAYCER_MOBILE_ENV=staging|production` bakes a deployed backend set instead
+of the loopback scaffolding. Such a bundle carries no dev host: discovery goes
+through the shared gui-app default fetcher (`GET /api/v3/hosts`), and the app
+connects to the user's enrolled hosts through the relay — the same production
+path as the desktop shell.
+
+```bash
+bun run --cwd clients/mobile sync:ios:staging
+bun run --cwd clients/mobile open:ios   # set your team, run on a device
+```
+
+Staging is the only connectable target today (the production relay has no
+release yet). The signed-in account must be allowed to use remote hosts
+(server-side plan gate), and a host must be enrolled against the staging
+cloud — from the internal repo, `make remote-host-staging` or a staging-target
+host on your own machine.

@@ -8,6 +8,7 @@ import {
   pollDeviceToken,
   startDeviceAuthorization,
   type DeviceAuthorizationResult,
+  type DeviceClientId,
   type DevicePollSchedule,
 } from "@traycer-clients/shared/auth/device-auth";
 import type { AuthIdentityValidationResult } from "@traycer-clients/shared/auth/auth-validation-types";
@@ -335,6 +336,13 @@ export class MobileRunnerHost implements IRunnerHost {
   }
 }
 
+// TEMPORARY (staging testing): the deployed staging authn predates the
+// "mobile" device client kind and rejects it at /device/authorize, so sign in
+// as "desktop" until the authn-v3 mobile client-kind work reaches staging.
+// Flip back to "mobile" then - the approval-page copy and push-token
+// registration are keyed off it.
+const DEVICE_FLOW_CLIENT_ID: DeviceClientId = "desktop";
+
 class MobileDeviceFlowHost implements IDeviceFlowHost {
   constructor(
     private readonly authnBaseUrl: string,
@@ -344,7 +352,7 @@ class MobileDeviceFlowHost implements IDeviceFlowHost {
   async start(): Promise<DeviceFlowSession | null> {
     const authorization = await startDeviceAuthorization(
       this.authnBaseUrl,
-      { clientId: "mobile", hostLabel: this.hostLabel },
+      { clientId: DEVICE_FLOW_CLIENT_ID, hostLabel: this.hostLabel },
       { signal: undefined, timeoutMs: DEFAULT_DEVICE_REQUEST_TIMEOUT_MS },
     );
     if (authorization.kind !== "started") {
@@ -416,7 +424,7 @@ class MobileDeviceFlowSession implements DeviceFlowSession {
       const poll = await pollDeviceToken(
         this.authnBaseUrl,
         this.started.deviceCode,
-        "mobile",
+        DEVICE_FLOW_CLIENT_ID,
         {
           signal: this.abortController.signal,
           timeoutMs: DEFAULT_DEVICE_REQUEST_TIMEOUT_MS,

@@ -58,6 +58,7 @@ import type {
   ITrayState,
   IWorkspaceFoldersHost,
   LocalHostSnapshot,
+  NotificationShowOutcome,
   StoredAuthTokens,
   StoredCredentials,
   StoredCredentialsIdentity,
@@ -731,14 +732,21 @@ function buildNotifications(
       payload,
       replaceKey,
       deliveryKey,
+      feedSource,
       foregroundAppLocal,
-    ) => {
+    ): Promise<NotificationShowOutcome> => {
       void title;
       void body;
       void payload;
       void replaceKey;
       void deliveryKey;
+      void feedSource;
       void foregroundAppLocal;
+      // Not `undeliverable`: on the phone an alert surface DOES exist - the
+      // cloud push fan-out owns the OS banner and the foregrounded app owns
+      // its in-app surfaces - so the caller's fallback cue would double the
+      // push sound.
+      return "presented";
     },
     // The click sink is REAL here: tapped pushes re-enter the GUI through the
     // same channel a desktop native-notification click uses, buffered across

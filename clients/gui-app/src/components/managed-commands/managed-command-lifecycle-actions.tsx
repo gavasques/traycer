@@ -1,14 +1,16 @@
-import { useState, type ReactNode } from "react";
-import { Play, Square, Trash2 } from "lucide-react";
+import { useState } from "react";
+import { Play, Trash2 } from "lucide-react";
 import type { ManagedCommand } from "@traycer/protocol/host/managed-command/unary-schemas";
-import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
-import { Button } from "@/components/ui/button";
+import {
+  ManagedCommandActionButton,
+  ManagedCommandStopButton,
+} from "@/components/managed-commands/managed-command-action-buttons";
 import { ConfirmDestructiveDialog } from "@/components/ui/confirm-destructive-dialog";
-import { TooltipWrapper } from "@/components/ui/tooltip-wrapper";
 import {
   useManagedCommandDelete,
   useManagedCommandStart,
   useManagedCommandStop,
+  useManagedCommandStopAllIsPending,
 } from "@/hooks/managed-command/use-managed-command-lifecycle-mutations";
 import { managedCommandTitle } from "@/lib/managed-commands/managed-command-copy";
 import { cn } from "@/lib/utils";
@@ -35,6 +37,10 @@ export function ManagedCommandLifecycleActions(
   const { command, epicId, hostId } = props;
   const start = useManagedCommandStart();
   const stop = useManagedCommandStop();
+  // The command's chat may be running a Stop all batch that already carries
+  // this command - gating here, at the shared action, covers every surface
+  // that renders a stop (menu row, output window, panel row) with one rule.
+  const stopAllPending = useManagedCommandStopAllIsPending(command.chatId);
   const remove = useManagedCommandDelete();
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const variables = { hostId, epicId, commandId: command.id };
@@ -43,31 +49,35 @@ export function ManagedCommandLifecycleActions(
   return (
     <span className={cn("flex shrink-0 items-center gap-0.5", props.className)}>
       {isRunning ? (
-        <ActionButton
-          label="Stop"
-          icon={<Square aria-hidden className="size-3.5" />}
-          isPending={stop.isPending}
-          testId={`managed-command-stop-${command.id}`}
-          onClick={() => {
+        <ManagedCommandStopButton
+          commandId={command.id}
+          ariaLabel="Stop"
+          isPending={stop.isPending || stopAllPending}
+          className={undefined}
+          onStop={() => {
             stop.mutate(variables);
           }}
         />
       ) : (
-        <ActionButton
+        <ManagedCommandActionButton
           label="Start"
+          ariaLabel="Start"
           icon={<Play aria-hidden className="size-3.5" />}
           isPending={start.isPending}
           testId={`managed-command-start-${command.id}`}
+          className={undefined}
           onClick={() => {
             start.mutate(variables);
           }}
         />
       )}
-      <ActionButton
+      <ManagedCommandActionButton
         label="Delete"
+        ariaLabel="Delete"
         icon={<Trash2 aria-hidden className="size-3.5" />}
         isPending={remove.isPending}
         testId={`managed-command-delete-${command.id}`}
+        className={undefined}
         onClick={() => {
           setConfirmingDelete(true);
         }}
@@ -76,7 +86,7 @@ export function ManagedCommandLifecycleActions(
         open={confirmingDelete}
         onOpenChange={setConfirmingDelete}
         title={`Delete ${managedCommandTitle(command)}?`}
-        description="This stops the command and deletes its entire output history. There is nothing to restore afterwards."
+        description="This stops the shell and deletes its entire output history. There is nothing to restore afterwards."
         cascadeSummary={null}
         actionLabel="Delete"
         isPending={remove.isPending}
@@ -105,15 +115,20 @@ export function ManagedCommandStopAction(props: {
   readonly className: string | undefined;
 }) {
   const stop = useManagedCommandStop();
+  // Same one rule as ManagedCommandLifecycleActions: a batch already carrying
+  // this command must not race a row press.
+  const stopAllPending = useManagedCommandStopAllIsPending(
+    props.command.chatId,
+  );
   if (props.command.status.state !== "running") return null;
   return (
     <span className={cn("flex shrink-0 items-center", props.className)}>
-      <ActionButton
-        label="Stop"
-        icon={<Square aria-hidden className="size-3.5" />}
-        isPending={stop.isPending}
-        testId={`managed-command-stop-${props.command.id}`}
-        onClick={() => {
+      <ManagedCommandStopButton
+        commandId={props.command.id}
+        ariaLabel="Stop"
+        isPending={stop.isPending || stopAllPending}
+        className={undefined}
+        onStop={() => {
           stop.mutate({
             hostId: props.hostId,
             epicId: props.epicId,
@@ -122,48 +137,5 @@ export function ManagedCommandStopAction(props: {
         }}
       />
     </span>
-  );
-}
-
-function ActionButton(props: {
-  readonly label: string;
-  readonly icon: ReactNode;
-  readonly isPending: boolean;
-  readonly testId: string;
-  readonly onClick: () => void;
-}) {
-  return (
-    <TooltipWrapper
-      label={props.label}
-      side="top"
-      sideOffset={undefined}
-      align={undefined}
-    >
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        className="size-6 text-muted-foreground hover:text-foreground"
-        aria-label={props.label}
-        data-testid={props.testId}
-        disabled={props.isPending}
-        // The surrounding row opens the output window; a lifecycle press is a
-        // separate act and must not also open it.
-        onClick={(event) => {
-          event.stopPropagation();
-          props.onClick();
-        }}
-      >
-        {props.isPending ? (
-          <AgentSpinningDots
-            className="size-3.5"
-            testId={undefined}
-            variant={undefined}
-          />
-        ) : (
-          props.icon
-        )}
-      </Button>
-    </TooltipWrapper>
   );
 }

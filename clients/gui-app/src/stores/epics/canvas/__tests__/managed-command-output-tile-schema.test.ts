@@ -11,7 +11,7 @@ import {
 /**
  * An output window is a POINTER, not a copy. The persisted tile carries the
  * command it points at and the host that owns it - nothing else. Every label,
- * kind and status a viewer reads comes from the live list stream, so a window
+ * kind and status a viewer reads comes from the owning chat's live set, so a window
  * restored days later cannot show a stale description or a status the command
  * left long ago. This test is the fence around that (`UI.md` §4, seam S8).
  */
@@ -76,13 +76,13 @@ describe("managed-command output tile schema", () => {
       instanceId: "tab-1",
       type: "managed-command-output",
       hostId: HOST,
-      kind: "monitor",
+      monitoring: true,
       description: "deploy watcher",
       status: { state: "running", pid: 4410, startedAtMs: 1 },
-      name: "Monitor · deploy watcher",
+      name: "Shell · deploy watcher",
     });
 
-    // The label falls back to the kind-free constant: a persisted title would
+    // The label falls back to the generic constant: a persisted title would
     // be a second source of truth for something the stream already answers.
     expect(restored).toEqual({
       id: COMMAND,

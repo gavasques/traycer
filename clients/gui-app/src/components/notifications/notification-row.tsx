@@ -3,7 +3,6 @@ import {
   Bell,
   Check,
   CheckCircle2,
-  CircleAlert,
   MessageCircle,
   MessageSquarePlus,
   MessageSquareX,
@@ -12,6 +11,10 @@ import {
   UserPlus,
   type LucideIcon,
 } from "lucide-react";
+import {
+  FAILURE_TONE,
+  notificationFeedTone,
+} from "@/components/notifications/notification-indicator-tones";
 import { TooltipWrapper } from "@/components/ui/tooltip-wrapper";
 import { useHostDirectoryEntry } from "@/hooks/host/use-host-directory-entry";
 import { notificationPayloadRequiresOriginHost } from "@/hooks/notifications/use-notification-activation";
@@ -30,19 +33,12 @@ import {
 
 interface NotificationRowProps {
   readonly feedId: string;
-  /** Attention rows always carry the rail, regardless of read state - an
-   * unresolved prompt must keep drawing the eye even after activation marks
-   * it read (needs_action attention membership is keyed on `resolvedAt`,
-   * not `readAt` - see `classifyNotificationLifecycle`). Recent rows pass
-   * `false` and fall back to the unread-only rule. */
-  readonly alwaysShowRail: boolean;
   readonly onActivate: (row: MergedNotificationRow) => void;
   readonly onAcknowledge: (row: MergedNotificationRow) => void;
   /** Dismiss an unresolved `needs_action` Attention row (stamps `resolvedAt`).
    * Only reached for blocking-tier Attention rows; every other row uses
    * `onAcknowledge`. */
   readonly onResolve: (row: MergedNotificationRow) => void;
-  readonly onClear: (row: MergedNotificationRow) => void;
 }
 
 function isOriginUnavailable(input: {
@@ -66,18 +62,18 @@ function isBlockingAttentionRow(row: MergedNotificationRow): boolean {
  * One flat, balanced two-line row - a small semantic glyph, title/meta
  * content, trailing relative time, and exactly one primary interactive
  * control. A navigable row's primary control is the row itself (click to
- * activate) with a sibling "mark as read" affordance while unread; a
+ * activate) with a sibling resolve/mark-as-read affordance while unread; a
  * payload-less row never pretends to navigate - its only control is an
  * explicit acknowledge button, so neither shape ever nests a button inside
- * a button. Unread state (or Attention membership) is a full-height accent
+ * a button. Unread state is a full-height accent
  * rail on the row's leading edge (matching the app's pre-existing rail
  * language) plus title weight - the rail is absolutely positioned inside a
  * permanently-reserved edge inset (`pl-6` on the row regardless of rail
  * visibility), so its presence never shifts row content. The row itself
  * spans the popover's true edge-to-edge width (no section-level inset) so
  * its bottom divider isn't cut off short of the popover's edges - `pl-6`/
- * `pr-4` reproduce the old section inset (px-4) plus the rail gutter purely
- * as content padding.
+ * `pr-4` reproduce the section inset plus the rail gutter purely as content
+ * padding.
  */
 export function NotificationRow(props: NotificationRowProps): ReactNode {
   const row = useMergedNotificationRow(props.feedId);
@@ -91,10 +87,6 @@ export function NotificationRow(props: NotificationRowProps): ReactNode {
     row,
     originStatus: originHost?.status,
   });
-  const showRail = props.alwaysShowRail || !isRead;
-  // A blocking-tier Attention row (unresolved `needs_action`) keeps its
-  // trailing control even once navigation marked it read - its only exit from
-  // Attention is `resolvedAt`, which `onAcknowledge` (readAt-only) can't set.
   const isBlockingAttention = isBlockingAttentionRow(row);
   const glyph = notificationRowGlyph(row);
   const Icon = glyph.icon;
@@ -115,7 +107,7 @@ export function NotificationRow(props: NotificationRowProps): ReactNode {
         originUnavailable ? "unavailable" : "available"
       }
     >
-      {showRail ? (
+      {!isRead ? (
         <span
           aria-hidden
           data-testid="notification-unread-rail"
@@ -158,7 +150,6 @@ export function NotificationRow(props: NotificationRowProps): ReactNode {
           isBlockingAttention={isBlockingAttention}
           onAcknowledge={props.onAcknowledge}
           onResolve={props.onResolve}
-          onClear={props.onClear}
         />
       </div>
     </li>
@@ -172,22 +163,20 @@ interface NotificationRowTrailingControlProps {
   readonly isBlockingAttention: boolean;
   readonly onAcknowledge: (row: MergedNotificationRow) => void;
   readonly onResolve: (row: MergedNotificationRow) => void;
-  readonly onClear: (row: MergedNotificationRow) => void;
 }
 
 /** The sibling trailing control. On an unresolved `needs_action` Attention row
  * it is a "Dismiss" affordance - the same right-edge tick normal rows carry,
  * but wired to `onResolve` (which stamps `resolvedAt`) so the row leaves
- * Attention without answering the underlying prompt. It stays available even
- * after navigation marked the row read, because Attention membership here is
- * keyed on `resolvedAt`, not `readAt`. Every other row keeps the original
- * acknowledge control - "Mark as read" on a navigable row, "Acknowledge" on a
- * payload-less one - shown only while unread: a read Recent row has nothing
- * left to press, and a dead-looking (grayed, unclickable) control reads as
- * broken rather than done. */
+ * Attention without answering the underlying prompt. Every other row keeps
+ * the original acknowledge control - "Mark as read" on a navigable row or
+ * "Acknowledge" on a payload-less one. All variants are shown only while
+ * unread: a read row has nothing left to press, and reusing the tick for
+ * another disposition makes the read-state affordance ambiguous. */
 function NotificationRowTrailingControl(
   props: NotificationRowTrailingControlProps,
 ): ReactNode {
+  if (props.isRead) return null;
   if (props.isBlockingAttention) {
     return (
       <NotificationRowControlButton
@@ -197,32 +186,17 @@ function NotificationRowTrailingControl(
       />
     );
   }
-  // A cloud row which cannot route (for example an informational row) still
-  // needs its per-occurrence read action. Once read, Clear is the remaining
-  // cloud-specific disposition.
-  if (!props.isRead) {
-    return (
-      <NotificationRowControlButton
-        label={props.isNavigable ? "Mark as read" : "Acknowledge"}
-        testId={
-          props.isNavigable
-            ? "notification-mark-read"
-            : "notification-acknowledge"
-        }
-        onClick={() => props.onAcknowledge(props.row)}
-      />
-    );
-  }
-  if (props.row.source === "cloud") {
-    return (
-      <NotificationRowControlButton
-        label="Clear"
-        testId="notification-clear"
-        onClick={() => props.onClear(props.row)}
-      />
-    );
-  }
-  return null;
+  return (
+    <NotificationRowControlButton
+      label={props.isNavigable ? "Mark as read" : "Acknowledge"}
+      testId={
+        props.isNavigable
+          ? "notification-mark-read"
+          : "notification-acknowledge"
+      }
+      onClick={() => props.onAcknowledge(props.row)}
+    />
+  );
 }
 
 interface NotificationRowControlButtonProps {
@@ -324,9 +298,7 @@ interface RowGlyph {
   readonly colorClassName: string;
 }
 
-const PROMPT_COLOR = "text-amber-600 dark:text-amber-400";
 const FAILURE_COLOR = "text-destructive";
-const DONE_COLOR = "text-blue-600 dark:text-blue-400";
 const NEUTRAL_COLOR = "text-muted-foreground";
 const SUCCESS_COLOR = "text-success-foreground";
 const INVITE_COLOR = "text-primary";
@@ -339,31 +311,25 @@ function notificationRowGlyph(row: MergedNotificationRow): RowGlyph {
     return globalEventGlyph(row.globalEntry.event);
   }
   if (row.appLocalKind !== null) {
-    return { icon: CircleAlert, colorClassName: FAILURE_COLOR };
-  }
-  if (row.severity === "failure") {
-    return { icon: CircleAlert, colorClassName: FAILURE_COLOR };
-  }
-  if (row.severity === "needs_action") {
     return {
-      icon: row.hostKind === "approval.requested" ? Shield : MessageCircle,
-      colorClassName: PROMPT_COLOR,
+      icon: FAILURE_TONE.Icon,
+      colorClassName: FAILURE_TONE.className,
     };
   }
-  if (row.severity === "done") {
-    return { icon: Bell, colorClassName: DONE_COLOR };
+  const statusTone = notificationFeedTone(row);
+  if (statusTone !== null) {
+    return { icon: statusTone.Icon, colorClassName: statusTone.className };
   }
   switch (row.hostKind) {
     case "agent.stopped":
-      return { icon: Bell, colorClassName: DONE_COLOR };
+      return { icon: Bell, colorClassName: NEUTRAL_COLOR };
     case "agent.stalled":
-      return { icon: CircleAlert, colorClassName: FAILURE_COLOR };
+      return { icon: MessageSquareX, colorClassName: FAILURE_COLOR };
     case "approval.requested":
-      return { icon: Shield, colorClassName: PROMPT_COLOR };
     case "interview.requested":
-      return { icon: MessageCircle, colorClassName: PROMPT_COLOR };
+      return { icon: Bell, colorClassName: NEUTRAL_COLOR };
     case "workspace.operation.failed":
-      return { icon: CircleAlert, colorClassName: FAILURE_COLOR };
+      return { icon: MessageSquareX, colorClassName: FAILURE_COLOR };
     // Only reachable for an `info` row: the severity branches above already
     // claim every `done`/`failure`/`needs_action` host-operation row, and the
     // kind itself says nothing about how the operation ended.

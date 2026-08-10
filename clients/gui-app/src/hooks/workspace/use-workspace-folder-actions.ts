@@ -155,7 +155,7 @@ export function useWorkspaceFolderActionsForClient(
     // Capture host identity at dispatch. Every post-await re-read must match
     // this id; otherwise refuse so we never stamp A-prepared paths as B.
     // Any bound host qualifies, not just a local one: a remote host reaches its
-    // own filesystem through the RPC-backed folder browser below.
+    // own filesystem through the RPC-backed browse dialog below.
     const dispatchHost = client?.getActiveHost() ?? null;
     if (client === null || dispatchHost === null) {
       reportableErrorToast("Select a host to add folders.", undefined, {
@@ -168,30 +168,30 @@ export function useWorkspaceFolderActionsForClient(
     }
     const dispatchHostId = dispatchHost.hostId;
 
-    // Local/mock hosts share the client machine, so the native OS directory
-    // dialog picks real host paths. Every other host - a remote box, or any
-    // host seen from a shell with no native dialog at all (phone/browser) -
-    // is browsed over `workspace.browseFolders` instead. Both resolve to the
-    // same `readonly string[]` as `IRunnerHost.workspaceFolders.pickFolders()`,
-    // so everything downstream (`workspace.prepareFolders`,
-    // `addResolvedFolders`, ...) runs unchanged.
-    //
-    // The browser is handed THIS client: in a tab it is host-bound for life,
-    // and the picked path is submitted through the same client below - the
-    // globally mounted dialog must browse that host, not whichever host is
-    // app-wide-active at the time.
+    // A local/mock host shares the client machine, so the shell's native OS
+    // directory dialog picks real host paths. Everything else — a remote host,
+    // or any shell without a native dialog (mobile/browser) — browses the
+    // host's filesystem over `workspace.browseFolders`. Both resolve to the
+    // same `readonly string[]` shape (`IRunnerHost.workspaceFolders
+    // .pickFolders()`'s contract), so everything downstream
+    // (`workspace.prepareFolders`, `addResolvedFolders`, …) runs unchanged
+    // regardless of which picker produced the path.
     let folderPaths: readonly string[];
     if (
-      canAssociateLocalWorkspaces(
-        dispatchHost,
-        runnerHost.workspaceFolders.canPickNatively,
-      )
+      canAssociateLocalWorkspaces(dispatchHost) &&
+      runnerHost.workspaceFolders.canPickNatively
     ) {
       folderPaths = await runnerHost.workspaceFolders.pickFolders();
     } else {
+      // Hand the picker a requester PINNED to dispatchHost. A tab's client is
+      // host-bound for life, but an app-wide one is not: if the active host
+      // changed while the dialog was open, an unpinned client would browse -
+      // and record recents on - whichever host became active, even though the
+      // path is submitted to dispatchHost below. The guard after this only
+      // catches the prepare call, by which point the browsing already leaked.
       const pickedPath = await useRemoteFolderPickerStore
         .getState()
-        .requestPick(client);
+        .requestPick(client.createRequester(dispatchHost));
       folderPaths = pickedPath === null ? [] : [pickedPath];
     }
     if (folderPaths.length === 0) {
@@ -269,20 +269,13 @@ function hostStillBound(
   return client.getActiveHostId() === dispatchHostId;
 }
 
-// Sharing the client machine is necessary but not sufficient: the shell must
-// also HAVE a native dialog to open. A browser/phone shell installs a no-op
-// `pickFolders` and reports `canPickNatively: false`
-// (`IWorkspaceFoldersHost`), so a local host seen from one still browses over
-// RPC - otherwise the pick resolves empty and the add silently does nothing.
 function canAssociateLocalWorkspaces(
   activeHost: HostDirectoryEntry | null,
-  canPickNatively: boolean,
 ): activeHost is HostDirectoryEntry & {
   readonly kind: "local" | "mock";
 } {
   return (
     activeHost !== null &&
-    canPickNatively &&
     (activeHost.kind === "local" || activeHost.kind === "mock")
   );
 }

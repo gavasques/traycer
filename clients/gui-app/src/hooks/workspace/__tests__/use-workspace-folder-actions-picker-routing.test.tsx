@@ -1,7 +1,15 @@
 import { createElement, type ReactNode } from "react";
-import { renderHook, waitFor } from "@testing-library/react";
+import { renderHook } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+  type Mock,
+} from "vitest";
 import { HostClient } from "@traycer-clients/shared/host-client/host-client";
 import type { HostDirectoryEntry } from "@traycer-clients/shared/host-client/host-directory";
 import { MockHostMessenger } from "@traycer-clients/shared/host-client/mock/mock-host-messenger";
@@ -67,50 +75,67 @@ function makeWrapper() {
     createElement(QueryClientProvider, { client: queryClient }, children);
 }
 
+/**
+ * Captured before any test overrides `requestPick`, so each test starts from
+ * the real store rather than from whatever the previous one installed.
+ */
+const INITIAL_PICKER_STATE = useRemoteFolderPickerStore.getState();
+
+/**
+ * The picker is handed a requester PINNED to the dispatch host, not the
+ * caller's client, so identity is asserted by which host it is bound to.
+ */
+function pickedHostIdOf(requestPick: Mock): string | null {
+  const passed = requestPick.mock.calls[0]?.[0] as
+    HostClient<HostRpcRegistry> | undefined;
+  return passed?.getActiveHostId() ?? null;
+}
+
 describe("pickAndPrepareFolders shell routing for a remote host", () => {
   beforeEach(() => {
     prepareMutateAsync.mockReset();
     nativePickFolders.mockReset();
     toastMock.mockReset();
-    useRemoteFolderPickerStore.setState({
-      open: false,
-      client: null,
-      resolvePick: null,
-    });
+    canPickNatively = true;
+    useRemoteFolderPickerStore.setState(INITIAL_PICKER_STATE, true);
   });
   afterEach(() => {
     vi.restoreAllMocks();
+    useRemoteFolderPickerStore.setState(INITIAL_PICKER_STATE, true);
   });
 
-  it("desktop-style shells (canPickNatively) toast and never open any picker", async () => {
+  // A remote host's filesystem is out of reach of the shell's native OS dialog
+  // even on desktop, so a remote host browses over RPC on EVERY shell - the
+  // native dialog is reserved for hosts that share the client machine.
+  it("desktop-style shells (canPickNatively) still browse a remote host over RPC", async () => {
     canPickNatively = true;
-    const requestPickSpy = vi.spyOn(
-      useRemoteFolderPickerStore.getState(),
-      "requestPick",
-    );
+    const requestPick = vi.fn().mockResolvedValue("/remote/projects/app");
+    useRemoteFolderPickerStore.setState({ requestPick });
+    prepareMutateAsync.mockResolvedValue({ folders: [], repoIdentifiers: [] });
+    const client = makeBoundClient();
     const { result } = renderHook(
-      () => useWorkspaceFolderActionsForClient(makeBoundClient()),
+      () => useWorkspaceFolderActionsForClient(client),
       { wrapper: makeWrapper() },
     );
-    await waitFor(async () => {
-      const outcome = await result.current.pickAndPrepareFolders();
-      expect(outcome).toBeNull();
+    await result.current.pickAndPrepareFolders();
+    // Pinned to the dispatch host, not merely the caller's client: an
+    // app-wide client could switch hosts while the dialog is open.
+    expect(pickedHostIdOf(requestPick)).toBe(REMOTE_HOST.hostId);
+    expect(prepareMutateAsync).toHaveBeenCalledWith({
+      operation: "prepare",
+      folderPaths: ["/remote/projects/app"],
+      path: null,
     });
-    expect(toastMock).toHaveBeenCalledWith(
-      "Select the local host to add folders.",
-      undefined,
-      expect.objectContaining({ message: "The local host was not selected." }),
-    );
-    expect(requestPickSpy).not.toHaveBeenCalled();
+    // No native dialog, and none of the old "switch to the local host" copy.
     expect(nativePickFolders).not.toHaveBeenCalled();
-    expect(prepareMutateAsync).not.toHaveBeenCalled();
+    expect(toastMock).not.toHaveBeenCalled();
   });
 
   it("dialog-less shells route through the picker with the bound client and prepare the pick", async () => {
     canPickNatively = false;
     const requestPick = vi.fn().mockResolvedValue("/remote/projects/app");
     useRemoteFolderPickerStore.setState({ requestPick });
-    prepareMutateAsync.mockResolvedValue({ folders: [] });
+    prepareMutateAsync.mockResolvedValue({ folders: [], repoIdentifiers: [] });
     const client = makeBoundClient();
     const { result } = renderHook(
       () => useWorkspaceFolderActionsForClient(client),
@@ -119,10 +144,14 @@ describe("pickAndPrepareFolders shell routing for a remote host", () => {
     await result.current.pickAndPrepareFolders();
     // The picker received exactly the requester's (host-bound) client...
     expect(requestPick).toHaveBeenCalledTimes(1);
-    expect(requestPick).toHaveBeenCalledWith(client);
+    // Pinned to the dispatch host, not merely the caller's client: an
+    // app-wide client could switch hosts while the dialog is open.
+    expect(pickedHostIdOf(requestPick)).toBe(REMOTE_HOST.hostId);
     // ...the picked host path went to prepare, and the native dialog never ran.
     expect(prepareMutateAsync).toHaveBeenCalledWith({
+      operation: "prepare",
       folderPaths: ["/remote/projects/app"],
+      path: null,
     });
     expect(nativePickFolders).not.toHaveBeenCalled();
     expect(toastMock).not.toHaveBeenCalled();

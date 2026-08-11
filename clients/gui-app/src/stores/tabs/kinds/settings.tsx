@@ -47,6 +47,8 @@ export function settingsRouteOptions(section: SettingsSectionId) {
       return { to: "/settings/devices" } as const;
     case "diagnostics":
       return { to: "/settings/diagnostics" } as const;
+    case "usage":
+      return { to: "/settings/usage" } as const;
   }
 }
 

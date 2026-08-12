@@ -557,7 +557,6 @@ class MobileTokenStore implements ITokenStore {
     await this.write({
       token: tokens.token,
       refreshToken: tokens.refreshToken,
-      authnBaseUrl: this.authnBaseUrl,
       savedAt: new Date().toISOString(),
       user: identity,
     });
@@ -642,7 +641,6 @@ class MobileTokenStore implements ITokenStore {
     await this.write({
       token: refreshed.token,
       refreshToken: refreshed.refreshToken,
-      authnBaseUrl: this.authnBaseUrl,
       savedAt: new Date().toISOString(),
       user: credentialsIdentityFromAuthenticatedUser(probe.user),
     });
@@ -696,7 +694,6 @@ function parseStoredCredentials(raw: string | null): StoredCredentials | null {
     typeof record.token !== "string" ||
     record.token.length === 0 ||
     typeof record.refreshToken !== "string" ||
-    typeof record.authnBaseUrl !== "string" ||
     typeof record.savedAt !== "string" ||
     typeof userRecord.id !== "string" ||
     typeof userRecord.email !== "string" ||
@@ -709,7 +706,6 @@ function parseStoredCredentials(raw: string | null): StoredCredentials | null {
   return {
     token: record.token,
     refreshToken: record.refreshToken,
-    authnBaseUrl: record.authnBaseUrl,
     savedAt: record.savedAt,
     user: {
       id: userRecord.id,

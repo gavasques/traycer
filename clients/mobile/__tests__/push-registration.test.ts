@@ -38,7 +38,6 @@ function credentials(userId: string, token: string): StoredCredentials {
   return {
     token,
     refreshToken: `refresh-${token}`,
-    authnBaseUrl: AUTHN_URL,
     savedAt: "2026-08-05T00:00:00.000Z",
     user: { id: userId, email: "dev@traycer.ai", name: "Dev" },
   };

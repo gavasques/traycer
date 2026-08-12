@@ -96,7 +96,6 @@ describe("MobileRunnerHost", () => {
     await expect(host.tokenStore.get()).resolves.toMatchObject({
       token: "access-token",
       refreshToken: "refresh-token",
-      authnBaseUrl: "http://localhost:32350",
       savedAt: expect.any(String),
       user: { id: "user-1", email: "user@example.com", name: "User" },
     });

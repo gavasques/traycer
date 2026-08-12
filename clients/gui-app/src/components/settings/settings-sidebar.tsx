@@ -56,14 +56,11 @@ export interface SettingsSidebarProps {
  */
 export function SettingsSidebar(props: SettingsSidebarProps) {
   const scope = useHostScope();
-  // A section backed by the local config store cannot describe a host this
-  // window can only reach over the wire. Dimming those rows while a remote
-  // host is selected costs a click that would only ever land on a notice.
-  //
-  // An unresolved scope is NOT local. Treating `null` as local lit those rows
-  // up as fully available while the panels behind them had no host to describe
-  // — the rail promising what the page could not deliver.
-  const localHostSelected = scope.host !== null && scope.host.isLocalMachine;
+  // No row is dimmed by host kind any more. Shell and Diagnostics used to be,
+  // because both read the on-disk config store through the local CLI bridge and
+  // could only ever describe this computer; `config.*` / `diagnostics.*` made
+  // them work for whichever host the picker names, so a dimmed row would now be
+  // discouraging a click that lands on a working page.
   return (
     <aside
       className={cn(
@@ -98,9 +95,6 @@ export function SettingsSidebar(props: SettingsSidebarProps) {
                   index={index}
                   mode={props.mode}
                   variant={props.variant}
-                  unreachable={
-                    section.requiresLocalHost ? !localHostSelected : false
-                  }
                 />
               ) : null,
             )}
@@ -195,11 +189,10 @@ interface SettingsSidebarItemProps {
   index: number;
   mode: SettingsSidebarMode;
   variant: SettingsSidebarVariant;
-  unreachable: boolean;
 }
 
 function SettingsSidebarItem(props: SettingsSidebarItemProps) {
-  const { section, index, mode, variant, unreachable } = props;
+  const { section, index, mode, variant } = props;
   const badgeModifier = useSettingsLeaderModifierForIndex(index);
   const Icon = section.icon;
   const digit = singleDigitLeaderDigitFor(index);
@@ -245,7 +238,6 @@ function SettingsSidebarItem(props: SettingsSidebarItemProps) {
           active
             ? "bg-accent text-accent-foreground"
             : "text-foreground/70 hover:bg-accent/60 hover:text-accent-foreground",
-          unreachable && !active && "text-foreground/40",
         )}
       >
         <Icon className="size-4 shrink-0" />
@@ -261,7 +253,6 @@ function SettingsSidebarItem(props: SettingsSidebarItemProps) {
       badge={badge}
       baseClass={baseClass}
       variant={variant}
-      unreachable={unreachable}
     />
   );
 }
@@ -272,9 +263,8 @@ function SettingsSidebarRouteItem(props: {
   readonly badge: ReactNode;
   readonly baseClass: string;
   readonly variant: SettingsSidebarVariant;
-  readonly unreachable: boolean;
 }) {
-  const { section, label, badge, baseClass, variant, unreachable } = props;
+  const { section, label, badge, baseClass, variant } = props;
   const Icon = section.icon;
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const active = isSectionPathname(pathname, section.id);
@@ -294,7 +284,6 @@ function SettingsSidebarRouteItem(props: {
         active
           ? "bg-accent text-accent-foreground"
           : "text-foreground/70 hover:bg-accent/60 hover:text-accent-foreground",
-        unreachable && !active && "text-foreground/40",
       )}
     >
       <Icon className="size-4 shrink-0" />

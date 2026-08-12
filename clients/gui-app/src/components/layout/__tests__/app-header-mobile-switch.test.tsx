@@ -18,6 +18,9 @@ vi.mock("@/components/layout/header/mobile-app-header", () => ({
     </button>
   ),
 }));
+vi.mock("@/components/layout/header/windows-menu-bar", () => ({
+  WindowsMenuBar: () => null,
+}));
 vi.mock("@/components/layout/tabs/tab-strip", () => ({
   TabStrip: () => <div role="tablist" aria-label="Open tabs" />,
 }));

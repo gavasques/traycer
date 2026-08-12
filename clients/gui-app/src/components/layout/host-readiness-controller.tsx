@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
 import { AppHeader } from "@/components/layout/header/app-header";
+import { ChooseHostSurface } from "@/components/layout/choose-host-surface";
 import {
   HostReadinessControllerContext,
   isHostDialable,
@@ -70,6 +71,14 @@ export function HostReadinessControllerProvider(props: {
   const compatibility = useHostCompatibility();
   const canProvision =
     authStatus === "signed-in" && runnerHost.hasLocalHost && localTarget;
+  const directory = binding === null ? null : binding.directory;
+  const directoryRefreshing = useHostDirectoryRefreshing(directory);
+  const refreshDirectory = useCallback(() => {
+    if (directory === null) return;
+    void directory.refresh();
+  }, [directory]);
+  const cardinality =
+    directory === null ? "unknown" : directory.getCardinality();
 
   return (
     <HostProvisioningController
@@ -83,15 +92,16 @@ export function HostReadinessControllerProvider(props: {
           requestContextUserId={readiness.requestContextUserId}
           directoryEntries={directoryEntries}
           hasLocalHost={runnerHost.hasLocalHost}
-          hasMobileNoHost={
-            binding !== null && binding.directory.getCardinality() === "zero"
-          }
+          hasMobileNoHost={cardinality === "zero"}
+          hostsUnknown={cardinality === "unknown"}
           lifecycle={lifecycle}
           compatibility={compatibility}
           localTarget={localTarget}
           onConfigureShell={props.onConfigureShell}
           onRequestRespawn={respawn.mutate}
           respawnPending={respawn.isPending}
+          onRefreshDirectory={refreshDirectory}
+          directoryRefreshing={directoryRefreshing}
         >
           {props.children}
         </HostReadinessControllerContents>
@@ -107,12 +117,15 @@ function HostReadinessControllerContents(props: {
   readonly directoryEntries: ReadonlyArray<HostDirectoryEntry>;
   readonly hasLocalHost: boolean;
   readonly hasMobileNoHost: boolean;
+  readonly hostsUnknown: boolean;
   readonly lifecycle: HostProvisioningLifecycle;
   readonly compatibility: HostCompatibility;
   readonly localTarget: boolean;
   readonly onConfigureShell: () => void;
   readonly onRequestRespawn: () => void;
   readonly respawnPending: boolean;
+  readonly onRefreshDirectory: () => void;
+  readonly directoryRefreshing: boolean;
   readonly children: ReactNode;
 }): ReactNode {
   const defaultHostPresentation = useMemo(
@@ -124,12 +137,16 @@ function HostReadinessControllerContents(props: {
         configureShell: props.onConfigureShell,
         requestRespawn: props.onRequestRespawn,
         respawnPending: props.respawnPending,
+        refreshDirectory: props.onRefreshDirectory,
+        directoryRefreshing: props.directoryRefreshing,
       }),
     [
       props.compatibility,
+      props.directoryRefreshing,
       props.lifecycle,
       props.localTarget,
       props.onConfigureShell,
+      props.onRefreshDirectory,
       props.onRequestRespawn,
       props.respawnPending,
     ],
@@ -146,6 +163,7 @@ function HostReadinessControllerContents(props: {
           directoryEntries: props.directoryEntries,
           hasLocalHost: props.hasLocalHost,
           hasMobileNoHost: props.hasMobileNoHost,
+          hostsUnknown: props.hostsUnknown,
         });
         return scope === "default-host"
           ? projectDefaultHostReadiness({
@@ -168,6 +186,7 @@ function HostReadinessControllerContents(props: {
     props.directoryEntries,
     props.hasLocalHost,
     props.hasMobileNoHost,
+    props.hostsUnknown,
     props.requestContextUserId,
   ]);
 
@@ -185,6 +204,8 @@ function presentationFromLifecycle(args: {
   readonly configureShell: () => void;
   readonly requestRespawn: () => void;
   readonly respawnPending: boolean;
+  readonly refreshDirectory: () => void;
+  readonly directoryRefreshing: boolean;
 }): DefaultHostReadinessPresentation {
   return {
     localTarget: args.localTarget,
@@ -204,6 +225,8 @@ function presentationFromLifecycle(args: {
     configureShell: args.configureShell,
     requestRespawn: args.requestRespawn,
     respawnPending: args.respawnPending,
+    refreshDirectory: args.refreshDirectory,
+    directoryRefreshing: args.directoryRefreshing,
     compatibility: compatibilityPresentation(args.compatibility),
   };
 }
@@ -319,11 +342,22 @@ function SurfaceReadinessFallback(props: {
       variant={props.variant}
       fallback={fallbackContent(props.readiness, presentation)}
       testId={testId}
-      messageTestId={
-        props.readiness.kind === "mobile-no-host" ? "mobile-no-host" : null
-      }
+      messageTestId={fallbackMessageTestId(props.readiness.kind)}
     />
   );
+}
+
+/**
+ * The two directory-empty surfaces tag their message so a test can tell them
+ * apart by copy, not just by the frame's readiness kind - they differ only in
+ * whether the registry has answered, which is exactly what regressed.
+ */
+function fallbackMessageTestId(
+  kind: Exclude<SurfaceReadiness, { readonly kind: "ready" }>["kind"],
+): string | null {
+  if (kind === "mobile-no-host") return "mobile-no-host";
+  if (kind === "searching-hosts") return "searching-hosts";
+  return null;
 }
 
 function SlowHostFallback(props: {
@@ -537,6 +571,17 @@ function fallbackContent(
         footer: null,
         actions: [],
       };
+    case "searching-hosts":
+      return {
+        // Names what the app is actually doing - reading the host registry -
+        // rather than claiming a connection to a host it has not found yet,
+        // and rather than the no-host screen's instruction to go set one up.
+        message: "Looking for your hosts…",
+        detail: null,
+        body: null,
+        footer: null,
+        actions: [directoryRefreshAction(presentation)],
+      };
     case "mobile-no-host":
       return {
         message:
@@ -544,7 +589,20 @@ function fallbackContent(
         detail: null,
         body: null,
         footer: null,
-        actions: [],
+        actions: [directoryRefreshAction(presentation)],
+      };
+    case "choose-host":
+      return {
+        message: "Choose a host",
+        detail:
+          "This device can connect to more than one host. Pick which one to use — you can switch later in Settings.",
+        body: <ChooseHostSurface />,
+        footer: null,
+        // Refresh keeps the wall from ever being a dead-end: offline rows are
+        // not selectable, so a wall whose hosts have all just gone offline
+        // needs a way to re-ask the registry. Rows re-enable live through the
+        // directory's onChange as hosts come back.
+        actions: [directoryRefreshAction(presentation)],
       };
     case "unavailable-host":
       return unavailableFallback();
@@ -590,6 +648,30 @@ function fallbackContent(
     case "incompatible-host":
       return incompatibleFallback(presentation);
   }
+}
+
+/**
+ * Manual registry re-fetch, offered on both directory-empty surfaces.
+ *
+ * On a relay-only shell these are the two screens with no other way forward:
+ * the 15s poll is the only thing that would otherwise move them, so a user
+ * who has just woken their Mac has nothing to do but wait out a clock they
+ * cannot see. `pending` tracks the SERVICE's in-flight state rather than this
+ * click, because `refresh()` coalesces onto one request - a poll tick already
+ * running is a fetch, and offering a live button for it would promise a second
+ * one that never happens.
+ */
+function directoryRefreshAction(
+  presentation: DefaultHostReadinessPresentation,
+): ReadinessFallbackAction {
+  return {
+    label: "Refresh",
+    testId: "host-directory-refresh",
+    variant: "outline",
+    disabled: presentation.directoryRefreshing,
+    pending: presentation.directoryRefreshing,
+    onClick: presentation.refreshDirectory,
+  };
 }
 
 /**
@@ -724,12 +806,15 @@ function loadingFallback(
   // body carries it inside the details disclosure.
   if (!presentation.localTarget) {
     // A remote host still resolving: the rich progress/log card below is
-    // local-bootstrap specific and would be misleading here.
+    // local-bootstrap specific and would be misleading here. The default copy
+    // must not mention a LOCAL host - a shell with no local host (mobile) hits
+    // this branch while the relay directory is still resolving, and "Starting
+    // local Traycer Host…" told those users a host was starting on their phone.
     return {
       message:
         kind === "compatibility-checking"
           ? "Checking Traycer Host compatibility…"
-          : (presentation.progress?.message ?? "Starting local Traycer Host…"),
+          : (presentation.progress?.message ?? "Connecting to Traycer Host…"),
       detail: null,
       body: null,
       footer: null,
@@ -988,5 +1073,38 @@ function useHostDirectoryEntries(
     [directory],
   );
   const getSnapshot = useCallback(() => entriesRef.current, []);
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+}
+
+/**
+ * Refresh liveness for the manual-refresh action. Its own subscription rather
+ * than a field on the directory fan-out above: a fetch starting and finishing
+ * changes no entry, and the entry fan-out feeds every host-scoped query in the
+ * app.
+ */
+function useHostDirectoryRefreshing(
+  directory: {
+    readonly onRefreshStateChange: (
+      listener: (refreshing: boolean) => void,
+    ) => { readonly dispose: () => void };
+    readonly isRefreshing: () => boolean;
+  } | null,
+): boolean {
+  const subscribe = useCallback(
+    (onStoreChange: () => void) => {
+      if (directory === null) return () => undefined;
+      const subscription = directory.onRefreshStateChange(() => {
+        onStoreChange();
+      });
+      return () => {
+        subscription.dispose();
+      };
+    },
+    [directory],
+  );
+  const getSnapshot = useCallback(
+    () => directory !== null && directory.isRefreshing(),
+    [directory],
+  );
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }

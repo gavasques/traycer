@@ -10,7 +10,9 @@ export type SurfaceReadiness =
   | { readonly kind: "ready" }
   | { readonly kind: "restoring-request-context" }
   | { readonly kind: "loading-host" }
+  | { readonly kind: "searching-hosts" }
   | { readonly kind: "mobile-no-host" }
+  | { readonly kind: "choose-host" }
   | { readonly kind: "unavailable-host" }
   | { readonly kind: "provisioning-host" }
   | { readonly kind: "provisioning-error" }
@@ -54,6 +56,16 @@ export interface DefaultHostReadinessPresentation {
   // exactly one request and locks the action in every slot.
   readonly requestRespawn: () => void;
   readonly respawnPending: boolean;
+  /**
+   * Re-runs the remote directory fetch. Owned once by the readiness controller
+   * for the same reason `requestRespawn` is: `HostDirectoryService.refresh()`
+   * coalesces callers onto one in-flight request, so every slot offering the
+   * action must observe the same pending lock or one of them would show a live
+   * button for a fetch that is already running.
+   */
+  readonly refreshDirectory: () => void;
+  /** A directory fetch is in flight - a manual one or the background poll. */
+  readonly directoryRefreshing: boolean;
   readonly compatibility: {
     readonly status: "checking" | "compatible" | "failed" | "incompatible";
     readonly errorMessage: string | null;
@@ -111,6 +123,8 @@ const EMPTY_DEFAULT_HOST_PRESENTATION: DefaultHostReadinessPresentation = {
   configureShell: () => undefined,
   requestRespawn: () => undefined,
   respawnPending: false,
+  refreshDirectory: () => undefined,
+  directoryRefreshing: false,
   compatibility: {
     status: "compatible",
     errorMessage: null,
@@ -156,6 +170,12 @@ export function resolveSurfaceReadiness(args: {
   readonly directoryEntries: ReadonlyArray<HostDirectoryEntry>;
   readonly hasLocalHost: boolean;
   readonly hasMobileNoHost: boolean;
+  /**
+   * The directory is empty and has never seen a registry listing, so the
+   * emptiness is not yet evidence of anything (`getCardinality()` is
+   * `unknown`). Mutually exclusive with `hasMobileNoHost` by construction.
+   */
+  readonly hostsUnknown: boolean;
 }): SurfaceReadiness {
   if (args.scope === "none") return READY;
   if (args.authStatus === "signed-in" && args.requestContextUserId === null) {
@@ -172,8 +192,9 @@ export function resolveSurfaceReadiness(args: {
     ) {
       return READY;
     }
-    if (!args.hasLocalHost && args.hasMobileNoHost) {
-      return { kind: "mobile-no-host" };
+    if (!args.hasLocalHost) {
+      const relayOnly = relayOnlyDirectoryReadiness(args);
+      if (relayOnly !== null) return relayOnly;
     }
     return args.activeHostId === null
       ? { kind: "loading-host" }
@@ -187,6 +208,36 @@ export function resolveSurfaceReadiness(args: {
   return args.requestContextUserId === null
     ? { kind: "restoring-request-context" }
     : READY;
+}
+
+/**
+ * The default-host states only a shell WITHOUT a local host can be in, or
+ * `null` when none of them applies and the caller's generic loading /
+ * unavailable answer stands.
+ *
+ * A desktop is never asked: it can always fall back to its own host, so every
+ * arm here would either misdescribe the wait or ask a question the local
+ * bootstrap already answers.
+ */
+function relayOnlyDirectoryReadiness(args: {
+  readonly activeHostId: string | null;
+  readonly directoryEntries: ReadonlyArray<HostDirectoryEntry>;
+  readonly hasMobileNoHost: boolean;
+  readonly hostsUnknown: boolean;
+}): SurfaceReadiness | null {
+  // Before the no-host arm, never after it: an empty directory reaches BOTH,
+  // and only this ordering keeps an unanswered registry from being presented
+  // as an answered one.
+  if (args.hostsUnknown) return { kind: "searching-hosts" };
+  if (args.hasMobileNoHost) return { kind: "mobile-no-host" };
+  // Several hosts and none selected: the directory deliberately refuses to
+  // guess (`getDefaultEntry`), and without a local host there is no other
+  // automatic way out - only a desktop can be certain of a default. Surface
+  // the choice instead of an indefinite loading state the user cannot act on.
+  if (args.activeHostId === null && args.directoryEntries.length >= 2) {
+    return { kind: "choose-host" };
+  }
+  return null;
 }
 
 export function projectDefaultHostReadiness(args: {

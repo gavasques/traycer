@@ -236,6 +236,8 @@ const DEFAULT_PRESENTATION: DefaultHostReadinessPresentation = {
   configureShell: () => undefined,
   requestRespawn: () => undefined,
   respawnPending: false,
+  refreshDirectory: () => undefined,
+  directoryRefreshing: false,
   compatibility: {
     status: "compatible",
     errorMessage: null,

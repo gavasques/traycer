@@ -143,6 +143,23 @@ export class HostDirectoryService implements IHostDirectoryService {
    */
   private hasGenuineRemoteOutcome = false;
   /**
+   * True once a fetch has actually DELIVERED a registry listing (`hosts`),
+   * empty or not. It is what separates "the registry says you own no hosts"
+   * from "nobody has managed to ask the registry yet", which an empty
+   * `remoteEntries` alone cannot say - see `getCardinality()`.
+   *
+   * `signed-out` CLEARS it, where `hasGenuineRemoteOutcome` is set by it. That
+   * outcome is the fetcher reporting it had no bearer to ask WITH, which on a
+   * shell whose auth is still settling is a race, not an answer: the registry
+   * was never reached, so its contents are unknown again - including after an
+   * earlier listing, since the entries that listing delivered are cleared by
+   * the same outcome. The two flags answer different questions -
+   * `hasGenuineRemoteOutcome` asks whether a remembered host's absence is
+   * evidence of deregistration, this one asks whether the merged directory's
+   * emptiness is evidence at all.
+   */
+  private hasObservedRemoteListing = false;
+  /**
    * One-shot startup-restore retry armed when the persisted host could not
    * be resolved because the initial refresh FAILED (never delivered a
    * genuine outcome). The default host is still promoted for usability, but
@@ -157,6 +174,15 @@ export class HostDirectoryService implements IHostDirectoryService {
   private readonly listeners = new Set<HostDirectoryListener>();
   private readonly selectionListeners = new Set<
     (entry: HostDirectoryEntry | null) => void
+  >();
+  /**
+   * Refresh-liveness subscribers, kept OFF the main `listeners` fan-out on
+   * purpose: a refresh starting and finishing changes no entry, and the
+   * directory snapshot feeds ~17 query call sites that would re-render twice
+   * per poll tick for a signal only the manual-refresh affordance reads.
+   */
+  private readonly refreshStateListeners = new Set<
+    (refreshing: boolean) => void
   >();
   private localSubscription: Disposable | null = null;
   private started = false;
@@ -199,6 +225,7 @@ export class HostDirectoryService implements IHostDirectoryService {
       return;
     }
     this.started = true;
+    this.hasObservedRemoteListing = false;
     this.preparePersistedSelectionRestore();
     // BEFORE the first refresh: the very first launch after the upgrade that
     // introduced the persisted key has nothing stored, and that launch is
@@ -255,9 +282,32 @@ export class HostDirectoryService implements IHostDirectoryService {
     if (this.refreshInFlight === null) {
       this.refreshInFlight = this.performRefresh().finally(() => {
         this.refreshInFlight = null;
+        this.emitRefreshState();
       });
+      // After the assignment, so `isRefreshing()` already answers true for a
+      // listener that reads it synchronously from this notification.
+      this.emitRefreshState();
     }
     return this.refreshInFlight;
+  }
+
+  /**
+   * Whether a registry fetch is in flight right now - a manual one or the
+   * background poll, since `refresh()` coalesces both onto one request. Drives
+   * the manual-refresh affordance's pending state on the readiness surfaces
+   * that offer it.
+   */
+  isRefreshing(): boolean {
+    return this.refreshInFlight !== null;
+  }
+
+  onRefreshStateChange(listener: (refreshing: boolean) => void): Disposable {
+    this.refreshStateListeners.add(listener);
+    return {
+      dispose: () => {
+        this.refreshStateListeners.delete(listener);
+      },
+    };
   }
 
   findById(hostId: string): HostDirectoryEntry | null {
@@ -374,21 +424,38 @@ export class HostDirectoryService implements IHostDirectoryService {
     if (entries.length === 1) {
       return entries[0];
     }
+    // Several hosts but only one of them actually reachable: the "choice"
+    // is not real, so take the reachable one. With several reachable (or
+    // none) there is no defensible guess - return null and let the
+    // readiness surface ask the user (`choose-host`).
+    const available = entries.filter((entry) => entry.status === "available");
+    if (entries.length > 1 && available.length === 1) {
+      return available[0];
+    }
     return null;
   }
 
   /**
    * Returns the cardinality of the merged directory.
    *
-   * The host-readiness controller consumes this as `hasMobileNoHost`, which
-   * resolves to the `mobile-no-host` readiness kind and its no-host guidance
-   * surface. Consumers can alternatively compute it from `list()`; this helper
-   * just centralises the mapping.
+   * The host-readiness controller consumes this as `hasMobileNoHost` /
+   * `hostsUnknown`, which resolve to the `mobile-no-host` and
+   * `searching-hosts` readiness kinds. Consumers can alternatively compute the
+   * counts from `list()`; this helper centralises the mapping - and the
+   * `unknown` distinction, which `list()` cannot express at all.
+   *
+   * `unknown` is NOT "zero, provisionally". An empty merged directory means
+   * "you have no hosts" only once a registry listing has actually been seen
+   * (`hasObservedRemoteListing`); before that it means nobody has managed to
+   * ask. On a relay-only shell the difference is the whole surface: reporting
+   * `zero` while the first fetch had failed (or ran without a bearer) told a
+   * user with a live, registered Mac to go connect a host, until the next 15s
+   * poll quietly replaced the screen.
    */
-  getCardinality(): "zero" | "one" | "many" {
+  getCardinality(): "unknown" | "zero" | "one" | "many" {
     const total = this.snapshot().length;
     if (total === 0) {
-      return "zero";
+      return this.hasObservedRemoteListing ? "zero" : "unknown";
     }
     if (total === 1) {
       return "one";
@@ -424,6 +491,7 @@ export class HostDirectoryService implements IHostDirectoryService {
     this.stopRefreshPolling();
     this.listeners.clear();
     this.selectionListeners.clear();
+    this.refreshStateListeners.clear();
     this.started = false;
   }
 
@@ -497,16 +565,33 @@ export class HostDirectoryService implements IHostDirectoryService {
     }
     this.remoteEntries = outcome.kind === "hosts" ? outcome.entries : [];
     this.hasGenuineRemoteOutcome = true;
+    // Tracks BOTH directions. `signed-out` un-observes the listing it once
+    // saw: it clears `remoteEntries` without the registry having said a word,
+    // so a bearer that rotates out from under a directory holding host A left
+    // the historical flag standing and turned the clear into the claim "you
+    // own no hosts" - the same lie the unknown state exists to prevent, just
+    // reached from the other side.
+    const observedBefore = this.hasObservedRemoteListing;
+    this.hasObservedRemoteListing = outcome.kind === "hosts";
+    const observedChanged = observedBefore !== this.hasObservedRemoteListing;
     this.consumeRestoreAfterFailedRefresh();
     if (outcome.kind === "hosts") {
       this.consumeUnboundFollowUpRestore(outcome.entries);
     }
     this.reconcileSelection();
-    // Emit only when the merged snapshot actually changed. The 15s registry
-    // poll lands here on every tick; an unconditional emit made every
-    // `onChange` consumer (17 query call sites) re-render/refetch app-wide
-    // each tick even when nothing changed.
-    this.emitIfSnapshotChanged();
+    if (observedChanged) {
+      // Crossing between "unknown" and "zero" moves the readiness gate between
+      // its searching and no-host surfaces while an EMPTY directory stays
+      // byte-for-byte identical either way - so the snapshot compare below
+      // would swallow the one emit that redraws it.
+      this.emit();
+    } else {
+      // Emit only when the merged snapshot actually changed. The 15s registry
+      // poll lands here on every tick; an unconditional emit made every
+      // `onChange` consumer (17 query call sites) re-render/refetch app-wide
+      // each tick even when nothing changed.
+      this.emitIfSnapshotChanged();
+    }
     appLogger.debug("[host-directory] refresh complete", {
       outcome: outcome.kind,
       localCount: this.localEntry === null ? 0 : 1,
@@ -852,6 +937,13 @@ export class HostDirectoryService implements IHostDirectoryService {
     this.lastEmittedSnapshot = snapshot;
     for (const listener of this.listeners) {
       listener(snapshot, this.localEntry);
+    }
+  }
+
+  private emitRefreshState(): void {
+    const refreshing = this.isRefreshing();
+    for (const listener of this.refreshStateListeners) {
+      listener(refreshing);
     }
   }
 

@@ -6,6 +6,7 @@ import {
   MockRunnerHost,
   MockTraycerCli,
 } from "@traycer-clients/shared/host-client/mock/mock-runner-host";
+import type { HostDirectoryEntry } from "@traycer-clients/shared/host-client/host-directory";
 import {
   HostReadinessControllerContext,
   projectDefaultHostReadiness,
@@ -45,6 +46,8 @@ const DEFAULT_HOST_PRESENTATION: DefaultHostReadinessPresentation = {
   configureShell: () => undefined,
   requestRespawn: () => undefined,
   respawnPending: false,
+  refreshDirectory: () => undefined,
+  directoryRefreshing: false,
   compatibility: {
     status: "compatible",
     errorMessage: null,
@@ -105,6 +108,21 @@ function renderWithProviders(
   );
 }
 
+function directoryEmptyController(
+  readiness: SurfaceReadiness,
+  refreshDirectory: () => void,
+  directoryRefreshing: boolean,
+): HostReadinessController {
+  return {
+    readinessFor: () => readiness,
+    defaultHostPresentation: {
+      ...DEFAULT_HOST_PRESENTATION,
+      refreshDirectory,
+      directoryRefreshing,
+    },
+  };
+}
+
 function buildRunnerHost(): MockRunnerHost {
   return new MockRunnerHost({
     signInUrl: "https://auth.traycer.invalid/sign-in",
@@ -129,6 +147,7 @@ describe("<SurfaceReadinessBoundary />", () => {
         directoryEntries: [],
         hasLocalHost: false,
         hasMobileNoHost: true,
+        hostsUnknown: false,
       }),
     ).toEqual({ kind: "ready" });
     expect(
@@ -141,6 +160,7 @@ describe("<SurfaceReadinessBoundary />", () => {
         directoryEntries: [],
         hasLocalHost: true,
         hasMobileNoHost: false,
+        hostsUnknown: false,
       }),
     ).toEqual({ kind: "restoring-request-context" });
     expect(
@@ -153,6 +173,7 @@ describe("<SurfaceReadinessBoundary />", () => {
         directoryEntries: [],
         hasLocalHost: false,
         hasMobileNoHost: true,
+        hostsUnknown: false,
       }),
     ).toEqual({ kind: "mobile-no-host" });
     expect(
@@ -174,6 +195,7 @@ describe("<SurfaceReadinessBoundary />", () => {
         ],
         hasLocalHost: true,
         hasMobileNoHost: false,
+        hostsUnknown: false,
       }),
     ).toEqual({ kind: "ready" });
     expect(
@@ -186,6 +208,7 @@ describe("<SurfaceReadinessBoundary />", () => {
         directoryEntries: [],
         hasLocalHost: true,
         hasMobileNoHost: false,
+        hostsUnknown: false,
       }),
     ).toEqual({ kind: "unavailable-host" });
     expect(
@@ -207,6 +230,7 @@ describe("<SurfaceReadinessBoundary />", () => {
         ],
         hasLocalHost: true,
         hasMobileNoHost: false,
+        hostsUnknown: false,
       }),
     ).toEqual({ kind: "unavailable-host" });
     expect(
@@ -228,8 +252,167 @@ describe("<SurfaceReadinessBoundary />", () => {
         ],
         hasLocalHost: true,
         hasMobileNoHost: false,
+        hostsUnknown: false,
       }),
     ).toEqual({ kind: "ready" });
+  });
+
+  it("asks for a host choice only when several hosts exist, none is selected, and there is no local host", () => {
+    const remoteEntry = (hostId: string): HostDirectoryEntry => ({
+      hostId,
+      label: `Host ${hostId}`,
+      kind: "remote",
+      websocketUrl: `ws://${hostId}`,
+      version: "1.0.0",
+      status: "available",
+    });
+    const base = {
+      scope: "default-host" as const,
+      tabHostId: null,
+      authStatus: "signed-in" as const,
+      activeHostId: null,
+      requestContextUserId: "user-a",
+      hasLocalHost: false,
+      hasMobileNoHost: false,
+      hostsUnknown: false,
+    };
+    // The wall itself: two selectable hosts, nothing selected, no local host.
+    expect(
+      resolveSurfaceReadiness({
+        ...base,
+        directoryEntries: [remoteEntry("host-a"), remoteEntry("host-b")],
+      }),
+    ).toEqual({ kind: "choose-host" });
+    // One host never asks - the directory auto-selects it.
+    expect(
+      resolveSurfaceReadiness({
+        ...base,
+        directoryEntries: [remoteEntry("host-a")],
+      }),
+    ).toEqual({ kind: "loading-host" });
+    // A selection already made (even one still dialing) must not re-raise the
+    // wall: unavailable-host owns that state.
+    expect(
+      resolveSurfaceReadiness({
+        ...base,
+        activeHostId: "host-a",
+        directoryEntries: [
+          { ...remoteEntry("host-a"), status: "unavailable" },
+          remoteEntry("host-b"),
+        ],
+      }),
+    ).toEqual({ kind: "unavailable-host" });
+    // A local host breaks the tie automatically - desktop never sees the wall.
+    expect(
+      resolveSurfaceReadiness({
+        ...base,
+        hasLocalHost: true,
+        directoryEntries: [remoteEntry("host-a"), remoteEntry("host-b")],
+      }),
+    ).toEqual({ kind: "loading-host" });
+  });
+
+  it("searches instead of declaring no hosts while the registry is still unanswered", () => {
+    const base = {
+      scope: "default-host" as const,
+      tabHostId: null,
+      authStatus: "signed-in" as const,
+      activeHostId: null,
+      requestContextUserId: "user-a",
+      directoryEntries: [],
+      hasLocalHost: false,
+    };
+    // The regression: an unanswered registry is not an empty one. The
+    // no-host copy tells the user to go set a host up, which is the wrong
+    // instruction for a phone whose Mac is registered and online.
+    expect(
+      resolveSurfaceReadiness({
+        ...base,
+        hasMobileNoHost: false,
+        hostsUnknown: true,
+      }),
+    ).toEqual({ kind: "searching-hosts" });
+    // Answered, and genuinely empty: the instruction is now correct.
+    expect(
+      resolveSurfaceReadiness({
+        ...base,
+        hasMobileNoHost: true,
+        hostsUnknown: false,
+      }),
+    ).toEqual({ kind: "mobile-no-host" });
+    // A shell with a local host owns its own bootstrap surface and never
+    // searches a registry to find one.
+    expect(
+      resolveSurfaceReadiness({
+        ...base,
+        hasLocalHost: true,
+        hasMobileNoHost: false,
+        hostsUnknown: true,
+      }),
+    ).toEqual({ kind: "loading-host" });
+  });
+
+  it("offers a Refresh that re-runs the directory fetch on both directory-empty surfaces", () => {
+    for (const kind of ["searching-hosts", "mobile-no-host"] as const) {
+      const refreshDirectory = vi.fn();
+      renderWithProviders(
+        directoryEmptyController({ kind }, refreshDirectory, false),
+        <SurfaceReadinessBoundary scope="default-host" tabHostId={null}>
+          <Member id="epic" />
+        </SurfaceReadinessBoundary>,
+        buildRunnerHost(),
+      );
+
+      fireEvent.click(screen.getByTestId("host-directory-refresh"));
+      expect(refreshDirectory).toHaveBeenCalledTimes(1);
+      cleanup();
+    }
+  });
+
+  it("names the wait honestly while searching, and keeps the setup instruction for a genuinely empty registry", () => {
+    renderWithProviders(
+      directoryEmptyController({ kind: "searching-hosts" }, vi.fn(), false),
+      <SurfaceReadinessBoundary scope="default-host" tabHostId={null}>
+        <Member id="epic" />
+      </SurfaceReadinessBoundary>,
+      buildRunnerHost(),
+    );
+    expect(screen.getByTestId("searching-hosts").textContent).toBe(
+      "Looking for your hosts…",
+    );
+    expect(screen.queryByTestId("mobile-no-host")).toBeNull();
+    cleanup();
+
+    renderWithProviders(
+      directoryEmptyController({ kind: "mobile-no-host" }, vi.fn(), false),
+      <SurfaceReadinessBoundary scope="default-host" tabHostId={null}>
+        <Member id="epic" />
+      </SurfaceReadinessBoundary>,
+      buildRunnerHost(),
+    );
+    expect(screen.getByTestId("mobile-no-host").textContent).toContain(
+      "No host connected.",
+    );
+  });
+
+  it("spins the Refresh it disables while a fetch is already running", () => {
+    // Pending states itself with an inline spinner beside an unchanged label
+    // everywhere else in this app; a Refresh that only greys out reads as
+    // broken rather than working. The pending flag tracks the SERVICE, so a
+    // background poll tick locks the button it would otherwise duplicate.
+    renderWithProviders(
+      directoryEmptyController({ kind: "mobile-no-host" }, vi.fn(), true),
+      <SurfaceReadinessBoundary scope="default-host" tabHostId={null}>
+        <Member id="epic" />
+      </SurfaceReadinessBoundary>,
+      buildRunnerHost(),
+    );
+
+    expect(screen.getByTestId("host-directory-refresh-spinner")).toBeTruthy();
+    const button = screen.getByRole<HTMLButtonElement>("button", {
+      name: "Refresh",
+    });
+    expect(button.disabled).toBe(true);
   });
 
   it("projects provisioning and compatibility lifecycle states into one default-host slot", () => {

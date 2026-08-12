@@ -138,6 +138,22 @@ function queuedFetcher(outcomes: readonly RemoteHostFetchOutcome[]): {
   return { fetcher, callCount: () => calls };
 }
 
+/** A pending `RemoteHostFetchOutcome` the test settles by hand. */
+function deferredOutcome(): {
+  readonly promise: Promise<RemoteHostFetchOutcome>;
+  readonly settle: (outcome: RemoteHostFetchOutcome) => void;
+} {
+  let resolveOutcome: (outcome: RemoteHostFetchOutcome) => void = () =>
+    undefined;
+  const promise = new Promise<RemoteHostFetchOutcome>((resolve) => {
+    resolveOutcome = resolve;
+  });
+  // Through a wrapper rather than handing `resolveOutcome` out directly: the
+  // assignment happens inside the executor, so a direct reference reads as
+  // the initializer to control-flow analysis.
+  return { promise, settle: (outcome) => resolveOutcome(outcome) };
+}
+
 describe("HostDirectoryService", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -294,6 +310,37 @@ describe("HostDirectoryService", () => {
     expect(directory.getSelected()).toBeNull();
   });
 
+  it("auto-defaults to the single AVAILABLE remote when every other entry is unavailable", async () => {
+    // Several registered hosts but only one reachable is not a real choice:
+    // forcing the choose-host wall there would ask the user to pick between
+    // one live host and dead entries. Two (or zero) available keeps the
+    // null default so the wall can ask.
+    const host = makeHost(null);
+    const offlineRemote: HostDirectoryEntry = {
+      hostId: "mock-remote-offline",
+      label: "Offline Remote",
+      kind: "remote",
+      websocketUrl: null,
+      version: "0.0.0-mock",
+      status: "unavailable",
+    };
+    const directory = makeDirectory({
+      runnerHost: host,
+      localHostIdSeeder: null,
+      remoteFetcher: () =>
+        Promise.resolve({
+          kind: "hosts",
+          entries: [offlineRemote, mockRemoteHostEntry],
+        }),
+    });
+    await directory.start();
+
+    expect(directory.getCardinality()).toBe("many");
+    expect(directory.getDefaultEntry()?.hostId).toBe(
+      mockRemoteHostEntry.hostId,
+    );
+  });
+
   it("reports cardinality 'zero' when the directory has no local or remote entries", async () => {
     const host = makeHost(null);
     const directory = makeDirectory({
@@ -305,6 +352,131 @@ describe("HostDirectoryService", () => {
 
     expect(directory.getCardinality()).toBe("zero");
     expect(directory.getDefaultEntry()).toBeNull();
+  });
+
+  it("reports cardinality 'unknown' until a registry listing has actually been delivered", async () => {
+    // The relay-only launch bug: a first fetch that FAILED left the merged
+    // directory empty, and an empty directory read as "you own no hosts" - so
+    // a phone whose Mac was registered and online was told to go connect one,
+    // until the 15s poll silently replaced the screen.
+    const host = makeHost(null);
+    const { fetcher } = queuedFetcher([
+      { kind: "failed" },
+      { kind: "hosts", entries: [] },
+    ]);
+    const directory = makeDirectory({
+      runnerHost: host,
+      localHostIdSeeder: null,
+      remoteFetcher: fetcher,
+    });
+
+    expect(directory.getCardinality()).toBe("unknown");
+    await directory.start();
+    expect(directory.getCardinality()).toBe("unknown");
+
+    const emits: number[] = [];
+    directory.onChange((entries) => {
+      emits.push(entries.length);
+    });
+    await directory.refresh();
+
+    expect(directory.getCardinality()).toBe("zero");
+    // The FIRST listing changes no entry when the registry is empty, so the
+    // snapshot-equality guard would swallow the one emit that moves the
+    // readiness gate off its searching state.
+    expect(emits).toEqual([0]);
+  });
+
+  it("does not treat a bearer-less 'signed-out' fetch as a delivered listing", async () => {
+    // `signed-out` is the fetcher saying it had nothing to ask WITH. On a
+    // shell whose auth is still settling that is a race, not the registry's
+    // answer - so the directory stays unknown rather than claiming empty.
+    const host = makeHost(null);
+    const { fetcher } = queuedFetcher([
+      { kind: "signed-out" },
+      { kind: "hosts", entries: [mockRemoteHostEntry] },
+    ]);
+    const directory = makeDirectory({
+      runnerHost: host,
+      localHostIdSeeder: null,
+      remoteFetcher: fetcher,
+    });
+    await directory.start();
+
+    expect(directory.getCardinality()).toBe("unknown");
+
+    await directory.refresh();
+
+    expect(directory.getCardinality()).toBe("one");
+  });
+
+  it("un-settles the directory when a later fetch comes back signed-out", async () => {
+    // The other side of the race above: a bearer that rotates out from under
+    // a directory that has already seen a real listing must not report
+    // "zero" - that told a user with a live, registered Mac "No host
+    // connected" over what is really a mid-rotation 401.
+    const host = makeHost(null);
+    const { fetcher } = queuedFetcher([
+      { kind: "hosts", entries: [mockRemoteHostEntry] },
+      { kind: "signed-out" },
+    ]);
+    const directory = makeDirectory({
+      runnerHost: host,
+      localHostIdSeeder: null,
+      remoteFetcher: fetcher,
+    });
+    await directory.start();
+
+    expect(directory.getCardinality()).toBe("one");
+
+    const emits: number[] = [];
+    directory.onChange((entries) => {
+      emits.push(entries.length);
+    });
+    await directory.refresh();
+
+    expect(directory.getCardinality()).toBe("unknown");
+    expect(await directory.list()).toEqual([]);
+    expect(emits).toEqual([0]);
+  });
+
+  it("publishes one refresh-pending window per in-flight fetch, however many callers ask", async () => {
+    const host = makeHost(null);
+    const deferred = deferredOutcome();
+    let calls = 0;
+    const remoteFetcher: RemoteHostFetcher = () => {
+      calls += 1;
+      return calls === 1
+        ? Promise.resolve({ kind: "hosts", entries: [] })
+        : deferred.promise;
+    };
+    const directory = makeDirectory({
+      runnerHost: host,
+      localHostIdSeeder: null,
+      remoteFetcher,
+    });
+    await directory.start();
+
+    const observed: boolean[] = [];
+    directory.onRefreshStateChange((refreshing) => {
+      observed.push(refreshing);
+    });
+    expect(directory.isRefreshing()).toBe(false);
+
+    const inFlight = directory.refresh();
+    expect(directory.isRefreshing()).toBe(true);
+    expect(observed).toEqual([true]);
+    // `refresh()` coalesces, so a second caller (a poll tick landing on the
+    // user's tap) must not announce a second pending window it cannot end.
+    void directory.refresh();
+    expect(observed).toEqual([true]);
+
+    deferred.settle({ kind: "hosts", entries: [mockRemoteHostEntry] });
+    await inFlight;
+
+    expect(directory.isRefreshing()).toBe(false);
+    expect(observed).toEqual([true, false]);
+    expect(directory.getCardinality()).toBe("one");
   });
 
   it("emits onSelectionChange after selectById()", async () => {

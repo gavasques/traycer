@@ -791,7 +791,10 @@ function PanelChromeBar(props: PanelChromeBarProps): ReactNode {
     // fits on one line (buttons flush right, as justify-between alone would
     // place them) and spans the full row - still right-aligned - when it
     // wraps below the Clear button.
-    <div className="flex flex-wrap items-center justify-between gap-2 px-2 pb-2">
+    <div
+      className="flex flex-wrap items-center justify-between gap-2 px-2 pb-2"
+      data-testid="panel-chrome-bar"
+    >
       <div className="flex min-w-0 flex-1 items-center gap-2">
         {props.leading}
         {props.filters.active ? (

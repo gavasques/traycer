@@ -1314,13 +1314,14 @@ function LandingTerminalPanelToggle(props: {
  *
  * Reads the store itself rather than taking handlers as props: the slot holds a
  * baked `ReactNode`, and one closing over a caller's handler would go stale
- * (see `MobileEpicHeaderActionsBinder`).
+ * (see `MobileEpicHeaderActionsBinder`). The page id is data, not a handler:
+ * the binder re-bakes the slot whenever it changes, so it stays current.
  */
 function LandingTerminalHeaderToggle(props: {
   readonly landingPageId: string;
 }): ReactNode {
-  const panelOpen = useLandingTerminalStore((state) =>
-    landingTerminalLayoutFor(state, props.landingPageId).panelOpen,
+  const panelOpen = useLandingTerminalStore(
+    (state) => landingTerminalLayoutFor(state, props.landingPageId).panelOpen,
   );
   const setPanelOpen = useLandingTerminalStore((state) => state.setPanelOpen);
   return (

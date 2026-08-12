@@ -4,7 +4,6 @@ import { MobileRunnerHost } from "../src/mobile-runner-host";
 
 const nativeMocks = vi.hoisted(() => ({
   browserOpen: vi.fn(),
-  browserClose: vi.fn(),
   storageKeys: vi.fn(),
   storageGet: vi.fn(),
   storageSet: vi.fn(),
@@ -12,10 +11,9 @@ const nativeMocks = vi.hoisted(() => ({
   storage: new Map<string, string>(),
 }));
 
-vi.mock("@capacitor/browser", () => ({
-  Browser: {
-    open: nativeMocks.browserOpen,
-    close: nativeMocks.browserClose,
+vi.mock("@capacitor/app-launcher", () => ({
+  AppLauncher: {
+    openUrl: nativeMocks.browserOpen,
   },
 }));
 
@@ -69,7 +67,6 @@ describe("MobileRunnerHost", () => {
       },
     );
     nativeMocks.browserOpen.mockResolvedValue(undefined);
-    nativeMocks.browserClose.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -136,7 +133,7 @@ describe("MobileRunnerHost", () => {
     expect(snapshots).toEqual([null]);
   });
 
-  it("completes poll-only device authorization and closes the browser", async () => {
+  it("completes poll-only device authorization", async () => {
     const fetchMock = vi.fn<typeof fetch>();
     fetchMock
       .mockResolvedValueOnce(
@@ -170,6 +167,5 @@ describe("MobileRunnerHost", () => {
       token: "access-token",
       refreshToken: "refresh-token",
     });
-    expect(nativeMocks.browserClose).toHaveBeenCalledOnce();
   });
 });

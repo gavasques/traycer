@@ -4,7 +4,7 @@ android {
     namespace = "com.traycer.app"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "com.traycer.app"
+        applicationId "ai.traycer.app.android"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

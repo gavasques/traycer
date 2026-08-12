@@ -412,7 +412,9 @@ describe("<LandingTerminalPanel />", () => {
     // app header - collapse therefore belongs in the same slot rather than in a
     // panel bar stacked under a header that is still on screen.
     it("turns into collapse in the same slot while the panel is open", async () => {
-      useLandingTerminalStore.getState().setPanelOpen(TEST_LANDING_PAGE_ID, true);
+      useLandingTerminalStore
+        .getState()
+        .setPanelOpen(TEST_LANDING_PAGE_ID, true);
       render(
         <>
           {panelUi()}
@@ -430,7 +432,9 @@ describe("<LandingTerminalPanel />", () => {
     });
 
     it("renders no panel header row of its own", async () => {
-      useLandingTerminalStore.getState().setPanelOpen(TEST_LANDING_PAGE_ID, true);
+      useLandingTerminalStore
+        .getState()
+        .setPanelOpen(TEST_LANDING_PAGE_ID, true);
       render(panelUi());
       await screen.findByTestId("landing-terminal-panel");
 

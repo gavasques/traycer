@@ -909,7 +909,9 @@ function LandingTerminalPanelContents(
           content area, where it was the only element in an otherwise empty
           region with nothing to align to. */}
       {isMobile ? (
-        <MobileLandingTerminalActionBinder landingPageId={props.landingPageId} />
+        <MobileLandingTerminalActionBinder
+          landingPageId={props.landingPageId}
+        />
       ) : (
         revealToggle
       )}

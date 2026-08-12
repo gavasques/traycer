@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
+import { cleanup, render } from "@testing-library/react";
 import {
   createMemoryHistory,
   createRootRoute,
   createRoute,
   createRouter,
+  RouterProvider,
   type AnyRouter,
 } from "@tanstack/react-router";
 import { bindAuthInvalidation, type AuthInvalidationRouter } from "@/router";
@@ -22,6 +24,13 @@ import { useAuthStore } from "@/stores/auth/auth-store";
  * end to end, so a version bump that changes what `resolvedLocation` means
  * (or when provisional matches publish) fails here even if the fake stays
  * green.
+ *
+ * The router is mounted for real via `<RouterProvider />` rather than driven
+ * headlessly with `router.load()`. `resolvedLocation` is assigned by the
+ * React `Transitioner` that `RouterProvider` renders (after render-ack, once
+ * the match set commits) - a headless `router.load()` call never reaches
+ * that code path, so this file's convergence assertion would hang forever
+ * without a real mount.
  */
 
 interface Deferred {
@@ -140,6 +149,7 @@ describe("bindAuthInvalidation (real @tanstack/react-router)", () => {
   });
 
   afterEach(() => {
+    cleanup();
     resetAuthStore();
   });
 
@@ -149,12 +159,14 @@ describe("bindAuthInvalidation (real @tanstack/react-router)", () => {
     const { adapter, load, invalidate } = toSpiedAuthInvalidationRouter(router);
     const unsubscribe = bindAuthInvalidation(adapter);
 
-    // Start the router's very first load without awaiting it - beforeLoad is
-    // blocked on the deferred, so this transaction never settles on its own.
-    // This call goes straight to the real router, bypassing the adapter, so
-    // it does not count toward the `load`/`invalidate` spy assertions below
-    // - those track only calls `bindAuthInvalidation` itself makes.
-    void router.load();
+    // Mount the router for real. `<RouterProvider>`'s `Transitioner` kicks
+    // off the initial load itself on mount (straight against the router, not
+    // the adapter - see `toSpiedAuthInvalidationRouter` above, so it does not
+    // count toward the `load`/`invalidate` spy assertions below), and it is
+    // the only thing that ever assigns `resolvedLocation`. beforeLoad is
+    // blocked on the deferred, so this transaction never settles on its own,
+    // which keeps the first commit blocked for the assertions that follow.
+    const { unmount } = render(<RouterProvider router={router} />);
 
     // Give router-core's pending-presentation timer (defaultPendingMs: 1) a
     // chance to fire. With `defaultPendingComponent` wired up, provisional
@@ -210,5 +222,6 @@ describe("bindAuthInvalidation (real @tanstack/react-router)", () => {
     expect(invalidate).toHaveBeenCalledTimes(1);
 
     unsubscribe();
+    unmount();
   });
 });

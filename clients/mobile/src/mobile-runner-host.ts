@@ -1,4 +1,4 @@
-import { Browser } from "@capacitor/browser";
+import { AppLauncher } from "@capacitor/app-launcher";
 import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
 import {
   applySlowDown,
@@ -291,7 +291,13 @@ export class MobileRunnerHost implements IRunnerHost {
   }
 
   async openExternalLink(url: string): Promise<void> {
-    await Browser.open({ url, presentationStyle: "popover" });
+    // The system default browser, NOT an in-app SFSafariViewController sheet:
+    // since iOS 11 the sheet gets an app-isolated cookie jar, so the user's
+    // real Google/GitHub sessions never appear in it and every install
+    // re-authenticates from scratch. The device-flow sign-in has no redirect
+    // leg (the app polls), so leaving the app costs nothing - and the user's
+    // own browser brings their sessions, password manager and passkeys.
+    await AppLauncher.openUrl({ url });
   }
 
   async getRegisteredUrlSchemes(
@@ -408,7 +414,6 @@ class MobileDeviceFlowSession implements DeviceFlowSession {
     this.abortController.abort();
     this.wakePoll?.();
     this.handlers.clear();
-    void Browser.close().catch(() => undefined);
   }
 
   private async run(): Promise<void> {
@@ -489,7 +494,8 @@ class MobileDeviceFlowSession implements DeviceFlowSession {
       handler(result);
     }
     this.handlers.clear();
-    void Browser.close().catch(() => undefined);
+    // Nothing to dismiss here: the verification page lives in the system
+    // browser (see `openExternalLink`), outside this app's control.
   }
 }
 

@@ -2,7 +2,7 @@
   "_README": [
     "SHAPE REFERENCE ONLY - do not rename this file to google-services.json with these values in it.",
     "The real file is ops-provisioned: Firebase console > Project settings > Your apps > Android app",
-    "(package name com.traycer.app) > google-services.json. Drop it next to this file, at",
+    "(package name ai.traycer.app.android) > google-services.json. Drop it next to this file, at",
     "clients/mobile/android/app/google-services.json; it is gitignored.",
     "",
     "Without that file android/app/build.gradle skips the com.google.gms.google-services plugin, the",
@@ -23,7 +23,7 @@
       "client_info": {
         "mobilesdk_app_id": "1:000000000000:android:0000000000000000000000",
         "android_client_info": {
-          "package_name": "com.traycer.app"
+          "package_name": "ai.traycer.app.android"
         }
       },
       "oauth_client": [],

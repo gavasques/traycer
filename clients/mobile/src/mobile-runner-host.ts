@@ -43,6 +43,10 @@ import {
   type UpdateHostVersionPolicyFetchResult,
   type UpdateHostVersionPolicyInput,
 } from "@traycer-clients/shared/host-client/host-version-policy-fetcher";
+import {
+  deregisterHostViaHttp,
+  type DeregisterHostFetchResult,
+} from "@traycer-clients/shared/host-client/host-deregister-fetcher";
 import type {
   CredentialsMigrationOutcome,
   DeviceFlowAuthorization,
@@ -282,6 +286,16 @@ export class MobileRunnerHost implements IRunnerHost {
       hostId,
       input,
     );
+  }
+
+  deregisterHostFromAccount(
+    bearerToken: string,
+    hostId: string,
+  ): Promise<DeregisterHostFetchResult> {
+    // Registry-only write, same vantage as the version policy above: the
+    // phone talks to authn directly (no Electron-main CORS detour) and can
+    // remove any registered host by id.
+    return deregisterHostViaHttp(this.authnBaseUrl, bearerToken, hostId);
   }
 
   async getLastKnownLocalHostId(): Promise<string | null> {

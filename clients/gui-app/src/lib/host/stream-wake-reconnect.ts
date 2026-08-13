@@ -11,12 +11,13 @@ export type WakeSignalReason = "wake-online" | "wake-resume";
 
 /**
  * Subscribes `onWake` to the two OS-wake triggers - `window 'online'`
- * (`onWakeReconnect`) and `IRunnerHost.onSystemResumed` (Electron
- * `powerMonitor` bridged from the shell) - and returns a disposer. The shared
- * primitive under every renderer-side wake consumer (stream re-dial, closed
- * chat-session retry), so a new consumer cannot wire only one trigger and miss
- * the same-network lid-open (`online` never fires) or the web shell (no OS
- * resume signal).
+ * (`onWakeReconnect`) and `IRunnerHost.onSystemResumed` (the shell's own wake
+ * signal: Electron `powerMonitor` on desktop, the app returning to the
+ * foreground on mobile) - and returns a disposer. The shared primitive under
+ * every renderer-side wake consumer (stream re-dial, closed chat-session
+ * retry), so a new consumer cannot wire only one trigger and miss the
+ * same-network lid-open or app switch (`online` never fires for either) or the
+ * web shell (no shell wake signal at all).
  */
 export function subscribeWakeSignals(
   runnerHost: IRunnerHost,
@@ -74,11 +75,13 @@ export function subscribeStreamWakeReconnect(
  * Two triggers:
  *  - `window 'online'` (`onWakeReconnect`): the network returning on wake.
  *    Cross-platform; does NOT fire on a same-network lid-open.
- *  - `IRunnerHost.onSystemResumed`: Electron `powerMonitor` resume/unlock-screen
- *    bridged from the shell - the reliable desktop trigger that fires even when
- *    no network transition occurs. Shells with no OS wake signal (web, mobile,
- *    tests) install a no-op subscription, so this degrades to the `online`-only
- *    path.
+ *  - `IRunnerHost.onSystemResumed`: the shell's own wake signal - Electron
+ *    `powerMonitor` resume/unlock-screen on desktop, the app returning to the
+ *    foreground on mobile. The reliable trigger, because it fires even when no
+ *    network transition occurs, which is every app switch on a phone (the
+ *    WebView is suspended, its sockets die, and the network never moved).
+ *    Shells with no wake signal at all (web, tests) install a no-op
+ *    subscription, so this degrades to the `online`-only path.
  *
  * Both feed `reconnectAll`, which is idempotent (a wake that fires both just
  * reschedules the redial). No-op when `client` is null - no live stream, or a

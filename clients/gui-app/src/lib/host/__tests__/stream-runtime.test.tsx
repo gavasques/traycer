@@ -190,6 +190,7 @@ function fakeRemoteSession(): FakeRemoteSession {
       throw new Error("not exercised by this test");
     }),
     notifyBearerRotated: vi.fn(),
+    wake: vi.fn(),
     onClosed: () => () => undefined,
     subscribeAvailabilityRecovered: () => () => undefined,
     // These provider tests never exercise fatal verdicts.

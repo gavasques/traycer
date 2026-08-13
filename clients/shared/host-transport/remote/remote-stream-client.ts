@@ -79,12 +79,22 @@ export class RemoteStreamClient<
   }
 
   /**
-   * No-op (see {@link IHostStreamClient.reconnectAll}): a remote session's
-   * attach endpoint is the relay's fixed WS URL, never a per-host address that
-   * moves on respawn, so there is nothing to nudge. The session's own
-   * resume/backoff loop (Architecture §3) already owns reconnection.
+   * Wakes the shared session (see {@link IRemoteSession.wake}).
+   *
+   * There is still no endpoint to re-resolve - a remote session's attach
+   * address is the relay's fixed WS URL, never a per-host one that moves on
+   * respawn - so this does NOT force a re-dial the way the local client's
+   * `reconnectAll` does. What it forwards is the CALLER's evidence: every
+   * caller of this method is an OS/app wake (`subscribeWakeSignals`), and a
+   * runtime that was frozen comes back with a socket that may already be dead
+   * and a backoff timer still holding a redial for a failure that is now
+   * minutes old. The session's own resume/backoff loop still owns
+   * reconnection; it just cannot tell on its own that the wait it armed has
+   * gone stale.
    */
-  reconnectAll(_reason: string): void {}
+  reconnectAll(reason: string): void {
+    this.session.wake(reason);
+  }
 
   /**
    * Bridges the session's ready-boundary transition (full attach + every

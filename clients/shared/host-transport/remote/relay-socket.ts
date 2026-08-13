@@ -9,6 +9,7 @@ import {
   RELAY_DIAL_TIMEOUT_MS,
   RELAY_PING_INTERVAL_MS,
   RELAY_PONG_TIMEOUT_MS,
+  RELAY_WAKE_PROBE_TIMEOUT_MS,
 } from "./config";
 
 /**
@@ -74,6 +75,12 @@ export class RelaySocket {
   private closed = false;
   private dialTimer: TimerHandle | null = null;
   private pingTimer: IntervalHandle | null = null;
+  /**
+   * Armed exactly while a wake-time ping is outstanding, and disarmed by the
+   * pong that answers it - so its survival to the deadline IS the verdict. See
+   * {@link pokeKeepalive}.
+   */
+  private probeTimer: TimerHandle | null = null;
   private lastPongAt: number;
 
   constructor(options: RelaySocketOptions) {
@@ -107,6 +114,60 @@ export class RelaySocket {
   /** Re-presents a fresh attach grant in-band on the live socket (§4b). */
   sendReauth(grantJws: string): boolean {
     return this.sendControl({ type: "reauth", grant: grantJws });
+  }
+
+  /**
+   * Probes this socket NOW, for a caller that knows the runtime just un-froze
+   * (an OS wake, an app returning to the foreground).
+   *
+   * Two things go wrong across a freeze, and this answers both. The keepalive
+   * is an INTERVAL, and an interval does not run while the runtime is stopped,
+   * so a socket the network dropped mid-freeze is not even looked at until the
+   * overdue tick lands. And the drop itself is frequently silent - the peer
+   * never got to send a close, so the socket reads open and the layer above
+   * keeps parking work on a connection that will never answer.
+   *
+   * So: run the scheduled check off-schedule (a socket already past
+   * `RELAY_PONG_TIMEOUT_MS` fails immediately, exactly as the tick would), and
+   * then hold the ping that check just sent to a much shorter
+   * `RELAY_WAKE_PROBE_TIMEOUT_MS` deadline. The 60s allowance is calibrated for
+   * a link that is merely slow; a wake is the one moment we have positive
+   * reason to suspect the socket is dead, and waiting out a minute to find out
+   * is most of what "the app was unusable after switching away" means.
+   *
+   * An ARMED probe timer is the whole state, and it means exactly "a ping went
+   * out and nothing has answered since". An inbound pong disarms it; the timer
+   * surviving to its deadline is therefore proof of silence on its own, with no
+   * timestamp to compare. That correlation has to be the timer's own identity
+   * rather than a `lastPongAt` reading, because `lastPongAt` is also stamped
+   * when the socket OPENS and is not reset per probe - so comparing against it
+   * both credits a probe with the open's stamp and credits a later probe with
+   * an earlier probe's answer. Silence is the thing being measured; only the
+   * absence of a disarm can measure it.
+   *
+   * One probe is in flight at a time, so a burst of wakes cannot stack
+   * deadlines - and because a pong disarms, the poke after an answered one arms
+   * a genuinely fresh probe rather than inheriting a spent window. No verdict
+   * is duplicated: the probe fails through the same {@link fail} path. A socket
+   * that has not opened, or is closed, has nothing to probe and is a no-op.
+   */
+  pokeKeepalive(): void {
+    if (this.closed || !this.opened) {
+      return;
+    }
+    this.runKeepaliveTick();
+    if (this.closed || this.probeTimer !== null) {
+      return;
+    }
+    this.probeTimer = setTimeout(() => {
+      this.probeTimer = null;
+      if (this.closed) {
+        return;
+      }
+      // Still armed at the deadline, so nothing answered the ping this probe
+      // sent - the socket is open in name only.
+      this.fail(4006, "relay-wake-probe-timeout");
+    }, RELAY_WAKE_PROBE_TIMEOUT_MS);
   }
 
   close(code: number, reason: string): void {
@@ -184,6 +245,10 @@ export class RelaySocket {
   private handleTextFrame(raw: string): void {
     if (raw === KEEPALIVE_PONG) {
       this.lastPongAt = Date.now();
+      // Disarms any wake-time probe: this is the answer it was waiting for,
+      // and it is the ONLY thing that distinguishes an answered probe from a
+      // silent one (see `pokeKeepalive`).
+      this.clearProbe();
       return;
     }
     if (raw === KEEPALIVE_PING) {
@@ -233,20 +298,32 @@ export class RelaySocket {
   private startKeepalive(): void {
     this.clearKeepalive();
     this.pingTimer = setInterval(() => {
-      if (Date.now() - this.lastPongAt >= RELAY_PONG_TIMEOUT_MS) {
-        this.fail(4004, "relay-missed-pongs");
-        return;
-      }
-      const socket = this.socket;
-      if (socket === null || !this.opened) {
-        return;
-      }
-      try {
-        socket.send(KEEPALIVE_PING);
-      } catch {
-        this.fail(4005, "relay-ping-send-failed");
-      }
+      this.runKeepaliveTick();
     }, RELAY_PING_INTERVAL_MS);
+  }
+
+  /**
+   * One keepalive round: fail the socket if it is past the pong deadline,
+   * otherwise send the next ping. Extracted so {@link pokeKeepalive} runs the
+   * SAME check off-schedule rather than duplicating the deadline rule.
+   */
+  private runKeepaliveTick(): void {
+    if (this.closed || !this.opened) {
+      return;
+    }
+    if (Date.now() - this.lastPongAt >= RELAY_PONG_TIMEOUT_MS) {
+      this.fail(4004, "relay-missed-pongs");
+      return;
+    }
+    const socket = this.socket;
+    if (socket === null) {
+      return;
+    }
+    try {
+      socket.send(KEEPALIVE_PING);
+    } catch {
+      this.fail(4005, "relay-ping-send-failed");
+    }
   }
 
   private clearKeepalive(): void {
@@ -256,8 +333,16 @@ export class RelaySocket {
     }
   }
 
+  private clearProbe(): void {
+    if (this.probeTimer !== null) {
+      clearTimeout(this.probeTimer);
+      this.probeTimer = null;
+    }
+  }
+
   private teardownTimers(): void {
     this.clearKeepalive();
+    this.clearProbe();
     if (this.dialTimer !== null) {
       clearTimeout(this.dialTimer);
       this.dialTimer = null;

@@ -52,11 +52,15 @@ export interface IHostStreamClient<
   notifyBearerRotated(): void;
   /**
    * Nudges every open session to reconnect immediately (skip backoff) - used
-   * when a LOCAL host respawns at a new `websocketUrl` under the same
-   * identity. A remote session has no equivalent "same identity, new address"
-   * transition (the relay attach endpoint is fixed, per-fleet, not per-host),
-   * so `RemoteStreamClient` implements this as a no-op; its own resume/backoff
-   * machinery already owns reconnection.
+   * when a LOCAL host respawns at a new `websocketUrl` under the same identity,
+   * and by the OS/app wake path (`subscribeWakeSignals`).
+   *
+   * A remote session has no equivalent "same identity, new address" transition
+   * (the relay attach endpoint is fixed, per-fleet, not per-host), so
+   * `RemoteStreamClient` cannot re-resolve anything; it forwards the call to
+   * `IRemoteSession.wake` instead, which is the wake half of this contract -
+   * pull a pending redial forward, and check a socket whose keepalive interval
+   * may have been frozen along with the runtime.
    */
   reconnectAll(reason: string): void;
   /**

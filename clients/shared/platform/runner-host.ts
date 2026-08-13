@@ -348,7 +348,9 @@ export interface IRunnerHost {
    * offline within seconds instead of waiting out the stream heartbeat.
    *
    * Desktop bridges Electron `powerMonitor` `resume`/`unlock-screen` through
-   * the preload IPC bridge. Shells with no OS wake signal (mobile, web, tests)
+   * the preload IPC bridge. Mobile raises it on the hidden -> visible edge,
+   * where "the machine woke" means the app returned to the foreground and the
+   * OS un-suspended its WebView. Shells with no wake signal at all (web, tests)
    * install a no-op whose handler never fires; consumers still pair this with
    * the cross-platform `window` `online` event, so wake recovery degrades
    * gracefully where no native signal exists.

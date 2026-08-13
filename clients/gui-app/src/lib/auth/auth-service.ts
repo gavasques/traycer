@@ -430,9 +430,12 @@ export class AuthService {
 
   /**
    * Refresh the bearer on device wake, since the scheduler's `setTimeout` is
-   * frozen during sleep and would otherwise rot the token past its TTL. Mirrors
-   * `subscribeStreamWakeReconnect`'s two triggers: `window 'online'` (network
-   * back) and `onSystemResumed` (Electron resume). `notifyResumed` is a no-op
+   * frozen while the runtime is - a sleeping machine, or a WebView the OS
+   * suspends when its app leaves the foreground - and would otherwise rot the
+   * token past its TTL. Mirrors `subscribeStreamWakeReconnect`'s two triggers:
+   * `window 'online'` (network back) and `onSystemResumed` (the shell's own
+   * wake signal: Electron resume, or the app foregrounding on mobile - the
+   * app-switch case the `online` fallback cannot see). `notifyResumed` is a no-op
    * while signed out; the resume wiring is best-effort so it can't wedge
    * construction, leaving the `online` listener as the fallback.
    */

@@ -168,4 +168,156 @@ describe("MobileRunnerHost", () => {
       refreshToken: "refresh-token",
     });
   });
+
+  describe("onSystemResumed", () => {
+    // `document.visibilityState` is a getter on jsdom's `Document.prototype`;
+    // shadowing it per test (and removing the shadow afterwards) is how a
+    // hidden <-> visible edge is driven without a real WebView.
+    let state: DocumentVisibilityState = "visible";
+
+    beforeEach(() => {
+      state = "visible";
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        get: () => state,
+      });
+    });
+
+    afterEach(() => {
+      Reflect.deleteProperty(document, "visibilityState");
+    });
+
+    function setVisibility(next: DocumentVisibilityState): void {
+      state = next;
+      document.dispatchEvent(new Event("visibilitychange"));
+    }
+
+    it("does not fire on subscribe - a cold app start is not a resume", () => {
+      const host = runner();
+      const resumes: number[] = [];
+      const subscription = host.onSystemResumed(() => resumes.push(1));
+
+      expect(resumes).toEqual([]);
+      subscription.dispose();
+    });
+
+    it("does not fire on subscribe when the document is already visible", () => {
+      state = "visible";
+      const host = runner();
+      const resumes: number[] = [];
+      const subscription = host.onSystemResumed(() => resumes.push(1));
+
+      expect(resumes).toEqual([]);
+      subscription.dispose();
+    });
+
+    it("fires exactly once on the hidden -> visible edge", () => {
+      const host = runner();
+      const resumes: number[] = [];
+      const subscription = host.onSystemResumed(() => resumes.push(1));
+
+      setVisibility("hidden");
+      expect(resumes).toEqual([]);
+      setVisibility("visible");
+      expect(resumes).toEqual([1]);
+
+      subscription.dispose();
+    });
+
+    it("does not fire on the visible -> hidden edge", () => {
+      const host = runner();
+      const resumes: number[] = [];
+      const subscription = host.onSystemResumed(() => resumes.push(1));
+
+      setVisibility("hidden");
+      expect(resumes).toEqual([]);
+
+      subscription.dispose();
+    });
+
+    it("does not fire when a visibilitychange arrives with the state unchanged", () => {
+      const host = runner();
+      const resumes: number[] = [];
+      const subscription = host.onSystemResumed(() => resumes.push(1));
+
+      // Already visible - a repeat "visible" event is not a real edge.
+      setVisibility("visible");
+      expect(resumes).toEqual([]);
+
+      subscription.dispose();
+    });
+
+    it("fires twice across two suspend/resume cycles", () => {
+      const host = runner();
+      const resumes: number[] = [];
+      const subscription = host.onSystemResumed(() => resumes.push(1));
+
+      setVisibility("hidden");
+      setVisibility("visible");
+      setVisibility("hidden");
+      setVisibility("visible");
+
+      expect(resumes).toEqual([1, 1]);
+      subscription.dispose();
+    });
+
+    it("delivers the same resume to every subscriber", () => {
+      const host = runner();
+      const firstResumes: number[] = [];
+      const secondResumes: number[] = [];
+      const first = host.onSystemResumed(() => firstResumes.push(1));
+      const second = host.onSystemResumed(() => secondResumes.push(1));
+
+      setVisibility("hidden");
+      setVisibility("visible");
+
+      expect(firstResumes).toEqual([1]);
+      expect(secondResumes).toEqual([1]);
+
+      first.dispose();
+      second.dispose();
+    });
+
+    it("stops notifying a disposed subscriber while a still-live one keeps receiving", () => {
+      const host = runner();
+      const disposedResumes: number[] = [];
+      const liveResumes: number[] = [];
+      const disposedSubscription = host.onSystemResumed(() =>
+        disposedResumes.push(1),
+      );
+      const liveSubscription = host.onSystemResumed(() => liveResumes.push(1));
+
+      setVisibility("hidden");
+      setVisibility("visible");
+      disposedSubscription.dispose();
+
+      setVisibility("hidden");
+      setVisibility("visible");
+
+      expect(disposedResumes).toEqual([1]);
+      expect(liveResumes).toEqual([1, 1]);
+
+      liveSubscription.dispose();
+    });
+
+    it("keeps notifying the other subscribers when one throws", () => {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const host = runner();
+      const liveResumes: number[] = [];
+      const throwing = host.onSystemResumed(() => {
+        throw new Error("subscriber failure");
+      });
+      const live = host.onSystemResumed(() => liveResumes.push(1));
+
+      setVisibility("hidden");
+      setVisibility("visible");
+
+      expect(liveResumes).toEqual([1]);
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+
+      throwing.dispose();
+      live.dispose();
+      errorSpy.mockRestore();
+    });
+  });
 });

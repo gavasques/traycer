@@ -140,6 +140,7 @@ export class MobileRunnerHost implements IRunnerHost {
   readonly hostTray = null;
   readonly deviceFlow: IDeviceFlowHost;
   private retainedStepUpCredential: RetainedStepUpCredential | null = null;
+  private readonly systemResume = new MobileSystemResume();
 
   constructor(options: MobileRunnerHostOptions) {
     this.signInUrl = options.signInUrl;
@@ -342,8 +343,7 @@ export class MobileRunnerHost implements IRunnerHost {
   }
 
   onSystemResumed(handler: () => void): Disposable {
-    void handler;
-    return disposable();
+    return this.systemResume.subscribe(handler);
   }
 
   async requestHostRespawn(): Promise<HostRestartRequestResult> {
@@ -781,6 +781,79 @@ function buildNotifications(
 
 function disposable(): Disposable {
   return { dispose: () => undefined };
+}
+
+/**
+ * The phone's `IRunnerHost.onSystemResumed` source.
+ *
+ * On this platform "the machine woke up" is not a power event - it is the app
+ * coming back to the foreground. The OS suspends the WebView on every app
+ * switch, which kills its sockets and freezes its timers, so the shared wake
+ * consumers (host-stream re-dial, the auth refresh scheduler) need exactly the
+ * signal a desktop gets from `powerMonitor` and a phone gets from
+ * `visibilitychange`. Without it every wake consumer falls back to the
+ * cross-platform `window 'online'` event, which does NOT fire on an app switch:
+ * the network never went anywhere, only this runtime did.
+ *
+ * `visibilitychange` and not a Capacitor App-state plugin: WKWebView and the
+ * Android WebView both raise it, so this costs no new native dependency in a
+ * shell that deliberately carries only core, keyboard, push and app-launcher.
+ *
+ * Fires ONLY on the hidden -> visible edge. That edge filter is also the whole
+ * dedupe, deliberately with no debounce timer: the event is edge-driven (a
+ * repeat needs a real hide in between, which is a real suspend), and every
+ * consumer downstream is idempotent and rate-limits itself - the remote
+ * session's `wake` can only pull one redial forward per armed backoff, and the
+ * auth scheduler coalesces on its own. A timer here would only add latency to
+ * the recovery this exists to make fast.
+ */
+class MobileSystemResume {
+  private readonly handlers = new Set<() => void>();
+  private hidden = false;
+  private listening = false;
+  private readonly onVisibilityChange = (): void => {
+    const hidden = document.visibilityState === "hidden";
+    const resumed = this.hidden && !hidden;
+    this.hidden = hidden;
+    if (!resumed) {
+      return;
+    }
+    for (const handler of Array.from(this.handlers)) {
+      try {
+        handler();
+      } catch (error) {
+        // One bad subscriber must not cost the others their wake.
+        console.error("[mobile] system-resume handler threw", error);
+      }
+    }
+  };
+
+  subscribe(handler: () => void): Disposable {
+    this.ensureListening();
+    this.handlers.add(handler);
+    return {
+      dispose: () => {
+        this.handlers.delete(handler);
+      },
+    };
+  }
+
+  /**
+   * Installs the DOM listener on first subscription and keeps it: this object
+   * lives as long as the shell, and the visible/hidden state has to stay
+   * tracked across a window with no subscribers or the next resume edge is
+   * read against a stale baseline. Seeding from the CURRENT state here (rather
+   * than at construction) is what keeps a cold start from counting as a
+   * resume - a shell that boots hidden has not woken up yet.
+   */
+  private ensureListening(): void {
+    if (this.listening || typeof document === "undefined") {
+      return;
+    }
+    this.listening = true;
+    this.hidden = document.visibilityState === "hidden";
+    document.addEventListener("visibilitychange", this.onVisibilityChange);
+  }
 }
 
 class MobileNoopTrayState implements ITrayState {

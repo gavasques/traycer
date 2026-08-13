@@ -208,6 +208,28 @@ export interface IRemoteSession<
   ): IStreamSession;
   notifyBearerRotated(): void;
   /**
+   * Tells the session that something outside it has evidence its connection
+   * should be re-established NOW rather than on the backoff schedule.
+   *
+   * Two callers, one meaning - "a human is waiting on this session":
+   *  - the OS/app resume signal, routed through `IHostStreamClient.reconnectAll`
+   *    (`subscribeWakeSignals`). A runtime that was frozen (laptop sleep, a
+   *    mobile WebView suspended on every app switch) comes back with its socket
+   *    already dead and its backoff timer holding the redial;
+   *  - a `sendUnary` caller parking on a session that is not carrying frames -
+   *    the user tapping Retry, or any host-scoped read they are waiting on.
+   *
+   * The session decides what that is worth: a redial already pending on a long
+   * backoff is pulled forward to no sooner than `RECONNECT_INITIAL_BACKOFF_MS`
+   * after the failure that armed it, and a connection that still reads open is
+   * probed on a short deadline rather than trusted, because the drop that made
+   * it dead may never have been delivered. It never
+   * lengthens a pending redial, never disturbs a healthy session, and never
+   * resets the escalation itself (the backoff schedule still resets ONLY at the
+   * ready boundary), so repeated wakes cannot become a dial loop.
+   */
+  wake(reason: string): void;
+  /**
    * Subscribes to the session's terminal close - a caller `close()` (on the
    * shared session, once every consumer released) or a terminal session
    * fatal. Fires once, synchronously, after the session state is fully torn
@@ -358,6 +380,14 @@ export class RemoteSession<
 
   private phaseTimer: TimerHandle | null = null;
   private backoffTimer: TimerHandle | null = null;
+  /**
+   * When the pending `backoffTimer` was armed, and for how long. Read only by
+   * {@link wake}, which pulls a redial forward relative to the FAILURE that
+   * armed it - not relative to the wake - so a burst of wakes converges on one
+   * deadline instead of pushing it out or re-firing per wake.
+   */
+  private backoffArmedAt = 0;
+  private backoffDelayMs = 0;
   private reauthTimer: TimerHandle | null = null;
   private standingTimer: TimerHandle | null = null;
 
@@ -497,6 +527,14 @@ export class RemoteSession<
       throw abortedRequestError(requestId, method);
     }
     if (this.phase !== "ready" || this.connection === null) {
+      // A caller about to park is the strongest evidence this session has that
+      // someone needs it NOW - the user's Retry, or any read they are watching
+      // a spinner for. Without this, a request that lands mid-backoff simply
+      // waits out a timer armed for a session nobody was waiting on, and the
+      // caller's own retry budget (`createRetryingMessenger`) is spent inside
+      // that same closed window. `wake` decides what the evidence is worth and
+      // is floor-limited, so this cannot become a dial-per-request loop.
+      this.wake("caller-waiting");
       // Throws on a terminal session, a failed attach, or the caller's
       // authority being aborted while parked; returns once this session is
       // ready to carry the frame.
@@ -827,6 +865,31 @@ export class RemoteSession<
       json: { bearer },
       binary: null,
     });
+  }
+
+  /** See {@link IRemoteSession.wake}. */
+  wake(reason: string): void {
+    if (this.phase === "closed" || this.phase === "idle") {
+      // Closed is terminal, and idle has never dialed - `start()` owns that,
+      // and every caller that wants a session calls it first.
+      return;
+    }
+    if (this.phase === "ready" && this.connection !== null) {
+      // A ready session is the only one that can be sitting on a socket the
+      // runtime never saw die: its liveness rests on an INTERVAL, which was
+      // frozen along with the runtime, so an overdue tick is all that stands
+      // between a dead socket and work being parked on it. A dial caught
+      // mid-flight is bounded by its own one-shot phase timer instead, which
+      // comes back overdue and fires on its own, so it needs nothing here.
+      //
+      // Order matters. The poke can land in `handleConnectionLost` (when the
+      // socket is ALREADY provably stale), which arms a fresh backoff - so the
+      // collapse below has to run afterwards to pull that redial forward too.
+      // A socket that merely looks alive is left connected and answers the
+      // poke's probe on its own deadline.
+      this.connection.relaySocket.pokeKeepalive();
+    }
+    this.collapseBackoff(reason);
   }
 
   /** See {@link IRemoteSession.onClosed}. */
@@ -1739,11 +1802,81 @@ export class RemoteSession<
       RECONNECT_MAX_BACKOFF_MS,
     );
     this.reconnectAttempt += 1;
-    this.backoffTimer = setTimeout(() => {
-      this.backoffTimer = null;
-      this.beginConnectGuarded();
-    }, delay);
+    this.armBackoffTimer(Date.now(), delay);
     return delay;
+  }
+
+  /**
+   * Arms the redial for the deadline `armedAt + delayMs`, recording both so
+   * {@link wake} can reason about how long this session has ALREADY been
+   * waiting rather than restarting the clock.
+   *
+   * The delay is expressed against `armedAt`, not against now, so re-arming an
+   * EXISTING deadline stays a deadline: the timer is set to whatever is left of
+   * it. Passing `Date.now()` as `armedAt` - what a fresh backoff does - makes
+   * the two the same thing.
+   */
+  private armBackoffTimer(armedAt: number, delayMs: number): void {
+    this.backoffArmedAt = armedAt;
+    this.backoffDelayMs = delayMs;
+    this.backoffTimer = setTimeout(
+      () => {
+        this.backoffTimer = null;
+        this.beginConnectGuarded();
+      },
+      Math.max(0, armedAt + delayMs - Date.now()),
+    );
+  }
+
+  /**
+   * Pulls a pending redial forward to no sooner than
+   * `RECONNECT_INITIAL_BACKOFF_MS` after the failure that armed it, dialing
+   * straight away once that much time has already passed.
+   *
+   * That floor is the whole rate limit, and it is why {@link wake} can be wired
+   * to signals that fire freely (every app switch, every parked read):
+   *
+   *  - it can only ever SHORTEN the pending wait, so a wake is never a delay;
+   *  - once the deadline is at the floor a further wake finds nothing to
+   *    shorten and does nothing, so a burst of wakes buys exactly ONE redial;
+   *  - a session pinned at the 30s cap redials ~1s after the wake, which is
+   *    the recovery this exists for, while a session nobody is waking still
+   *    escalates normally.
+   *
+   * `reconnectAttempt` is deliberately untouched: the schedule resets ONLY at
+   * the ready boundary (see the class contract), so a host that is genuinely
+   * gone keeps escalating between wakes instead of being pinned at the floor.
+   */
+  private collapseBackoff(reason: string): void {
+    if (this.backoffTimer === null) {
+      return;
+    }
+    const waitedMs = Date.now() - this.backoffArmedAt;
+    const armedRemainingMs = this.backoffDelayMs - waitedMs;
+    const wokenRemainingMs = Math.max(
+      0,
+      RECONNECT_INITIAL_BACKOFF_MS - waitedMs,
+    );
+    if (wokenRemainingMs >= armedRemainingMs) {
+      return;
+    }
+    clearTimeout(this.backoffTimer);
+    this.backoffTimer = null;
+    // Worth a line of its own: the failure log reported the delay this session
+    // ORIGINALLY armed, so without this the log claims a 30s wait that a wake
+    // then cut to one - and the difference between those two is the whole
+    // difference between a session that recovers and one that looks dead.
+    console.info(
+      `[remote-session] remote session (host ${this.options.hostId}) redialing early (${reason}) - ${Math.round(armedRemainingMs)}ms of backoff left`,
+    );
+    if (wokenRemainingMs === 0) {
+      this.beginConnectGuarded();
+      return;
+    }
+    // The SAME origin, an earlier deadline: a second wake measures from the
+    // original failure too, so it converges here instead of walking the
+    // deadline forward one wake at a time.
+    this.armBackoffTimer(this.backoffArmedAt, waitedMs + wokenRemainingMs);
   }
 
   /**

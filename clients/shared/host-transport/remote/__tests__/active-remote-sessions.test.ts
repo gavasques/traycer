@@ -57,6 +57,7 @@ function fakeSession(): FakeSession {
       throw new Error("not exercised by these tests");
     }),
     notifyBearerRotated: vi.fn(),
+    wake: vi.fn(),
     onClosed: () => () => undefined,
     subscribeAvailabilityRecovered: () => () => undefined,
     // These cache tests never exercise fatal verdicts; the cache view only

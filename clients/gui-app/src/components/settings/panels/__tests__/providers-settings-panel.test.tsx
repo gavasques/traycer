@@ -6838,4 +6838,47 @@ describe("<ProvidersSettingsPanel /> mobile section hub", () => {
 
     expect(screen.getByRole("tabpanel")).toBe(hiddenPanel);
   });
+
+  it("does not make the section pane a scroll box on a phone", () => {
+    render(
+      <TooltipProvider>
+        <ProvidersSettingsPanel />
+      </TooltipProvider>,
+    );
+
+    // Collapse the grid so the section body is the visible tabpanel, matching
+    // how the earlier tests above reach it.
+    selectTab("Env");
+
+    // Checked as exact class-LIST membership rather than a substring: the
+    // `md:`-prefixed class contains the unprefixed one as a substring
+    // (`md:overflow-y-auto` contains `overflow-y-auto`), so a substring check
+    // cannot tell "scrolls at every width" from "scrolls from md up" apart -
+    // and telling those two apart is the entire point of this assertion.
+    // jsdom applies no CSS and computes no layout, so the class list is the
+    // only observable this test has for which breakpoint a scroll declaration
+    // lives under.
+    const panel = screen.getByRole("tabpanel");
+    const classes = panel.className.split(" ");
+    expect(classes).not.toContain("overflow-y-auto");
+    expect(classes).not.toContain("min-h-0");
+    expect(classes).toContain("md:overflow-y-auto");
+    expect(classes).toContain("md:min-h-0");
+  });
+
+  it("drops the panel blurb on a phone so the sync line shares the heading row", () => {
+    render(
+      <TooltipProvider>
+        <ProvidersSettingsPanel />
+      </TooltipProvider>,
+    );
+
+    // The blurb's absence is what keeps the global status control on the
+    // title's own line: the shell header is a wrapping row of
+    // [title + description] and [action], and the description's max-content
+    // width alone exceeds a phone-width row, which pushes the action onto a
+    // row of its own.
+    expect(screen.queryByText(/Choose the CLI binary/)).toBeNull();
+    expect(screen.getByTestId("providers-global-status")).toBeDefined();
+  });
 });

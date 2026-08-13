@@ -1344,7 +1344,7 @@ const EpicsListRow = memo(function EpicsListRow(props: EpicsListRowProps) {
         canDeleteItem ? "cursor-pointer" : "cursor-not-allowed",
         isSelected && canDeleteItem
           ? "border-primary bg-primary text-primary-foreground"
-          : "border-border bg-background text-transparent hover:border-foreground",
+          : "border-border bg-background text-transparent hover:border-foreground active:border-foreground active:press-scrim",
       )}
       onClick={
         canDeleteItem ? toggleEpicSelection : blockUnavailableDeleteAction
@@ -1530,7 +1530,7 @@ function HistoryPinControl(props: {
           data-testid="epics-list-row-pin"
           disabled={props.isPending}
           className={cn(
-            "pointer-events-auto flex size-5 shrink-0 items-center justify-center rounded-sm outline-none transition-[color,opacity] hover:bg-muted focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-wait",
+            "pointer-events-auto flex size-5 shrink-0 items-center justify-center rounded-sm outline-none transition-[color,opacity] hover:bg-muted active:press-scrim focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-wait",
             props.item.isPinned
               ? "text-primary opacity-100"
               : // Touch has no hover to reveal the control, and tapping the row
@@ -1734,7 +1734,10 @@ function historyRowCardClassName(args: {
   readonly selectedForDelete: boolean;
 }): string {
   return cn(
-    "group relative min-w-0 flex-1 rounded-md transition-colors hover:bg-accent/40",
+    // The row is a plain container rather than a Button, so it opts into the
+    // shared press scrim itself - without it a tap on touch (where `hover:`
+    // never fires) leaves the row inert until the navigation lands.
+    "group relative min-w-0 flex-1 rounded-md transition-colors hover:bg-accent/40 active:press-scrim pointer-coarse:touch-chrome",
     args.selectionDisabled && "opacity-50",
     args.selectedForDelete && "bg-accent/40 ring-1 ring-inset ring-primary/40",
   );

@@ -387,6 +387,13 @@
 }
 
 :root {
+  /* The pressed-state scrim (see the `press-scrim` utility). Neutral rather
+     than hue-matched: it dims a surface, it does not tint it, so the accent
+     themes below inherit this pair unchanged and only the light/dark polarity
+     ever flips. Plain rgba rather than a `color-mix` off `--foreground`, which
+     would compile to an opaque fallback on any engine without color-mix - a
+     press would paint the control solid black or solid white. */
+  --press-scrim: #0000001a;
   --traycer-font-ui:
     "Figtree Variable", "Figtree", ui-sans-serif, system-ui, -apple-system,
     BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -440,6 +447,7 @@
 }
 
 .dark {
+  --press-scrim: #ffffff1a;
   --background: oklch(0.205 0 0);
   --foreground: oklch(0.985 0 0);
   --canvas: oklch(0.145 0 0);
@@ -1129,6 +1137,115 @@
   scrollbar-width: none;
   &::-webkit-scrollbar {
     display: none;
+  }
+}
+
+/*
+ * The pressed state for every interactive surface, applied as `active:press-scrim`.
+ *
+ * A scrim rather than a background COLOR, because a color cannot be shared. A
+ * control's resting and hover backgrounds belong to its call site - a white
+ * CTA, a saturated status control, a tinted list row - and any fixed press
+ * color a shared variant declares is wrong for all of them. Worse,
+ * it is silently wrong: `cn()` merges a call site's `hover:bg-*` over the
+ * variant's, but a variant's `active:bg-*` has no counterpart to merge with, so
+ * it survives and the control presses into a color it never hovers.
+ *
+ * `background-image` is the key. It is a different property from
+ * `background-color`, so it composites ON TOP of whatever color the element
+ * already has instead of replacing it, and it can never lose to - or win
+ * against - a `bg-*` utility. The result reads as "dim whatever the element
+ * already is", which is correct on a white button, a saturated one, and a
+ * transparent ghost alike. `--press-scrim` flips polarity with the theme, so the same token
+ * darkens light surfaces and lightens dark ones.
+ *
+ * `transition-duration` rides along because the two are one decision: the press
+ * must land on the same frame as the touch. Easing it in over the base
+ * `transition-all` (150ms) outlasts a quick tap, so the tint would only ever
+ * half-appear before release. Only the press is instant - release still fades
+ * at the element's normal duration.
+ *
+ * Suppress it with `active:bg-none` wherever a press must not answer, e.g. an
+ * `aria-disabled` control (which, unlike a natively `disabled` one, still
+ * matches `:active`).
+ */
+@utility press-scrim {
+  background-image: linear-gradient(var(--press-scrim), var(--press-scrim));
+  transition-duration: 0s;
+}
+
+/*
+ * App chrome that is not a semantically interactive element - list rows, header
+ * bars, drawer surfaces, tab strips. On iOS a long press over any of these pops
+ * the copy / look-up bubble and starts a text selection, which is exactly what
+ * a slow swipe or a drag off a row looks like, so the gesture ends in a
+ * selection bubble instead of the interaction the user meant.
+ *
+ * Apply as `pointer-coarse:touch-chrome` - the callout is a touch-only concept,
+ * and leaving desktop alone keeps chrome text selectable with a mouse. Never
+ * put it on a surface whose text is CONTENT (chat messages, code blocks,
+ * terminal output, diffs): those must stay selectable everywhere.
+ */
+@utility touch-chrome {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+@layer base {
+  /*
+   * The same policy, applied once to everything that already declares itself
+   * interactive - so a control never has to remember. Deliberately NOT applied
+   * to the document root: a blanket rule would also kill selection over chat
+   * messages, code blocks, diffs and terminal output, which is the one thing
+   * that must survive. Only elements whose whole purpose is to be tapped are
+   * listed, and `label` earns its place because dragging across a settings row
+   * is a common near-miss for tapping its switch.
+   *
+   * Anchors are covered through `[data-slot]` (Button/Badge `asChild` put the
+   * slot on the anchor) rather than a bare `a[href]`, which would also catch
+   * links inside rendered markdown - there, the long-press callout is a real
+   * affordance ("Copy Link") and should stay.
+   *
+   * `@layer base` keeps this beatable: a surface that needs selection back can
+   * say so with a `select-text` utility, which lands in a later layer.
+   */
+  @media (pointer: coarse) {
+    :is(
+      button,
+      label,
+      summary,
+      [role="button"],
+      [role="tab"],
+      [role="menuitem"],
+      [role="menuitemcheckbox"],
+      [role="menuitemradio"],
+      [role="option"],
+      [role="radio"],
+      [role="checkbox"],
+      [role="switch"],
+      [role="treeitem"],
+      [data-slot="button"],
+      [data-slot="badge"],
+      [data-slot="tabs-trigger"],
+      [data-slot="command-item"],
+      [data-slot="select-trigger"]
+    ) {
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    /* `user-select` and `-webkit-touch-callout` both inherit, so a text entry
+       nested inside one of the surfaces above (a `label` wrapping its input, a
+       composer inside a tap-to-focus row) would inherit `none` and lose its
+       caret handles. An inherited value loses to any directly-matching rule,
+       so this zero-specificity guard is enough to restore them. */
+    :where(input, textarea, [contenteditable="true"], [contenteditable=""]) {
+      -webkit-touch-callout: default;
+      -webkit-user-select: text;
+      user-select: text;
+    }
   }
 }
 

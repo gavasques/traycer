@@ -159,13 +159,16 @@ export function NotificationRow(props: NotificationRowProps): ReactNode {
       // whenever any of its interactive controls is hovered or keyboard-
       // focused, so the user can see what they're targeting - distinct from
       // the unread rail, which is a persistent state marker, not a hover
-      // affordance (no persistent row tint).
+      // affordance (no persistent row tint). The row is not a Button, so it
+      // opts into the shared press scrim itself; `hover:` is media-gated to
+      // hover-capable pointers, so without it a finger sees nothing at all for
+      // the whole press.
       //
       // Remote pack-store entries stay fully listed (needs_action evidence)
       // but are visually de-emphasised so this machine's actionable items
       // lead — de-emphasis, not filter-out (D7).
       className={cn(
-        "relative flex items-start gap-2.5 border-b border-border/60 py-2.5 pr-4 pl-6 last:border-b-0 hover:bg-muted/70 has-[:focus-visible]:bg-muted/70",
+        "relative flex items-start gap-2.5 border-b border-border/60 py-2.5 pr-4 pl-6 last:border-b-0 hover:bg-muted/70 active:press-scrim has-[:focus-visible]:bg-muted/70 pointer-coarse:touch-chrome",
         packPresentation.packRemote && "opacity-60",
       )}
       data-testid="notification-entry"
@@ -371,7 +374,7 @@ function NotificationRowControlButton(
         onClick={props.onClick}
         aria-label={props.label}
         data-testid={props.testId}
-        className="inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+        className="inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground active:press-scrim focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
       >
         <Check className="size-3.5" aria-hidden />
       </button>

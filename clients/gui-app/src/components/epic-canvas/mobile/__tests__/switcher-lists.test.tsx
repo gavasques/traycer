@@ -107,19 +107,13 @@ vi.mock("@/hooks/terminal/use-terminal-kill-mutation", () => ({
 vi.mock("@/hooks/epic/use-epic-nested-focus-navigation", () => ({
   useEpicNestedFocusNavigation: () => vi.fn(),
 }));
-// Create affordances pull the modal funnel / host pickers; stub them so the
-// list headers render and we can assert editor-gating in isolation.
+// The Artifacts list carries a "+" create affordance (Agents and
+// Terminals do not - their creation lives in the switcher's create row); stub the
+// menu so the list header renders and editor-gating can be asserted in
+// isolation.
 vi.mock("@/components/epic-canvas/mobile/switcher-create-actions", () => ({
-  SwitcherNewAgentButton: () => (
-    <button type="button" data-testid="new-agent-action" />
-  ),
   SwitcherNewArtifactMenu: () => (
     <button type="button" data-testid="new-artifact-action" />
-  ),
-}));
-vi.mock("@/components/epic-canvas/sidebar/new-terminal-picker", () => ({
-  NewTerminalPicker: () => (
-    <button type="button" data-testid="new-terminal-action" />
   ),
 }));
 
@@ -266,7 +260,7 @@ describe("<SwitcherArtifactsList />", () => {
 });
 
 describe("switcher create affordances (editor-gated)", () => {
-  it("shows New agent for an editor and hides it for a viewer", () => {
+  it("renders no per-category '+' for Agents (creation lives in the switcher's create row)", () => {
     holder.records = [
       {
         id: "chat-1",
@@ -277,21 +271,11 @@ describe("switcher create affordances (editor-gated)", () => {
         hostId: "host-A",
       },
     ];
-    const editor = render(<SwitcherAgentsList {...PROPS} />);
-    expect(screen.getByTestId("new-agent-action")).toBeTruthy();
-    editor.unmount();
-
-    holder.role = "viewer";
     render(<SwitcherAgentsList {...PROPS} />);
     expect(screen.queryByTestId("new-agent-action")).toBeNull();
   });
 
-  it("shows New terminal for an editor and hides it for a viewer", () => {
-    const editor = render(<SwitcherTerminalsList {...PROPS} />);
-    expect(screen.getByTestId("new-terminal-action")).toBeTruthy();
-    editor.unmount();
-
-    holder.role = "viewer";
+  it("renders no per-category '+' for Terminals (creation lives in the switcher's create row)", () => {
     render(<SwitcherTerminalsList {...PROPS} />);
     expect(screen.queryByTestId("new-terminal-action")).toBeNull();
   });

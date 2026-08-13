@@ -4,14 +4,10 @@ import { v4 as uuidv4 } from "uuid";
 import type { CanonicalTerminalSessionInfo } from "@traycer/protocol/host/terminal/unary-schemas";
 import {
   SwitcherListEmpty,
-  SwitcherListHeader,
   SwitcherListRow,
 } from "@/components/epic-canvas/mobile/switcher-list-row";
 import { SwitcherRowActions } from "@/components/epic-canvas/mobile/switcher-row-actions";
 import { useSwitcherActivate } from "@/components/epic-canvas/mobile/use-switcher-activate";
-import { NewTerminalPicker } from "@/components/epic-canvas/sidebar/new-terminal-picker";
-import { useEpicPermissionRole } from "@/lib/epic-selectors";
-import { isEditableRole } from "@/lib/epic-permissions";
 import { useHostClient } from "@/lib/host";
 import { UNKNOWN_HOST_PLACEHOLDER } from "@/lib/host/constants";
 import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
@@ -42,24 +38,9 @@ export function SwitcherTerminalsList(props: SwitcherListProps) {
   const sessions = (list.data?.sessions ?? []).filter((session) =>
     isVisibleEpicTerminalSession(session, epicId),
   );
-  const canMutate = isEditableRole(useEpicPermissionRole());
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <SwitcherListHeader
-        action={
-          canMutate ? (
-            // Reused as-is; `onLaunched` closes the sheet so the new terminal
-            // lands as the visible tile (its own tile kind isn't embed-scoped).
-            <NewTerminalPicker
-              epicId={epicId}
-              tabId={tabId}
-              onBeforeOpen={undefined}
-              onLaunched={onClose}
-            />
-          ) : null
-        }
-      />
       {sessions.length === 0 ? (
         <SwitcherListEmpty message="No terminals yet." />
       ) : (

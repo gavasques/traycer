@@ -1,32 +1,40 @@
-import { ChevronDown } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { useCallback } from "react";
 import { TabIcon } from "@/components/epic-canvas/canvas/tab-strip";
+import { InlineTitleField } from "@/components/epic-canvas/mobile/inline-title-field";
+import {
+  tileRenameKind,
+  useSwitcherRename,
+} from "@/components/epic-canvas/mobile/use-switcher-rename";
 import "@/components/layout/shell/mobile-shell-touch-targets.css";
 import {
+  useEpicPermissionRole,
   useEpicTabDisplayTitle,
   useEpicLiveArtifactTitleGenerating,
 } from "@/lib/epic-selectors";
+import { isEditableRole } from "@/lib/epic-permissions";
 import { useHostClientForHostId } from "@/hooks/host/use-host-client-for-host-id";
 import type { EpicCanvasTileRef } from "@/stores/epics/canvas/types";
 
 interface MobileCurrentTileBarProps {
   readonly epicId: string;
   readonly tile: EpicCanvasTileRef;
-  readonly onOpenSwitcher: () => void;
 }
 
 /**
- * Slim bar under the mobile header showing the current tile (live icon +
- * display title) with a chevron. Tapping it opens the "Switch tab" bottom
- * sheet - Phase 2 owns the sheet; Phase 1 wires the affordance to
- * `onOpenSwitcher`.
+ * Slim bar under the mobile header naming the tile on screen: live icon plus
+ * the display title, and nothing else - switching tabs is the header's
+ * switcher trigger, so this bar carries no navigation affordance.
+ *
+ * The title renames in place for every kind that has a name of its own
+ * (agents, artifacts, raw terminals) and an editor's permission; anything else
+ * reads as plain text, matching what the switcher rows offer for the same item.
  *
  * Icon + title reuse the exact desktop tab-strip resolution (`TabIcon`,
  * `useEpicTabDisplayTitle`), including the terminal bound-host client so a
  * terminal tab shows its live host title rather than the stored name.
  */
 export function MobileCurrentTileBar(props: MobileCurrentTileBarProps) {
-  const { epicId, tile, onOpenSwitcher } = props;
+  const { epicId, tile } = props;
   const isTerminal = tile.type === "terminal";
   // Terminal titles resolve against the tab's bound host; `null` for every
   // other kind (mirrors the tab strip). `useHostClientForHostId(null)` returns
@@ -44,29 +52,40 @@ export function MobileCurrentTileBar(props: MobileCurrentTileBarProps) {
     tile.type === "chat" ? tile.id : null,
   );
 
+  const renameKind = tileRenameKind(tile);
+  const canMutate = isEditableRole(useEpicPermissionRole());
+  const rename = useSwitcherRename(epicId);
+  const handleCommit = useCallback(
+    (next: string) => {
+      if (renameKind === null) return;
+      rename(renameKind, tile.id, next);
+    },
+    [rename, renameKind, tile.id],
+  );
+
   return (
     <div
       data-mobile-shell-touch-scope=""
       className="shrink-0 border-b border-canvas-border/70 bg-canvas"
     >
-      <Button
-        type="button"
-        variant="ghost"
-        onClick={onOpenSwitcher}
+      <div
         data-testid="mobile-current-tile-bar"
-        aria-label={`Switch tab. Current tab: ${displayTitle}`}
-        className="flex min-h-11 w-full items-center justify-start gap-2 rounded-none px-3 text-left"
+        className="flex min-h-11 w-full items-center gap-2 px-3"
       >
         <TabIcon
           epicId={epicId}
           tab={tile}
           titleGenerationPending={titleGenerationPending}
         />
-        <span className="min-w-0 flex-1 truncate text-ui-sm font-medium text-foreground">
-          {displayTitle}
-        </span>
-        <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
-      </Button>
+        <InlineTitleField
+          value={displayTitle}
+          editable={renameKind !== null && canMutate}
+          onCommit={handleCommit}
+          inputLabel="Tab title"
+          testId="mobile-current-tile-title"
+          className="min-w-0 flex-1 truncate text-ui-sm font-medium text-foreground"
+        />
+      </div>
     </div>
   );
 }

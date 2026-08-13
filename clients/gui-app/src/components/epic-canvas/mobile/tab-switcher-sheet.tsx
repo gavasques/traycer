@@ -8,6 +8,7 @@ import {
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
 import { SwitcherCategoryTabs } from "@/components/epic-canvas/mobile/switcher-category-tabs";
+import { SwitcherCreateRow } from "@/components/epic-canvas/mobile/switcher-create-row";
 import {
   MOBILE_SWITCHER_CATEGORY_DEFS,
   clampToSwitcherCategory,
@@ -60,13 +61,13 @@ function isEmbedOriginatedTileRef(ref: EpicCanvasTileRef): boolean {
 }
 
 /**
- * The mobile "Switch tab" bottom sheet (the screenshot-2 surface). A
- * drag-dismissable `vaul` drawer whose category bar mirrors the desktop
- * left-panel registry and whose content region shows the active category:
- * flat lists for Agents/Terminals/Artifacts (P2.2) and the embedded desktop
- * File-tree / Git-diff panel bodies (P2.3).
+ * The mobile tab switcher: a drag-dismissable `vaul` bottom sheet holding the
+ * create row, a category bar mirroring the desktop left-panel registry, and a
+ * content region showing the active category - flat lists for
+ * Agents/Terminals/Artifacts, the embedded desktop File-tree / Git-diff panel
+ * bodies for the rest.
  *
- * Opened from the Phase-1 current-tile bar chevron. Only meaningful on phones -
+ * Opened from the mobile header's switcher trigger. Only meaningful on phones -
  * it is mounted from `MobileEpicTileView`, which itself renders only under the
  * `useIsMobileViewport()` canvas branch - and self-gates on `useIsMobileViewport()` as defence.
  */
@@ -132,9 +133,16 @@ export function TabSwitcherSheet(props: TabSwitcherSheetProps) {
         data-theme={themePreset}
         className={cn(resolvedTheme === "dark" && "dark", "h-[70dvh]")}
       >
-        <DrawerHeader className="pb-2">
-          <DrawerTitle>Switch tab</DrawerTitle>
+        <DrawerHeader className="p-0">
+          {/* vaul/Radix requires a title for screen readers; the sheet's own
+              content says what it is, so it carries no visible heading. */}
+          <DrawerTitle className="sr-only">Switch tab</DrawerTitle>
         </DrawerHeader>
+        <SwitcherCreateRow
+          epicId={epicId}
+          tabId={tabId}
+          onClose={handleClose}
+        />
         <Tabs
           value={activeCategory}
           onValueChange={handleCategoryChange}

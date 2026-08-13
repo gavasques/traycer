@@ -1,10 +1,10 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { ActiveTabBody } from "@/components/epic-canvas/canvas/tab-group-view";
 import { TabBodySelectedContext } from "@/components/epic-canvas/canvas/tab-body-selected-context";
 import { PaneOpener } from "@/components/epic-canvas/canvas/pane-opener";
 import { MobileCurrentTileBar } from "@/components/epic-canvas/mobile/mobile-current-tile-bar";
 import { MobileTerminalKeyBar } from "@/components/epic-canvas/mobile/mobile-terminal-key-bar";
-import { TabSwitcherSheet } from "@/components/epic-canvas/mobile/tab-switcher-sheet";
+import { MobileTabSwitcherMount } from "@/components/epic-canvas/mobile/mobile-tab-switcher-mount";
 import { selectMobileTile } from "@/components/epic-canvas/mobile/mobile-tile-selection";
 import { usePaneVisible } from "@/components/epic-tabs/pane-visibility-context";
 import { useVirtualKeyboardInset } from "@/hooks/ui/use-virtual-keyboard-inset";
@@ -41,10 +41,6 @@ export function MobileEpicTileView(props: MobileEpicTileViewProps) {
   const { epicId, tabId } = props;
   const canvas = useEpicCanvas(tabId);
   const selection = useMemo(() => selectMobileTile(canvas), [canvas]);
-  // The current-tile bar chevron opens the "Switch tab" bottom sheet (P2.1).
-  // Local view state: the sheet is a leaf of this one view, so no store is
-  // warranted (per ticket).
-  const [switcherOpen, setSwitcherOpen] = useState(false);
   // Must be called before the empty-pane early return (hooks are
   // unconditional); it is 0 everywhere except an overlay-keyboard browser.
   const keyboardInset = useVirtualKeyboardInset();
@@ -52,10 +48,15 @@ export function MobileEpicTileView(props: MobileEpicTileViewProps) {
   // Non-null root with no resolvable tile = an empty pane (e.g. the user closed
   // the last tab). Desktop renders the inline `PaneOpener` for this; do the
   // same on mobile instead of a blank dead-end. `PaneOpener` is fully fluid
-  // (flex column, no fixed widths), so it is usable at phone width as-is.
+  // (flex column, no fixed widths), so it is usable at phone width as-is. The
+  // switcher mounts alongside it: on an empty pane the sheet's create row is
+  // how the user gets a tab back, so the header trigger has to stay live.
   if (selection === null) {
     return (
-      <MobileEmptyEpicPane epicId={epicId} tabId={tabId} root={canvas.root} />
+      <>
+        <MobileEmptyEpicPane epicId={epicId} tabId={tabId} root={canvas.root} />
+        <MobileTabSwitcherMount epicId={epicId} tabId={tabId} />
+      </>
     );
   }
 
@@ -78,11 +79,7 @@ export function MobileEpicTileView(props: MobileEpicTileViewProps) {
           : undefined
       }
     >
-      <MobileCurrentTileBar
-        epicId={epicId}
-        tile={selection.ref}
-        onOpenSwitcher={() => setSwitcherOpen(true)}
-      />
+      <MobileCurrentTileBar epicId={epicId} tile={selection.ref} />
       <div className="relative min-h-0 flex-1">
         <TabBodySelectedContext.Provider value>
           <ActiveTabBody
@@ -111,12 +108,7 @@ export function MobileEpicTileView(props: MobileEpicTileViewProps) {
           keyboardOpen={keyboardInset > 0}
         />
       ) : null}
-      <TabSwitcherSheet
-        epicId={epicId}
-        tabId={tabId}
-        open={switcherOpen}
-        onOpenChange={setSwitcherOpen}
-      />
+      <MobileTabSwitcherMount epicId={epicId} tabId={tabId} />
     </div>
   );
 }

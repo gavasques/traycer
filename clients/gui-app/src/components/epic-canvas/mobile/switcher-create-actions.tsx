@@ -9,9 +9,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useSwitcherCreateArtifact } from "@/components/epic-canvas/mobile/use-switcher-create-artifact";
-import { useNewConversationModalStore } from "@/stores/epics/new-conversation-modal-store";
-import { useNewConversationModalOpenStore } from "@/stores/epics/new-conversation-modal-open-store";
-import { ACTIVE_TILE_PLACEMENT } from "@/lib/canvas/conversation-tile-placement";
 import {
   EPIC_NODE_ICONS,
   EPIC_NODE_LABELS,
@@ -23,46 +20,6 @@ const ARTIFACT_KINDS: ReadonlyArray<EpicArtifactKind> = [
   "story",
   "review",
 ];
-
-/**
- * "New agent" affordance for the Agents category: opens the shared New
- * Conversation modal via the exact P1.3 funnel (force chat mode, then request
- * the modal with `ACTIVE_TILE_PLACEMENT`). The modal's Chat/Terminal interface
- * switcher covers both a GUI chat and a TUI terminal-agent, so one entry point
- * serves the whole Agents category. The modal replaces the sheet, so we close
- * the sheet as it opens.
- */
-export function SwitcherNewAgentButton(props: {
-  readonly epicId: string;
-  readonly tabId: string;
-  readonly onClose: () => void;
-}) {
-  const { epicId, tabId, onClose } = props;
-  const handleClick = () => {
-    useNewConversationModalStore.getState().setComposerMode(epicId, "chat");
-    useNewConversationModalOpenStore.getState().open({
-      epicId,
-      tabId,
-      placement: ACTIVE_TILE_PLACEMENT,
-      parentId: null,
-      hostId: null,
-    });
-    onClose();
-  };
-  return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="icon-sm"
-      aria-label="New agent"
-      data-testid="switcher-new-agent"
-      className="text-muted-foreground hover:text-foreground"
-      onClick={handleClick}
-    >
-      <Plus className="size-4" />
-    </Button>
-  );
-}
 
 /**
  * "New artifact" affordance for the Artifacts category: a curated kind menu

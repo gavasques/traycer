@@ -12,28 +12,19 @@ import {
 } from "@/components/epic-canvas/sidebar/sidebar-row-menu-items";
 import { ConfirmDestructiveDialog } from "@/components/ui/confirm-destructive-dialog";
 import { SwitcherRenameDialog } from "@/components/epic-canvas/mobile/switcher-rename-dialog";
+import {
+  useSwitcherRename,
+  type SwitcherRowKind,
+} from "@/components/epic-canvas/mobile/use-switcher-rename";
 import { useEpicPermissionRole } from "@/lib/epic-selectors";
 import { isEditableRole } from "@/lib/epic-permissions";
-import {
-  useEpicDeleteChat,
-  useEpicRenameChat,
-} from "@/hooks/epic/use-epic-chat-mutations";
-import {
-  useEpicDeleteTuiAgent,
-  useEpicRenameTuiAgent,
-} from "@/hooks/epic/use-epic-tui-agent-mutations";
-import {
-  useEpicDeleteArtifact,
-  useEpicRenameArtifact,
-} from "@/hooks/epic/use-epic-node-mutations";
-import { useTerminalRename } from "@/hooks/terminal/use-terminal-rename-mutation";
+import { useEpicDeleteChat } from "@/hooks/epic/use-epic-chat-mutations";
+import { useEpicDeleteTuiAgent } from "@/hooks/epic/use-epic-tui-agent-mutations";
+import { useEpicDeleteArtifact } from "@/hooks/epic/use-epic-node-mutations";
 import { useTerminalKill } from "@/hooks/terminal/use-terminal-kill-mutation";
 import { useEpicNestedFocusNavigation } from "@/hooks/epic/use-epic-nested-focus-navigation";
 import { findOpenArtifactInTab } from "@/stores/epics/canvas/canvas-selectors";
 import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
-
-export type SwitcherRowKind =
-  "chat" | "terminal-agent" | "artifact" | "terminal";
 
 interface SwitcherRowActionsProps {
   readonly epicId: string;
@@ -68,10 +59,7 @@ export function SwitcherRowActions(props: SwitcherRowActionsProps) {
   const [renameOpen, setRenameOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
-  const renameChat = useEpicRenameChat();
-  const renameTuiAgent = useEpicRenameTuiAgent();
-  const renameArtifact = useEpicRenameArtifact(true);
-  const renameTerminal = useTerminalRename();
+  const rename = useSwitcherRename(epicId);
   const deleteChat = useEpicDeleteChat();
   const deleteTuiAgent = useEpicDeleteTuiAgent();
   const deleteArtifact = useEpicDeleteArtifact();
@@ -94,23 +82,10 @@ export function SwitcherRowActions(props: SwitcherRowActionsProps) {
 
   const submitRename = useCallback(
     (title: string) => {
-      if (kind === "chat") renameChat.mutate({ epicId, chatId: nodeId, title });
-      else if (kind === "terminal-agent")
-        renameTuiAgent.mutate({ epicId, tuiAgentId: nodeId, title });
-      else if (kind === "artifact")
-        renameArtifact.mutate({ epicId, artifactId: nodeId, title });
-      else renameTerminal.mutate({ sessionId: nodeId, title });
+      rename(kind, nodeId, title);
       setRenameOpen(false);
     },
-    [
-      epicId,
-      kind,
-      nodeId,
-      renameArtifact,
-      renameChat,
-      renameTerminal,
-      renameTuiAgent,
-    ],
+    [kind, nodeId, rename],
   );
 
   const confirmDelete = useCallback(() => {

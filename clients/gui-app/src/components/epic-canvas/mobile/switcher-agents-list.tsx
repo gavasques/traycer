@@ -3,19 +3,15 @@ import { v4 as uuidv4 } from "uuid";
 import { SwitcherAgentIcon } from "@/components/epic-canvas/mobile/switcher-agent-icon";
 import {
   SwitcherListEmpty,
-  SwitcherListHeader,
   SwitcherListRow,
 } from "@/components/epic-canvas/mobile/switcher-list-row";
 import { SwitcherRowActions } from "@/components/epic-canvas/mobile/switcher-row-actions";
-import { SwitcherNewAgentButton } from "@/components/epic-canvas/mobile/switcher-create-actions";
 import { useSwitcherActivate } from "@/components/epic-canvas/mobile/use-switcher-activate";
 import { useOrderedSwitcherRecords } from "@/components/epic-canvas/mobile/switcher-record-order";
 import {
   useEpicArtifactRecords,
-  useEpicPermissionRole,
   type EpicTreeRecord,
 } from "@/lib/epic-selectors";
-import { isEditableRole } from "@/lib/epic-permissions";
 import {
   computeDescendantCounts,
   formatCascadeSummary,
@@ -49,21 +45,9 @@ export function SwitcherAgentsList(props: SwitcherListProps) {
     [records],
   );
   const agents = useOrderedSwitcherRecords(filtered);
-  const canMutate = isEditableRole(useEpicPermissionRole());
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <SwitcherListHeader
-        action={
-          canMutate ? (
-            <SwitcherNewAgentButton
-              epicId={epicId}
-              tabId={tabId}
-              onClose={onClose}
-            />
-          ) : null
-        }
-      />
       {agents.length === 0 ? (
         <SwitcherListEmpty message="No agents yet." />
       ) : (

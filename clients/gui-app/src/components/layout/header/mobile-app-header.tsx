@@ -6,6 +6,7 @@ import { SETTINGS_SECTIONS } from "@/lib/settings-sections";
 import { RateLimitIconButton } from "@/components/layout/header/rate-limit-icon";
 import { ResourceMonitorPopover } from "@/components/resources/resource-monitor-popover";
 import { MobileNotificationsButton } from "@/components/notifications/mobile-notifications-button";
+import { MobileEpicHeaderTitle } from "@/components/epic-canvas/mobile/epic-mobile-header-actions";
 import "@/components/layout/shell/mobile-shell-touch-targets.css";
 import { useMobileNavStore } from "@/stores/layout/mobile-nav-store";
 import { useMobileHeaderStore } from "@/stores/layout/mobile-header-store";
@@ -26,6 +27,7 @@ export function MobileAppHeader(): ReactNode {
   const showGlobalResourceMonitor = useSettingsStore(
     (state) => state.showGlobalResourceMonitor,
   );
+  const epicId = useMobileHeaderEpicId();
   const title = useMobileHeaderTitle();
   const settingsSection = useSettingsSectionLabel();
   return (
@@ -38,7 +40,7 @@ export function MobileAppHeader(): ReactNode {
       // this width there is no tab strip - the row is just a title sitting on
       // the page, so the 1.5% lightness step between the two tokens read as a
       // seam rather than as intent.
-      className="relative z-20 flex h-[calc(2.5rem_+_env(safe-area-inset-top))] shrink-0 items-center gap-1 bg-background px-2 pt-[env(safe-area-inset-top)] text-foreground after:absolute after:inset-x-0 after:bottom-0 after:z-1 after:h-px after:bg-border/90 after:content-['']"
+      className="relative z-20 flex h-[calc(2.5rem_+_env(safe-area-inset-top))] shrink-0 items-center gap-1 bg-background px-2 pt-[env(safe-area-inset-top)] text-foreground after:absolute after:inset-x-0 after:bottom-0 after:z-1 after:h-px after:bg-border/90 after:content-[''] pointer-coarse:touch-chrome"
     >
       <Button
         type="button"
@@ -51,7 +53,11 @@ export function MobileAppHeader(): ReactNode {
       >
         <Menu className="size-4" />
       </Button>
-      <MobileHeaderTitleSlot title={title} settingsSection={settingsSection} />
+      <MobileHeaderTitleSlot
+        title={title}
+        settingsSection={settingsSection}
+        epicId={epicId}
+      />
       {/* Right cluster: global status controls sit parallel to the hamburger,
           mirroring the desktop header's rate-limit + resource-monitor gating
           (navDisabled never applies here - MobileAppHeader only renders for the
@@ -74,15 +80,21 @@ export function MobileAppHeader(): ReactNode {
 interface MobileHeaderTitleSlotProps {
   readonly title: string | null;
   readonly settingsSection: string | null;
+  /** The open epic on the epic route; null on every other surface. */
+  readonly epicId: string | null;
 }
 
 /**
  * The header's centre slot. Always claims the row's spare width so the right
  * cluster stays pinned right, even on the landing route where there is no title
  * to show.
+ *
+ * An epic's name is the one title the user owns, so it renders as an inline
+ * editable field rather than static text; every other surface's title names a
+ * place in the app and is not the user's to change.
  */
 function MobileHeaderTitleSlot(props: MobileHeaderTitleSlotProps): ReactNode {
-  const { title, settingsSection } = props;
+  const { title, settingsSection, epicId } = props;
   if (settingsSection !== null) {
     return (
       // Drill-down breadcrumb for settings section routes: the parent crumb
@@ -112,6 +124,18 @@ function MobileHeaderTitleSlot(props: MobileHeaderTitleSlotProps): ReactNode {
   if (title === null) {
     return <span className="min-w-0 flex-1" />;
   }
+  if (epicId !== null) {
+    return (
+      // Full-height slot so the title's tap target is the whole header row,
+      // the same way the settings crumb takes its target from the row.
+      <span
+        className="flex h-full min-w-0 flex-1 items-center"
+        data-testid="mobile-header-title"
+      >
+        <MobileEpicHeaderTitle epicId={epicId} title={title} />
+      </span>
+    );
+  }
   return (
     <span
       className="min-w-0 flex-1 truncate font-medium text-foreground"
@@ -120,6 +144,18 @@ function MobileHeaderTitleSlot(props: MobileHeaderTitleSlotProps): ReactNode {
       {title}
     </span>
   );
+}
+
+/**
+ * The open epic's id on the epic route, null everywhere else.
+ */
+function useMobileHeaderEpicId(): string | null {
+  const epicId = useMatch({
+    from: "/epics/$epicId/$tabId",
+    shouldThrow: false,
+    select: (match) => match.params.epicId,
+  });
+  return epicId ?? null;
 }
 
 /**

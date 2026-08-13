@@ -25,6 +25,7 @@ import { TabGroupView } from "@/components/epic-canvas/canvas/tab-group-view";
 import { EpicCanvasDragInteractionShield } from "@/components/epic-canvas/dnd/drag-interaction-shield";
 import { useEmptyShellDropActive } from "@/components/epic-canvas/dnd/dnd-store";
 import { MobileEpicTileView } from "@/components/epic-canvas/mobile/mobile-epic-tile-view";
+import { MobileTabSwitcherMount } from "@/components/epic-canvas/mobile/mobile-tab-switcher-mount";
 import { useIsMobileViewport } from "@/hooks/ui/use-mobile-viewport";
 
 interface TileCanvasPaneContextValue {
@@ -140,6 +141,18 @@ function TileCanvasLive(
     }
     if (!hasRecords) {
       return <EmptyEpicBlankRoot tabId={tabId} />;
+    }
+    // A phone reaches its tabs through the header's switcher trigger, so the
+    // sheet has to be mounted here too - the empty shell's "drag from the
+    // sidebar" is a desktop answer, and without this the trigger would open
+    // nothing on the one screen with no tabs to switch between.
+    if (isMobile) {
+      return (
+        <>
+          <EmptyShell epicId={epicId} tabId={tabId} />
+          <MobileTabSwitcherMount epicId={epicId} tabId={tabId} />
+        </>
+      );
     }
     return <EmptyShell epicId={epicId} tabId={tabId} />;
   }

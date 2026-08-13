@@ -33,6 +33,24 @@ vi.mock("@/components/notifications/mobile-notifications-button", () => ({
   ),
 }));
 
+// On the epic route the title slot renders `MobileEpicHeaderTitle`, which
+// pulls a host mutation (`useEpicUpdateTitle`) and the registered-epic
+// permission role. Neither host runtime nor a registered epic exist in this
+// bare harness, so stub both.
+const headerTitleState = vi.hoisted(() => ({
+  role: "owner",
+}));
+const updateTitleMutateSpy = vi.hoisted(() => vi.fn());
+vi.mock("@/hooks/epic/use-epic-title-mutation", () => ({
+  useEpicUpdateTitle: () => ({
+    mutate: updateTitleMutateSpy,
+    isPending: false,
+  }),
+}));
+vi.mock("@/lib/epic-selectors", () => ({
+  useRegisteredEpicPermissionRole: () => headerTitleState.role,
+}));
+
 function renderAt(path: string) {
   const rootRoute = createRootRoute({
     component: () => (
@@ -83,6 +101,8 @@ describe("MobileAppHeader", () => {
     useMobileHeaderStore.setState({ rightActions: null });
     useEpicCanvasStore.setState({ tabsById: {} });
     useSettingsStore.setState({ showGlobalResourceMonitor: false });
+    headerTitleState.role = "owner";
+    updateTitleMutateSpy.mockClear();
   });
   afterEach(() => {
     cleanup();
@@ -143,6 +163,24 @@ describe("MobileAppHeader", () => {
     expect((await screen.findByTestId("mobile-header-title")).textContent).toBe(
       "Wire up billing",
     );
+  });
+
+  it("renders the epic title as an editable control for an editor and plain text for a viewer", async () => {
+    useEpicCanvasStore.setState({
+      tabsById: { t1: { tabId: "t1", epicId: "e1", name: "Wire up billing" } },
+    });
+    headerTitleState.role = "owner";
+    renderAt("/epics/e1/t1");
+    expect(
+      (await screen.findByTestId("mobile-epic-header-title")).tagName,
+    ).toBe("BUTTON");
+    cleanup();
+
+    headerTitleState.role = "viewer";
+    renderAt("/epics/e1/t1");
+    expect(
+      (await screen.findByTestId("mobile-epic-header-title")).tagName,
+    ).toBe("SPAN");
   });
 
   it("always renders the rate-limit control", async () => {

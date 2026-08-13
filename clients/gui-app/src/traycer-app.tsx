@@ -124,7 +124,7 @@ export function TraycerApp(props: TraycerAppProps): ReactNode {
     () => (
       <CenteredCard
         testId={null}
-        message="Initializing Traycer Host…"
+        message="Loading Traycer…"
         spinnerVariant="sparkle"
       />
     ),

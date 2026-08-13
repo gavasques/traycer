@@ -6,8 +6,9 @@ Read this together with the repository root guide and
 ## Purpose and boundary
 
 `clients/mobile` is a thin Capacitor shell around the shared `gui-app`, with an
-iOS and an Android platform. The current milestone is intentionally
-emulator/Simulator-only.
+iOS and an Android platform. The dev loop is emulator/Simulator-only (it dials
+a Mac-loopback dev host); shipped builds (`TRAYCER_MOBILE_ENV=staging|production`)
+use real remote-host discovery and distribute through TestFlight.
 
 This workspace may:
 
@@ -19,8 +20,11 @@ This workspace may:
 
 It must not change or duplicate the RPC protocol, host lifecycle, authn
 service, cloud UI, remote-host service, or root `dev-desktop` allocator.
-Sentry, deep-link auth callbacks, store signing, and release automation are
-outside the current milestone. OS push (permission, APNs/FCM token
+Sentry and deep-link auth callbacks are outside the current milestone. iOS
+store signing and TestFlight release automation now exist — cloud-managed
+signing driven by the internal repo's `release-mobile-ios.yaml` (tag-triggered,
+staging and production lanes); the shared `App` Xcode scheme is committed for
+exactly that pipeline. App Store submission itself is still out of scope. OS push (permission, APNs/FCM token
 registration, tap-to-open) is IN the milestone — see `src/push-registration.ts`;
 the registration flow is one platform-agnostic controller, and the platform
 only decides the `(platform, environment)` pair (`pushRegistrationTarget`).

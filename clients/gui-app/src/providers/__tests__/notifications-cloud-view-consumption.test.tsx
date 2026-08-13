@@ -66,7 +66,7 @@ vi.mock("@/hooks/host/use-reactive-local-host-entry", () => ({
 }));
 
 vi.mock("@/hooks/host/use-host-stream-client-for", () => ({
-  useHostStreamClientFor: () => null,
+  useHostStreamClientBindingFor: () => null,
 }));
 
 vi.mock("@/hooks/host/use-host-directory-entry", () => ({

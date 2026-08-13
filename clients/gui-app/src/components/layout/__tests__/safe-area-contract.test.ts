@@ -262,26 +262,87 @@ describe("safe-area token layer (index.css)", () => {
   });
 });
 
-describe("onboarding Skip-under-the-status-bar regression", () => {
-  it("keeps StandaloneShell on h-safe-svh, not the raw h-svh that let it overhang the status bar", () => {
+describe("the one sanctioned full-bleed surface", () => {
+  it("lets StandaloneShell take the viewport directly, which is how its artwork reaches the status bar", () => {
     const source = findSource("routes/root-route-components.tsx");
     const shellStart = source.indexOf("function StandaloneShell");
     expect(shellStart).toBeGreaterThanOrEqual(0);
-    const shellBody = source.slice(shellStart);
-    expect(shellBody).toMatch(/className="flex h-safe-svh flex-col"/);
-    expect(stripComments(shellBody)).not.toMatch(/(?<![\w-])h-svh(?![\w-])/);
+    const shellBody = stripComments(source.slice(shellStart));
+    expect(shellBody).toMatch(/data-full-bleed-surface=""/);
+    expect(shellBody).toMatch(/className="fixed inset-0 flex flex-col"/);
   });
 
-  it("keeps onboarding-page.tsx free of its own safe-area code - it is safe by inheriting the shell, not by patching itself", () => {
+  it("keeps the exception singular - a second full-bleed surface is a hole in the guarantee, not a second exception", () => {
+    const marked = productionSourceEntries()
+      .filter(([, source]) =>
+        stripComments(source).includes("data-full-bleed-surface"),
+      )
+      .map(([filePath]) => filePath);
+
+    expect(marked).toHaveLength(1);
+    expect(marked[0]).toContain("routes/root-route-components.tsx");
+  });
+
+  it("restores EVERY reservation the full-bleed shell escapes on the onboarding content layer", () => {
+    // The inverse of every other surface in the app: onboarding sits inside
+    // the full-bleed exception, so the backdrop it renders is meant to run
+    // under the status bar and the grid holding the Skip control is not.
+    //
+    // All three, not just the top. `fixed` escapes `#root` wholesale, so an
+    // exception that restores one reservation reads as handled while leaving
+    // the other two open - and the landscape ones fail on a device nobody
+    // checks first.
     const source = stripComments(findSource("onboarding/onboarding-page.tsx"));
-    expect(source).not.toMatch(/env\(safe-area-inset/);
-    // Plain `\b`, not the `[\w-]` lookaround used for the bare-viewport-unit
-    // check above: every real safe-area utility is a compound token
-    // (`pb-safe-bottom`, `mt-safe-top`, `min-h-safe-svh`), so the boundary we
-    // want sits on the hyphen that already precedes "safe", not around it.
-    expect(source).not.toMatch(
-      /\bsafe-(top|right|bottom|left|dvh|svh|center-y)\b/,
+    // Matched as "the same class list carries all of them", order-independent:
+    // the Tailwind class sorter owns the order and would otherwise decide
+    // whether this passes.
+    const contentLayer = (source.match(/"[^"\n]*"/g) ?? []).find((literal) =>
+      literal.includes("--onboarding-shell-rows"),
     );
+    expect(contentLayer, "onboarding content grid class list").toBeDefined();
+    // Four, not three: the bottom is not one of the reservations the shell
+    // escapes, but this surface's last row centres a line box in a band only
+    // a little taller than the home indicator, so the surface opts in.
+    for (const token of [
+      "pt-safe-top",
+      "pr-safe-right",
+      "pb-safe-bottom",
+      "pl-safe-left",
+    ]) {
+      expect(contentLayer).toContain(token);
+    }
+    expect(source).not.toMatch(/env\(safe-area-inset/);
+  });
+
+  it("restores them on the sign-in content layers too, where gutters already exist to compose with", () => {
+    // Sign-in states each edge as `max(gutter, inset)` rather than as a bare
+    // token, because its gutters are part of the composition.
+    //
+    // Pinned per class list, not per file. Its two content layers face
+    // different edges, and a file-wide search would let one layer's reference
+    // vouch for the other - deleting the section's right inset would leave
+    // this green on the strength of the footer's, which is the landscape bug
+    // this exists to catch.
+    const literals =
+      stripComments(findSource("auth/auth-landing-page.tsx")).match(
+        /"[^"\n]*"/g,
+      ) ?? [];
+
+    const section = literals.find((literal) =>
+      literal.includes("clamp(5rem,12vh,8rem)"),
+    );
+    expect(section, "sign-in content section class list").toBeDefined();
+    for (const edge of ["top", "right", "left"]) {
+      expect(section).toContain(`var(--safe-area-inset-${edge})`);
+    }
+
+    // Pinned to the bottom-right corner, so it faces two edges the section
+    // does not.
+    const footer = literals.find((literal) => literal.includes("font-mono"));
+    expect(footer, "sign-in footer class list").toBeDefined();
+    for (const edge of ["right", "bottom"]) {
+      expect(footer).toContain(`var(--safe-area-inset-${edge})`);
+    }
   });
 });
 

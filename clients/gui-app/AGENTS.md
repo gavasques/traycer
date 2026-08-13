@@ -71,6 +71,19 @@ Generated — don't hand-edit: `src/routeTree.gen.ts`, `dist/`, `.tanstack/`.
     bare `top-safe-top` ties on specificity instead of winning. `sheet.tsx` and
     `drawer.tsx` already do this per side, so their callers need nothing.
   - A full-screen dim is not a surface and stays edge to edge.
+  - **The one sanctioned full-bleed surface** is `StandaloneShell`
+    (`routes/root-route-components.tsx`) — sign-in and the tour. It is `fixed
+inset-0` and marked `data-full-bleed-surface`, so it takes the viewport
+    instead of sitting inside `#root`'s reservation, and its edge-to-edge
+    artwork reaches the status bar. The exception covers the BACKGROUND only:
+    each surface inside it insets its own content layer, because artwork and
+    content are siblings there. `fixed` escapes `#root` wholesale, so a content
+    layer must restore **all three** reservations — top and both sides —
+    plus the bottom wherever that surface has content near it. Restoring only
+    the top reads as handled and still fails in landscape; a band whose
+    HEIGHT clears the home indicator does not clear it for a line box centred
+    inside that band. Do not add a second full-bleed surface — the contract
+    test asserts the marker appears exactly once.
   - New tokens must also be registered in `cn()`'s `extendTailwindMerge`
     (`lib/utils.ts`) or they never conflict with the utility they override —
     which is invisible on desktop, where every inset is zero.

@@ -121,15 +121,26 @@ function RootSurface(props: {
 // `app-header.tsx`). The band itself drags; the menu strip inside opts out.
 const DRAG_STYLE = { WebkitAppRegion: "drag" } as CSSProperties;
 
-// Owns the viewport height for standalone surfaces, which size themselves
-// with h-full/min-h-full: on the Windows desktop shell a title-bar band takes
-// the top and the content gets the rest; elsewhere the band collapses and the
-// content keeps the full height. `h-safe-svh` and not `h-svh` because `#root`
-// has already reserved the status-bar strip above this shell.
+// Owns the viewport for standalone surfaces, which size themselves with
+// h-full/min-h-full: on the Windows desktop shell a title-bar band takes the
+// top and the content gets the rest; elsewhere the band collapses and the
+// content keeps the full height.
+//
+// `fixed inset-0` is the app's ONE sanctioned full-bleed surface, and the only
+// thing that opts out of `#root`'s safe-area reservation. Sign-in and the tour
+// are edge-to-edge artwork, and artwork stopping below the status bar reads as
+// a mismatched band rather than as respect for the bar. Taking the viewport
+// directly is what reaches it: `fixed` resolves against the viewport and not
+// against `#root`'s padding box, so there is no reservation to cancel and no
+// second copy of the inset to keep in sync.
+//
+// The exception is the BACKGROUND only. Content on these surfaces still starts
+// below the bar, applied by each surface to its own content layer - artwork and
+// content are siblings there, so the shell cannot inset one without the other.
 function StandaloneShell(props: { readonly children: ReactNode }) {
   const menuBarActive = useWindowsMenuBarActive();
   return (
-    <div className="flex h-safe-svh flex-col">
+    <div data-full-bleed-surface="" className="fixed inset-0 flex flex-col">
       {menuBarActive ? (
         <div
           className="relative z-20 flex h-10 shrink-0 items-center bg-canvas after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-border/90 after:content-['']"

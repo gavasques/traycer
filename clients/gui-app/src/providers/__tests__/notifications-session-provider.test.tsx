@@ -159,7 +159,14 @@ vi.mock("@/hooks/host/use-host-stream-client-for", async () => {
             : hostState.client.getRequestContextUserId(),
         );
       if (ownerIdentity === null) return null;
-      return { client: streamState.client, transportKey: ownerIdentity };
+      return {
+        client: streamState.client,
+        transportKey: ownerIdentity,
+        // Lease no-ops: this suite never hands the client to a consumer that
+        // outlives the owning hook instance, so the pin count is irrelevant.
+        pin: () => {},
+        unpin: () => {},
+      };
     },
   };
 });

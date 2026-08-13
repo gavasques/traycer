@@ -1,6 +1,5 @@
 import {
   useCallback,
-  useEffect,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
@@ -72,6 +71,14 @@ function overpulled(beyondPx: number): number {
 }
 
 interface SwipeTracking {
+  /**
+   * Which stand-down cycle this tracker belongs to. A pointer can stay down
+   * across one: selection mode entered from another input while a finger is
+   * already on a row, then left again before that finger lifts. Matching on
+   * `pointerId` alone would let the second half of that contact resume travel
+   * measured from an origin the row has since stopped believing in.
+   */
+  readonly epoch: number;
   readonly pointerId: number;
   readonly x: number;
   readonly y: number;
@@ -162,14 +169,23 @@ export function useRowSwipeTray(args: RowSwipeTrayArgs): RowSwipeTray {
 
   const enabled = !disabled && actionCount > 0;
 
-  // A row that loses its tray while a drag is live (selection mode entered from
-  // elsewhere, the list re-sorting under the finger) must not keep a stale
-  // offset painted.
-  useEffect(() => {
-    if (enabled) return;
-    trackingRef.current = null;
+  // A row that loses its tray while a drag is live - selection mode entered
+  // from elsewhere, the list re-sorting under the finger - must not keep a
+  // stale offset painted, and must not still be believed once it comes back.
+  //
+  // Settled DURING the render that stands the recognizer down rather than in
+  // an effect afterwards. An effect commits one frame with the row still
+  // translated, which is a visible twitch at exactly the moment a mode is
+  // changing under the finger; and an effect that invalidated the tracker
+  // would leave a window, between the commit and the effect, in which a move
+  // event could still be matched. Bumping the epoch here closes both: the
+  // rejection is in force on the very next event, with nothing scheduled.
+  const [enableState, setEnableState] = useState({ enabled, epoch: 0 });
+  if (enableState.enabled !== enabled) {
+    setEnableState({ enabled, epoch: enableState.epoch + 1 });
     setDragOffsetPx(null);
-  }, [enabled]);
+  }
+  const enableEpoch = enableState.epoch;
 
   const close = useCallback(() => {
     trackingRef.current = null;
@@ -202,6 +218,7 @@ export function useRowSwipeTray(args: RowSwipeTrayArgs): RowSwipeTray {
       // direction is leftward, which the drawer never answers.
       if (isOpen && withinNavDrawerEdgeZone(event.clientX)) return;
       trackingRef.current = {
+        epoch: enableEpoch,
         pointerId: event.pointerId,
         x: event.clientX,
         y: event.clientY,
@@ -210,13 +227,19 @@ export function useRowSwipeTray(args: RowSwipeTrayArgs): RowSwipeTray {
         moved: false,
       };
     },
-    [enabled, isOpen],
+    [enableEpoch, enabled, isOpen],
   );
 
   const onPointerMove = useCallback(
     (event: ReactPointerEvent<HTMLElement>) => {
+      // Every handler past the first asks this too. A gesture can be stood
+      // down mid-drag, and a tracker created while the row still had a tray
+      // must not keep driving it afterwards; `onPointerDown` drops the tracker
+      // at the start of every contact, so nothing survives to a later one.
+      if (!enabled) return;
       const tracking = trackingRef.current;
       if (tracking === null) return;
+      if (tracking.epoch !== enableEpoch) return;
       if (event.pointerId !== tracking.pointerId) return;
       const travelPx = forwardTravelPx(tracking.x, event.clientX, isOpen);
       if (
@@ -260,13 +283,15 @@ export function useRowSwipeTray(args: RowSwipeTrayArgs): RowSwipeTray {
         raw <= trayWidthPx ? raw : trayWidthPx + overpulled(raw - trayWidthPx),
       );
     },
-    [isOpen, onDragStart, trayWidthPx],
+    [enableEpoch, enabled, isOpen, onDragStart, trayWidthPx],
   );
 
   const settle = useCallback(
     (event: ReactPointerEvent<HTMLElement>) => {
+      if (!enabled) return;
       const tracking = trackingRef.current;
       if (tracking === null) return;
+      if (tracking.epoch !== enableEpoch) return;
       if (event.pointerId !== tracking.pointerId) return;
       trackingRef.current = null;
       consumedTapRef.current = tracking.moved;
@@ -295,24 +320,30 @@ export function useRowSwipeTray(args: RowSwipeTrayArgs): RowSwipeTray {
       // "reveal" from rest and "put away" from open.
       onOpenChange(isOpen ? !commits : commits);
     },
-    [isOpen, onOpenChange, trayWidthPx],
+    [enableEpoch, enabled, isOpen, onOpenChange, trayWidthPx],
   );
 
   const onPointerCancel = useCallback(
     (event: ReactPointerEvent<HTMLElement>) => {
+      if (!enabled) return;
       const tracking = trackingRef.current;
       if (tracking === null) return;
+      if (tracking.epoch !== enableEpoch) return;
       if (event.pointerId !== tracking.pointerId) return;
       trackingRef.current = null;
       setDragOffsetPx(null);
     },
-    [],
+    [enableEpoch, enabled],
   );
 
   const consumedTap = useCallback(() => consumedTapRef.current, []);
 
   return {
-    offsetPx: dragOffsetPx ?? (isOpen ? trayWidthPx : 0),
+    // A stood-down recognizer reveals NOTHING, whatever the list still thinks
+    // is open. Making that true here rather than at each call site is what
+    // keeps "disabled" from meaning only "cannot be dragged" while a row left
+    // over from before still sits translated with its actions on show.
+    offsetPx: enabled ? (dragOffsetPx ?? (isOpen ? trayWidthPx : 0)) : 0,
     isDragging: dragOffsetPx !== null,
     trayWidthPx,
     close,

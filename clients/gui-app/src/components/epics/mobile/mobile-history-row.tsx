@@ -20,7 +20,10 @@ import {
 } from "@/components/epics/mobile/use-row-swipe-tray";
 import { useLongPress } from "@/components/epics/mobile/use-long-press";
 import { useEpicUpdateTitle } from "@/hooks/epic/use-epic-title-mutation";
-import { useInlineRename } from "@/hooks/ui/use-inline-rename";
+import {
+  useInlineRename,
+  type InlineRenameInputProps,
+} from "@/hooks/ui/use-inline-rename";
 import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
 import { cn } from "@/lib/utils";
 
@@ -127,6 +130,8 @@ export const MobileHistoryRow = memo(function MobileHistoryRow(
     [item.epicId, onTrayOpenChange],
   );
 
+  const isRowSelected = selectionMode && isSelected && canDelete;
+
   const actions = buildTrayActions({
     item,
     displayTitle,
@@ -138,6 +143,17 @@ export const MobileHistoryRow = memo(function MobileHistoryRow(
     onRequestDelete,
     onStartRename: startRenaming,
   });
+
+  // Selection mode and the tray are mutually exclusive. The toolbar owns every
+  // action there, so a row-level pin/rename/delete would be a second, quieter
+  // way to act on one row in the middle of a bulk operation.
+  //
+  // Not merely hidden - UNMOUNTED. Nothing conceals the tray at rest except the
+  // card's background, so a mounted tray leaves every future card state one
+  // lost opacity away from putting a row's own actions on screen in a mode
+  // that cannot use them.
+  const showTray = !selectionMode && actions.length > 0;
+  const isTrayRevealed = isTrayOpen && showTray;
 
   const longPress = useLongPress({
     // A row nobody may act on has nothing to select, so the hold would open a
@@ -211,114 +227,56 @@ export const MobileHistoryRow = memo(function MobileHistoryRow(
     <li
       data-testid="epics-list-row"
       data-pinned={item.isPinned}
-      // The tray is always mounted (it has to keep its place in the tab order),
-      // so "revealed" is a state rather than a presence.
-      data-tray-open={isTrayOpen ? "true" : undefined}
+      // Where the tray exists at all it stays mounted while closed, so
+      // "revealed" is a state rather than a presence. In selection mode it
+      // does not exist, and this attribute is absent for that reason instead.
+      data-tray-open={isTrayRevealed ? "true" : undefined}
       className="flex items-stretch gap-2"
     >
       {selectionMode ? (
-        // The gutter is a full touch target, not a 16px box with a 16px hit
-        // area. Rows shifting right on entering the mode is the platform's own
-        // behaviour and reads as the mode announcing itself.
-        <button
-          type="button"
-          role="checkbox"
-          aria-checked={isSelected && canDelete}
-          aria-disabled={!canDelete}
-          aria-label={`Select ${displayTitle}`}
-          data-testid="epics-list-row-select"
-          className={cn(
-            "flex size-11 shrink-0 self-center items-center justify-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
-            // An `aria-disabled` control still matches `:active`, so the press
-            // has to be suppressed explicitly or the row tints for a tap that
-            // does nothing.
-            canDelete ? "active:press-scrim" : "cursor-not-allowed",
-          )}
-          onClick={handleToggleSelection}
-        >
-          <span
-            aria-hidden="true"
-            className={cn(
-              "flex size-4 items-center justify-center rounded-sm border transition-colors",
-              canDelete ? "opacity-100" : "opacity-50",
-              isSelected && canDelete
-                ? "border-primary bg-primary text-primary-foreground"
-                : "border-border bg-background text-transparent",
-            )}
-          >
-            <Check className="size-3" />
-          </span>
-        </button>
+        <RowSelectionCheckbox
+          displayTitle={displayTitle}
+          isChecked={isRowSelected}
+          canDelete={canDelete}
+          onToggle={handleToggleSelection}
+        />
       ) : null}
       {/* The clip is what makes the tray a reveal rather than a second row:
           it sits underneath at full height and is only ever seen through the
           gap the card leaves as it slides. */}
       <div className="relative min-w-0 flex-1 overflow-hidden rounded-md">
-        {actions.length > 0 ? (
-          <div
-            className="absolute inset-y-0 right-0 flex items-stretch"
-            style={{ width: `${swipe.trayWidthPx}px` }}
-            data-testid="epics-list-row-tray"
-            // The tray stays mounted while closed so it keeps its place in the
-            // tab order; a keyboard reaching it opens it, because a caret on a
-            // clipped control is a dead end.
-            onFocus={() => {
-              setTrayOpen(true);
-            }}
-          >
-            {actions.map((action) => (
-              <button
-                key={action.kind}
-                type="button"
-                aria-label={action.label}
-                data-testid={`epics-list-row-tray-${action.kind}`}
-                style={{ width: `${TRAY_ACTION_PX}px` }}
-                className={cn(
-                  "flex shrink-0 items-center justify-center outline-none active:press-scrim focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50",
-                  action.destructive
-                    ? "bg-destructive/15 text-destructive"
-                    : "bg-muted text-muted-foreground",
-                )}
-                onClick={() => {
-                  swipe.close();
-                  action.run();
-                }}
-              >
-                {action.icon}
-              </button>
-            ))}
-          </div>
+        {showTray ? (
+          <RowActionTray
+            actions={actions}
+            widthPx={swipe.trayWidthPx}
+            onReveal={setTrayOpen}
+            onRun={swipe.close}
+          />
         ) : null}
         <div
           data-testid="epics-list-row-card"
           // `pan-y` hands the vertical axis back to the list and keeps the
           // horizontal one here, which is what lets the swipe recognizer read
           // the drag without ever cancelling a scroll.
-          className={cn(
-            "relative flex touch-pan-y items-center gap-2 rounded-md bg-background p-3 text-ui-sm",
-            "active:press-scrim pointer-coarse:touch-chrome",
-            isSelected &&
-              selectionMode &&
-              canDelete &&
-              "bg-accent/40 ring-1 ring-inset ring-primary/40",
-            !swipe.isDragging && SETTLE_CLASS,
-          )}
+          className={mobileRowCardClassName({
+            isRowSelected,
+            isDragging: swipe.isDragging,
+          })}
           style={{ transform: `translate3d(-${swipe.offsetPx}px, 0, 0)` }}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
           onPointerCancel={handlePointerCancel}
         >
-          {isRenaming ? null : (
-            <RowActivationOverlay
-              item={item}
-              displayTitle={displayTitle}
-              isPhase={isPhase}
-              linkTabId={linkTabId}
-              selectionMode={selectionMode}
-              onActivate={handleActivate}
-            />
-          )}
+          <RowActivationOverlay
+            item={item}
+            displayTitle={displayTitle}
+            isPhase={isPhase}
+            linkTabId={linkTabId}
+            selectionMode={selectionMode}
+            isRenaming={isRenaming}
+            onActivate={handleActivate}
+          />
           {/* Everything the row paints is inert, so the overlay is the only
               thing a touch can land on and activation has exactly one path.
               The pointer handlers above still see the gesture - pointer events
@@ -326,42 +284,94 @@ export const MobileHistoryRow = memo(function MobileHistoryRow(
           <span className="pointer-events-none flex shrink-0 items-center">
             <HistoryRowLeadingIcon item={item} />
           </span>
-          {isRenaming ? (
-            <input
-              {...renameInputProps}
-              type="text"
-              aria-label={`Rename ${displayTitle}`}
-              data-testid="epics-list-row-title-input"
-              className="w-full min-w-0 flex-1 rounded border border-input bg-background/90 px-1.5 py-0.5 font-medium text-foreground outline-none focus:border-ring/70 focus-visible:ring-0"
-            />
-          ) : (
-            <span className="pointer-events-none flex min-w-0 flex-1 flex-col gap-0.5 overflow-hidden">
-              <span className="flex min-w-0 items-center gap-1.5">
-                {item.isPinned ? (
-                  // State, not an action: pinning is a tray action, and
-                  // without this marker the sort order would be the only
-                  // evidence it took effect.
-                  <Pin
-                    className="size-3 shrink-0 fill-current text-primary"
-                    data-testid="epics-list-row-pinned"
-                    role="img"
-                    aria-label="Pinned"
-                  />
-                ) : null}
-                <span className="truncate font-medium text-foreground">
-                  {displayTitle}
-                </span>
-              </span>
-              <span className="truncate text-ui-xs text-muted-foreground">
-                updated {item.updatedLabel}
-              </span>
-            </span>
-          )}
+          <RowTitleBlock
+            displayTitle={displayTitle}
+            updatedLabel={item.updatedLabel}
+            isPinned={item.isPinned}
+            isRenaming={isRenaming}
+            renameInputProps={renameInputProps}
+          />
         </div>
       </div>
     </li>
   );
 });
+
+/**
+ * The card's own classes, kept out of the row body the way the desktop list
+ * keeps its equivalent.
+ *
+ * The background is load-bearing: it is the only thing concealing the tray
+ * parked behind the card, so whatever wins here has to be OPAQUE. A selected
+ * row therefore gets the accent pre-mixed against this same backdrop rather
+ * than `bg-accent/40`, which is the same 40% blend taken against transparency.
+ * Over this card the two read alike, but only this one stays solid, so `cn()`
+ * displacing the base is harmless instead of see-through. `oklch` matches the
+ * colour space `index.css` already mixes in.
+ *
+ * `pan-y` hands the vertical axis back to the list and keeps the horizontal
+ * one for the swipe recognizer, which is what lets it read a drag without ever
+ * cancelling a scroll.
+ */
+function mobileRowCardClassName(args: {
+  readonly isRowSelected: boolean;
+  readonly isDragging: boolean;
+}): string {
+  return cn(
+    "relative flex touch-pan-y items-center gap-2 rounded-md bg-background p-3 text-ui-sm",
+    "active:press-scrim pointer-coarse:touch-chrome",
+    args.isRowSelected &&
+      "bg-[color-mix(in_oklch,var(--accent)_40%,var(--background))] ring-1 ring-inset ring-primary/40",
+    !args.isDragging && SETTLE_CLASS,
+  );
+}
+
+/**
+ * The row's label: its title over when it was last touched, or the field that
+ * renames it. Inert to pointers - the activation overlay above is the only
+ * thing a touch lands on - except while renaming, when the field is the point.
+ */
+function RowTitleBlock(props: {
+  readonly displayTitle: string;
+  readonly updatedLabel: string;
+  readonly isPinned: boolean;
+  readonly isRenaming: boolean;
+  readonly renameInputProps: InlineRenameInputProps;
+}): ReactNode {
+  if (props.isRenaming) {
+    return (
+      <input
+        {...props.renameInputProps}
+        type="text"
+        aria-label={`Rename ${props.displayTitle}`}
+        data-testid="epics-list-row-title-input"
+        className="w-full min-w-0 flex-1 rounded border border-input bg-background/90 px-1.5 py-0.5 font-medium text-foreground outline-none focus:border-ring/70 focus-visible:ring-0"
+      />
+    );
+  }
+  return (
+    <span className="pointer-events-none flex min-w-0 flex-1 flex-col gap-0.5 overflow-hidden">
+      <span className="flex min-w-0 items-center gap-1.5">
+        {props.isPinned ? (
+          // State, not an action: pinning is a tray action, and without this
+          // marker the sort order would be the only evidence it took effect.
+          <Pin
+            className="size-3 shrink-0 fill-current text-primary"
+            data-testid="epics-list-row-pinned"
+            role="img"
+            aria-label="Pinned"
+          />
+        ) : null}
+        <span className="truncate font-medium text-foreground">
+          {props.displayTitle}
+        </span>
+      </span>
+      <span className="truncate text-ui-xs text-muted-foreground">
+        updated {props.updatedLabel}
+      </span>
+    </span>
+  );
+}
 
 /**
  * The focusable, addressable surface over the row.
@@ -379,8 +389,12 @@ function RowActivationOverlay(props: {
   readonly isPhase: boolean;
   readonly linkTabId: string;
   readonly selectionMode: boolean;
+  readonly isRenaming: boolean;
   readonly onActivate: (event: ReactMouseEvent<HTMLElement>) => void;
 }): ReactNode {
+  // An inline rename puts a real text field where the title was; an overlay
+  // covering it would take every tap meant for the caret.
+  if (props.isRenaming) return null;
   const overlayClassName =
     "absolute inset-0 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring/50";
   if (props.selectionMode) {
@@ -409,6 +423,101 @@ function RowActivationOverlay(props: {
       aria-label={`Open task ${props.displayTitle}`}
       className={overlayClassName}
     />
+  );
+}
+
+/**
+ * The row's place in a bulk selection.
+ *
+ * A full touch target rather than the 16px box it draws, with the box as an
+ * inert child - the whole gutter is the control. Rows shifting right on
+ * entering the mode is the platform's own behaviour and reads as the mode
+ * announcing itself.
+ */
+function RowSelectionCheckbox(props: {
+  readonly displayTitle: string;
+  readonly isChecked: boolean;
+  readonly canDelete: boolean;
+  readonly onToggle: (event: ReactMouseEvent<HTMLElement>) => void;
+}): ReactNode {
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={props.isChecked}
+      aria-disabled={!props.canDelete}
+      aria-label={`Select ${props.displayTitle}`}
+      data-testid="epics-list-row-select"
+      className={cn(
+        "flex size-11 shrink-0 self-center items-center justify-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+        // An `aria-disabled` control still matches `:active`, so the press has
+        // to be suppressed explicitly or the row tints for a tap that does
+        // nothing.
+        props.canDelete ? "active:press-scrim" : "cursor-not-allowed",
+      )}
+      onClick={props.onToggle}
+    >
+      <span
+        aria-hidden="true"
+        className={cn(
+          "flex size-4 items-center justify-center rounded-sm border transition-colors",
+          props.canDelete ? "opacity-100" : "opacity-50",
+          props.isChecked
+            ? "border-primary bg-primary text-primary-foreground"
+            : "border-border bg-background text-transparent",
+        )}
+      >
+        <Check className="size-3" />
+      </span>
+    </button>
+  );
+}
+
+/**
+ * The actions parked behind the row, seen only through the gap the card leaves
+ * as it slides. Sized from its actions rather than measured, because the reveal
+ * distance has to be known on the first move of a drag.
+ */
+function RowActionTray(props: {
+  readonly actions: ReadonlyArray<TrayAction>;
+  readonly widthPx: number;
+  readonly onReveal: (open: boolean) => void;
+  readonly onRun: () => void;
+}): ReactNode {
+  return (
+    <div
+      className="absolute inset-y-0 right-0 flex items-stretch"
+      style={{ width: `${props.widthPx}px` }}
+      data-testid="epics-list-row-tray"
+      // Mounted while closed so it keeps its place in the tab order; a keyboard
+      // reaching it opens it, because a caret on a clipped control is a dead
+      // end.
+      onFocus={() => {
+        props.onReveal(true);
+      }}
+    >
+      {props.actions.map((action) => (
+        <button
+          key={action.kind}
+          type="button"
+          aria-label={action.label}
+          data-testid={`epics-list-row-tray-${action.kind}`}
+          style={{ width: `${TRAY_ACTION_PX}px` }}
+          className={cn(
+            "flex shrink-0 items-center justify-center outline-none active:press-scrim focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50",
+            action.destructive
+              ? "bg-destructive/15 text-destructive"
+              : "bg-muted text-muted-foreground",
+          )}
+          onClick={() => {
+            props.onRun();
+            action.run();
+          }}
+        >
+          {action.icon}
+        </button>
+      ))}
+    </div>
   );
 }
 

@@ -40,6 +40,7 @@ import {
   fireEvent,
   render,
   screen,
+  within,
 } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -852,6 +853,221 @@ describe("<MobileHistoryList /> (via <EpicsListPanel /> at a mobile viewport)", 
       fireEvent.click(viewerCheckbox);
 
       expect(viewerCheckbox.getAttribute("aria-checked")).toBe("false");
+    });
+  });
+
+  describe("selection mode versus the swipe tray", () => {
+    // The tray is a sibling parked behind the row card, concealed only by the
+    // card's own opaque background - so anything that makes the card
+    // translucent shows the tray through it, with no drag involved at all. A
+    // long press enters selection mode with the pressed row already checked,
+    // and a checked row's card carries its own tint, which makes this the one
+    // path into the mode where that could happen. A few px of drift is
+    // included because a hold rarely lands perfectly still, and it stays
+    // under the hold's own 6px slop so the press still completes.
+    it("enters selection mode from a long-press with slight drift, with the tray absent and the card untranslated", async () => {
+      renderPanel("embedded", "/");
+      const card = await screen.findByTestId("epics-list-row-card");
+
+      vi.useFakeTimers();
+      firePointerDown(card, 300, 100);
+      firePointerMove(card, 303, 103);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(460);
+      });
+      vi.useRealTimers();
+      firePointerUp(card, 303, 103);
+
+      const row = screen.getByTestId("epics-list-row");
+      expect(within(row).queryByTestId("epics-list-row-tray")).toBeNull();
+      expect(
+        screen
+          .getByTestId("epics-list-row-select")
+          .getAttribute("aria-checked"),
+      ).toBe("true");
+      expect(screen.getByTestId("epics-list-row-card").style.transform).toBe(
+        "translate3d(-0px, 0, 0)",
+      );
+    });
+
+    it("hides an already-open tray when a long-press on the same row enters selection mode", async () => {
+      renderPanel("embedded", "/");
+      const card = await screen.findByTestId("epics-list-row-card");
+      openTrayByDrag(card);
+      expect(
+        screen.getByTestId("epics-list-row").getAttribute("data-tray-open"),
+      ).toBe("true");
+
+      vi.useFakeTimers();
+      firePointerDown(card, 300, 100);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(460);
+      });
+      vi.useRealTimers();
+      firePointerUp(card, 300, 100);
+
+      const row = screen.getByTestId("epics-list-row");
+      expect(within(row).queryByTestId("epics-list-row-tray")).toBeNull();
+      expect(
+        screen
+          .getByTestId("epics-list-row-select")
+          .getAttribute("aria-checked"),
+      ).toBe("true");
+    });
+
+    // Selection mode is one boolean shared by the whole list, not a per-row
+    // flag the pressed row alone flips, so a tray left open on a row the
+    // gesture never touched still has to go.
+    it("hides another row's open tray when a long-press elsewhere enters selection mode", async () => {
+      testState.items = [
+        historyItem({}),
+        historyItem({
+          id: "history-epic-2",
+          epicId: "epic-two",
+          title: "Second history item",
+        }),
+      ];
+      renderPanel("embedded", "/");
+      const cards = await screen.findAllByTestId("epics-list-row-card");
+      openTrayByDrag(cards[0]);
+      expect(
+        screen
+          .getAllByTestId("epics-list-row")[0]
+          .getAttribute("data-tray-open"),
+      ).toBe("true");
+
+      vi.useFakeTimers();
+      firePointerDown(cards[1], 300, 100);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(460);
+      });
+      vi.useRealTimers();
+      firePointerUp(cards[1], 300, 100);
+
+      const rows = screen.getAllByTestId("epics-list-row");
+      expect(within(rows[0]).queryByTestId("epics-list-row-tray")).toBeNull();
+      expect(within(rows[1]).queryByTestId("epics-list-row-tray")).toBeNull();
+      expect(
+        screen
+          .getAllByTestId("epics-list-row-select")[1]
+          .getAttribute("aria-checked"),
+      ).toBe("true");
+    });
+
+    it("does not open the tray on a leftward drag past the commit distance while in selection mode, and leaves the card untranslated", async () => {
+      renderPanel("embedded", "/");
+      const card = await screen.findByTestId("epics-list-row-card");
+
+      vi.useFakeTimers();
+      firePointerDown(card, 300, 100);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(460);
+      });
+      vi.useRealTimers();
+      firePointerUp(card, 300, 100);
+      expect(
+        screen
+          .getByTestId("epics-list-row-select")
+          .getAttribute("aria-checked"),
+      ).toBe("true");
+
+      openTrayByDrag(screen.getByTestId("epics-list-row-card"));
+
+      const row = screen.getByTestId("epics-list-row");
+      expect(within(row).queryByTestId("epics-list-row-tray")).toBeNull();
+      expect(screen.getByTestId("epics-list-row-card").style.transform).toBe(
+        "translate3d(-0px, 0, 0)",
+      );
+    });
+
+    it("restores the swipe once selection mode is cancelled", async () => {
+      renderPanel("embedded", "/");
+      const card = await screen.findByTestId("epics-list-row-card");
+
+      vi.useFakeTimers();
+      firePointerDown(card, 300, 100);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(460);
+      });
+      vi.useRealTimers();
+      firePointerUp(card, 300, 100);
+      expect(
+        screen
+          .getByTestId("epics-list-row-select")
+          .getAttribute("aria-checked"),
+      ).toBe("true");
+
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      expect(screen.queryByTestId("epics-list-row-select")).toBeNull();
+
+      openTrayByDrag(screen.getByTestId("epics-list-row-card"));
+
+      expect(
+        screen.getByTestId("epics-list-row").getAttribute("data-tray-open"),
+      ).toBe("true");
+    });
+
+    // A tracker is created on `pointerdown` and only ever cleared by a FRESH
+    // contact landing on that same row's card - `onPointerDown` says so
+    // explicitly. A long press on a different row enters selection mode
+    // without ever touching the first row's card, so its tracker survives the
+    // stand-down untouched, still carrying the pointerdown it was built from.
+    // The recognizer must reject that tracker on identity once selection mode
+    // has come and gone, not merely refuse it while disabled - otherwise the
+    // same tracker matches again by `pointerId` once re-enabled, and a finger
+    // that was only ever resting on the row would resume travel measured from
+    // an origin the row last believed in before a mode it never took part in.
+    it("rejects a contact that was already down when selection mode came and went", async () => {
+      testState.items = [
+        historyItem({}),
+        historyItem({
+          id: "history-epic-2",
+          epicId: "epic-two",
+          title: "Second history item",
+        }),
+      ];
+      renderPanel("embedded", "/");
+      const cards = await screen.findAllByTestId("epics-list-row-card");
+
+      // The first row's pointer goes down and is left resting - no pointerup,
+      // no pointercancel - so whatever tracker this creates is still resident
+      // when the next thing happens.
+      firePointerDown(cards[0], 300, 100);
+
+      // Selection mode is entered by a long press on the OTHER row, the same
+      // route the cross-row tray case above uses. This never issues a new
+      // contact on the first row's card, so the first row's tracker is not
+      // the one being cleared here.
+      vi.useFakeTimers();
+      firePointerDown(cards[1], 300, 100);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(460);
+      });
+      vi.useRealTimers();
+      firePointerUp(cards[1], 300, 100);
+      expect(
+        screen
+          .getAllByTestId("epics-list-row-select")[1]
+          .getAttribute("aria-checked"),
+      ).toBe("true");
+
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      expect(screen.queryByTestId("epics-list-row-select")).toBeNull();
+
+      // The same pointer id now moves on the first row's card, travelling far
+      // enough - measured from the pointerdown issued before selection mode
+      // ever started - to clear the tray's commit distance if that origin
+      // were honored.
+      const cardsAfterCancel = screen.getAllByTestId("epics-list-row-card");
+      firePointerMove(cardsAfterCancel[0], 220, 100);
+      firePointerUp(cardsAfterCancel[0], 220, 100);
+
+      // The tray element stays mounted at rest once selection mode has been
+      // left - only `isTrayOpen` governs whether it is revealed - so the
+      // regression this pins is read off `data-tray-open`, the same attribute
+      // every other swipe case in this file asserts against.
+      const rows = screen.getAllByTestId("epics-list-row");
+      expect(rows[0].getAttribute("data-tray-open")).toBeNull();
     });
   });
 

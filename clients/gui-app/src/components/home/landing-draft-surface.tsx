@@ -120,7 +120,7 @@ export function LandingDraftSurface() {
             <button
               type="button"
               data-testid="home-view-history"
-              className="mt-auto shrink-0 self-center pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] text-ui-xs text-muted-foreground transition-colors active:text-foreground"
+              className="mt-auto shrink-0 self-center pt-4 pb-safe-bottom-gutter text-ui-xs text-muted-foreground transition-colors active:text-foreground"
               onClick={() => {
                 setNavOpen(true);
               }}

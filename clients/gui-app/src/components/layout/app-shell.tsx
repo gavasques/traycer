@@ -52,9 +52,9 @@ export function AppShell(props: AppShellProps) {
   return (
     <PrimaryFocusCoordinatorProvider>
       <DiffWorkerPoolProvider>
-        <div className="min-h-dvh bg-canvas text-canvas-foreground">
+        <div className="min-h-safe-dvh bg-canvas text-canvas-foreground">
           <RootDndProvider>
-            <div className="relative flex h-dvh w-full flex-col">
+            <div className="relative flex h-safe-dvh w-full flex-col">
               <AppHeader variant="app" />
               <HostStatusStrip />
               <main className="relative flex min-h-0 flex-1 flex-col">

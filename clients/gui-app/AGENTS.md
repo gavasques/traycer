@@ -46,6 +46,38 @@ Generated — don't hand-edit: `src/routeTree.gen.ts`, `dist/`, `.tanstack/`.
   literals / `+` / `.join(" ")`. Static single strings OK.
 - **Fluid layout sizing** — `w-full`, `max-w-*`, viewport caps. No fixed px/rem
   for layout surfaces (icons / touch targets OK).
+- **Safe area** — never write `env(safe-area-inset-*)`; `index.css` owns the
+  only reads. `#root` reserves the top and both horizontal insets app-wide
+  (landscape is supported, so the sensor housing can be on either side), which
+  makes every in-flow surface safe with no code of its own. Those edges have no
+  opt-out, for content and surface backgrounds alike. What is left to a
+  surface: the bottom edge (`pb-safe-bottom`), and anything `fixed`.
+  - Window-filling: `h-safe-dvh` / `min-h-safe-svh` / `w-safe-dvw`, never the
+    raw `h-dvh` / `min-h-svh` / `w-screen`.
+  - Floating over the viewport: the `*-safe-<edge>-gutter` tokens, which are
+    the layout's own 1rem or the device inset, whichever is larger.
+  - `fixed` overlays are portalled outside `#root` and inset themselves:
+    `top-safe-center-y` + `left-safe-center-x` when centred (the horizontal
+    centre is displaced by half the DIFFERENCE between the side insets, since
+    the landscape housing is only ever on one side), `top-safe-top` when
+    full-height, and `max-w-safe-dvw` to cap width. CSS allows one width clamp
+    per element, so that cap is a default a call site can displace with an
+    unmodified `max-w-*`, not a floor — the contract test is the other half of
+    the guarantee. Where a
+    primitive already owns `inset-y-0`/`h-full` under a `data-*` variant, use
+    `mt-safe-top` + `h-safe-dvh` under that **same** variant —
+    `tailwind-merge` only displaces a class whose modifiers match, and its
+    conflict map lets `inset-y-*` displace `top-*` but not the reverse, so a
+    bare `top-safe-top` ties on specificity instead of winning. `sheet.tsx` and
+    `drawer.tsx` already do this per side, so their callers need nothing.
+  - A full-screen dim is not a surface and stays edge to edge.
+  - New tokens must also be registered in `cn()`'s `extendTailwindMerge`
+    (`lib/utils.ts`) or they never conflict with the utility they override —
+    which is invisible on desktop, where every inset is zero.
+  - When a library takes geometry as a value rather than a style (Radix
+    `collisionPadding`), read `readSafeAreaInsets()` from
+    `lib/safe-area-insets.ts`. It is the only sanctioned runtime read; do not
+    add another `getComputedStyle` call site.
 - Prefer composition over editing `src/components/ui/`.
 - Spinners: `AgentSpinningDots` only — no new ad-hoc spinners.
 - No `key={x ?? fallback}` when `undefined` already remounts correctly.

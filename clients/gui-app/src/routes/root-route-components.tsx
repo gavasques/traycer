@@ -124,11 +124,12 @@ const DRAG_STYLE = { WebkitAppRegion: "drag" } as CSSProperties;
 // Owns the viewport height for standalone surfaces, which size themselves
 // with h-full/min-h-full: on the Windows desktop shell a title-bar band takes
 // the top and the content gets the rest; elsewhere the band collapses and the
-// content keeps the full height.
+// content keeps the full height. `h-safe-svh` and not `h-svh` because `#root`
+// has already reserved the status-bar strip above this shell.
 function StandaloneShell(props: { readonly children: ReactNode }) {
   const menuBarActive = useWindowsMenuBarActive();
   return (
-    <div className="flex h-svh flex-col">
+    <div className="flex h-safe-svh flex-col">
       {menuBarActive ? (
         <div
           className="relative z-20 flex h-10 shrink-0 items-center bg-canvas after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-border/90 after:content-['']"

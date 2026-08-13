@@ -53,7 +53,7 @@ export function LocalHostLoading(props: LocalHostLoadingProps): ReactNode {
     <div
       data-testid="local-host-loading"
       data-stage={props.stage}
-      className="flex min-h-svh w-full flex-col bg-background text-foreground"
+      className="flex min-h-safe-svh w-full flex-col bg-background text-foreground"
     >
       <AppHeader variant="host-loading" />
       <div className="flex flex-1 items-center justify-center p-6">

@@ -28,8 +28,8 @@ interface MobileTerminalKeyBarProps {
    * True while the soft keyboard covers the bottom of the layout viewport
    * (the view is already padding the bar above it). The bar then drops its
    * safe-area bottom padding: the keyboard covers the home indicator, so
-   * keeping `env(safe-area-inset-bottom)` would leave a dead gap between the
-   * keys and the keyboard.
+   * keeping `--safe-area-inset-bottom` would leave a dead gap between the keys
+   * and the keyboard.
    */
   readonly keyboardOpen: boolean;
 }
@@ -158,7 +158,9 @@ export function MobileTerminalKeyBar(props: MobileTerminalKeyBarProps) {
         // off a key would open the drawer or dismiss the very keyboard the bar
         // exists to supplement.
         "shrink-0 touch-none border-t border-canvas-border/70 bg-canvas px-1 pt-1",
-        keyboardOpen ? "pb-1" : "pb-[max(0.25rem,env(safe-area-inset-bottom))]",
+        keyboardOpen
+          ? "pb-1"
+          : "pb-[max(0.25rem,var(--safe-area-inset-bottom))]",
       )}
     >
       <div className="grid grid-cols-6 gap-1">

@@ -76,7 +76,7 @@ function SystemTabModalSurface(props: SystemTabModalSurfaceProps): ReactNode {
       // Full-screen sheet below md: the centered 80% box leaves the History
       // list unusably narrow on phones. Pure CSS (not a JS viewport check) so
       // an open modal reflows correctly when the window crosses 768px.
-      contentClassName="h-[80vh] w-[80vw] max-w-[min(95vw,80rem)] max-md:h-dvh max-md:w-screen max-md:max-w-none max-md:rounded-none"
+      contentClassName="h-[80vh] w-[80vw] max-w-[min(95vw,80rem)] max-md:h-safe-dvh max-md:w-safe-dvw max-md:max-w-none max-md:rounded-none"
       // The touch-target scope re-applies the coarse-pointer hit-slop rules
       // (home-touch-targets.css) inside this portal - the modal body renders
       // the same list chrome as the home page but portals outside the

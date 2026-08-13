@@ -40,7 +40,11 @@ export function MobileAppHeader(): ReactNode {
       // this width there is no tab strip - the row is just a title sitting on
       // the page, so the 1.5% lightness step between the two tokens read as a
       // seam rather than as intent.
-      className="relative z-20 flex h-[calc(2.5rem_+_env(safe-area-inset-top))] shrink-0 items-center gap-1 bg-background px-2 pt-[env(safe-area-inset-top)] text-foreground after:absolute after:inset-x-0 after:bottom-0 after:z-1 after:h-px after:bg-border/90 after:content-[''] pointer-coarse:touch-chrome"
+      // The row is a plain header height: the status-bar strip above it is
+      // reserved by `#root`, and `bg-background` is the same token the strip
+      // shows, so the two read as one surface without the header having to
+      // reach under the bar.
+      className="relative z-20 flex h-10 shrink-0 items-center gap-1 bg-background px-2 text-foreground after:absolute after:inset-x-0 after:bottom-0 after:z-1 after:h-px after:bg-border/90 after:content-[''] pointer-coarse:touch-chrome"
     >
       <Button
         type="button"

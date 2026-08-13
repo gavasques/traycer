@@ -67,7 +67,7 @@ export function ComposerOptionsSheet(props: ComposerOptionsSheetProps) {
         <DrawerHeader className="pb-1">
           <DrawerTitle>Task options</DrawerTitle>
         </DrawerHeader>
-        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-2 pb-[max(1rem,env(safe-area-inset-bottom))]">
+        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-2 pb-safe-bottom-gutter">
           <div role="radiogroup" aria-label="Permissions">
             <OptionsSectionLabel>Permissions</OptionsSectionLabel>
             {PERMISSION_OPTIONS.map((option) => {

@@ -820,7 +820,7 @@ function GateIncompatibleHost(props: GateIncompatibleBusyProps) {
       data-testid={
         isBusyKeep ? "local-host-incompatible-busy" : "local-host-incompatible"
       }
-      className="flex min-h-svh w-full flex-col bg-background text-foreground"
+      className="flex min-h-safe-svh w-full flex-col bg-background text-foreground"
     >
       <AppHeader variant="host-loading" />
       <div className="flex flex-1 items-center justify-center p-6">
@@ -913,7 +913,7 @@ function GateProvisioningError(props: GateProvisioningErrorProps) {
   return (
     <div
       data-testid="local-host-provisioning-error"
-      className="flex min-h-svh w-full items-center justify-center bg-background p-6 text-foreground"
+      className="flex min-h-safe-svh w-full items-center justify-center bg-background p-6 text-foreground"
     >
       <Card className="w-full max-w-md">
         <CardContent className="flex flex-col gap-4 py-6 text-ui-sm">
@@ -968,7 +968,7 @@ function HostRemovedSurface(props: HostRemovedSurfaceProps) {
   return (
     <div
       data-testid="local-host-removed"
-      className="flex min-h-svh w-full items-center justify-center bg-background p-6 text-foreground"
+      className="flex min-h-safe-svh w-full items-center justify-center bg-background p-6 text-foreground"
     >
       <Card className="w-full max-w-md">
         <CardContent className="flex flex-col gap-4 py-6 text-ui-sm">
@@ -1107,7 +1107,7 @@ export function LocalHostUnavailable(props: LocalHostUnavailableProps) {
   return (
     <div
       data-testid="local-host-unavailable"
-      className="flex min-h-svh w-full items-center justify-center bg-background p-6 text-foreground"
+      className="flex min-h-safe-svh w-full items-center justify-center bg-background p-6 text-foreground"
     >
       <Card className="w-full max-w-md">
         <CardContent className="flex flex-col gap-4 py-6 text-ui-sm">

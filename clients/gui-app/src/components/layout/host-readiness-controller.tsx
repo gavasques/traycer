@@ -599,7 +599,7 @@ export function DefaultHostReadyGate(props: {
   if (hasBeenReady) return props.children;
   return (
     <div
-      className="flex min-h-svh w-full flex-col bg-background text-foreground"
+      className="flex min-h-safe-svh w-full flex-col bg-background text-foreground"
       data-testid="host-ready-gate"
       data-readiness={readiness.kind}
     >

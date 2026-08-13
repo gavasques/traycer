@@ -48,7 +48,7 @@ export function NotificationsMobileSheet(): ReactNode {
         // surface caps it. 85dvh leaves the strip of the underlying page that
         // makes this read as dismissable; the bottom inset keeps the popover's
         // "Load older activity" footer clear of the home indicator.
-        className="h-[85dvh] pb-[env(safe-area-inset-bottom)]"
+        className="h-[85dvh] pb-safe-bottom"
       >
         {/* The visible "Notifications" heading comes from the reused popover,
             so the dialog title here is screen-reader only to avoid duplication

@@ -20,7 +20,7 @@ export function SwitcherPanelEmbed(props: {
 }) {
   const { category, epicId, tabId } = props;
   return (
-    <div className="min-h-0 flex-1 pb-[env(safe-area-inset-bottom)]">
+    <div className="min-h-0 flex-1 pb-safe-bottom">
       {category === "file-tree" ? (
         <FileTreePanelBody epicId={epicId} tabId={tabId} />
       ) : (

@@ -193,7 +193,12 @@ export function verticalScrollTargetForDownwardDrag(
 
 /**
  * Whether the user is typing - the state the keyboard recognizer needs to be
- * true and the drawer recognizer needs to be false.
+ * true before it has anything to dismiss.
+ *
+ * A focused entry is not a reason for other shell gestures to stand down. The
+ * drawer's edge pull deliberately runs while the keyboard is up and drops it as
+ * part of opening, because a menu that becomes unreachable from any screen with
+ * a live composer is unreachable from most of the app.
  *
  * This is also the app's only usable "is the soft keyboard up" signal. The
  * viewport measurement that would answer it directly

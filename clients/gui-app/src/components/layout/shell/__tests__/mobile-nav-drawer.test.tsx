@@ -363,6 +363,233 @@ describe("MobileNavDrawer", () => {
     });
   });
 
+  /**
+   * Both entries into the drag that this file can reach without a real
+   * compositor: the document-level edge recognizer, whose listeners are plain
+   * DOM ones, and the scrim, whose pointer handling replaced a click handler.
+   * jsdom lays nothing out, so what is asserted here is the handoff and its
+   * side effects - the tracking itself only exists on a device.
+   */
+  describe("gesture entry points", () => {
+    beforeEach(() => {
+      setMobileApp(true);
+    });
+
+    /**
+     * Builds the events the recognizer reads. jsdom ships no usable
+     * `PointerEvent` constructor, so this is a plain `Event` wearing the fields
+     * the listeners actually touch, matching the approach in the shell-gesture
+     * suite.
+     */
+    function dispatchPointer(
+      type: "pointerdown" | "pointermove" | "pointerup" | "pointercancel",
+      options: {
+        readonly clientX: number;
+        readonly clientY: number;
+        readonly target: EventTarget;
+        readonly timeStamp: number;
+        // Explicit rather than assumed: the helper under test binds itself to
+        // the pointer that armed it, so a test that could not name a second
+        // finger could not reach that boundary at all.
+        readonly pointerId: number;
+        readonly isPrimary: boolean;
+      },
+    ): void {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "clientX", {
+        value: options.clientX,
+        configurable: true,
+      });
+      Object.defineProperty(event, "clientY", {
+        value: options.clientY,
+        configurable: true,
+      });
+      Object.defineProperty(event, "pointerId", {
+        value: options.pointerId,
+        configurable: true,
+      });
+      Object.defineProperty(event, "isPrimary", {
+        value: options.isPrimary,
+        configurable: true,
+      });
+      Object.defineProperty(event, "timeStamp", {
+        value: options.timeStamp,
+        configurable: true,
+      });
+      act(() => {
+        options.target.dispatchEvent(event);
+      });
+    }
+
+    // Pulling the drawer out mid-draft is an ordinary thing to do, and leaving
+    // the keyboard up would put the menu and the keyboard on screen together.
+    // The draft itself is untouched - only focus moves.
+    it("drops the keyboard when the edge pull claims the gesture", async () => {
+      useMobileNavStore.setState({ open: false });
+      renderDrawer();
+      await screen.findByTestId("mobile-nav-drawer");
+      const input = document.createElement("input");
+      document.body.appendChild(input);
+      input.focus();
+      expect(document.activeElement).toBe(input);
+
+      dispatchPointer("pointerdown", {
+        clientX: 20,
+        clientY: 100,
+        target: document.body,
+        timeStamp: 0,
+        pointerId: 1,
+        isPrimary: true,
+      });
+      dispatchPointer("pointermove", {
+        clientX: 90,
+        clientY: 100,
+        target: document.body,
+        timeStamp: 100,
+        pointerId: 1,
+        isPrimary: true,
+      });
+
+      expect(document.activeElement).not.toBe(input);
+    });
+
+    /**
+     * The release cannot ask the drag engine whether the pointer moved. Moves
+     * are batched to the next frame and the pending one is cancelled the
+     * instant the pointer lifts, so a gesture that begins and ends inside a
+     * single frame reports nothing at all - indistinguishable, from the
+     * engine's side, from a press that never travelled. These two pin the
+     * coordinates being tracked independently, which is the only thing that
+     * tells the cases apart.
+     */
+    it("does not close on a press that travelled but outran the drag engine", async () => {
+      renderDrawer();
+      const scrim = await screen.findByTestId("mobile-nav-drawer-scrim");
+
+      dispatchPointer("pointerdown", {
+        clientX: 300,
+        clientY: 400,
+        target: scrim,
+        timeStamp: 0,
+        pointerId: 1,
+        isPrimary: true,
+      });
+      // Rightward, into the drawer: this gesture asked for it to STAY open.
+      dispatchPointer("pointermove", {
+        clientX: 360,
+        clientY: 400,
+        target: window,
+        timeStamp: 4,
+        pointerId: 1,
+        isPrimary: true,
+      });
+      dispatchPointer("pointerup", {
+        clientX: 360,
+        clientY: 400,
+        target: window,
+        timeStamp: 8,
+        pointerId: 1,
+        isPrimary: true,
+      });
+
+      expect(useMobileNavStore.getState().open).toBe(true);
+    });
+
+    // A cancelled pointer is never a tap however little it travelled - the
+    // system took the gesture away, which is not a decision the user made.
+    it("does not close when the system cancels a scrim press", async () => {
+      renderDrawer();
+      const scrim = await screen.findByTestId("mobile-nav-drawer-scrim");
+
+      dispatchPointer("pointerdown", {
+        clientX: 300,
+        clientY: 400,
+        target: scrim,
+        timeStamp: 0,
+        pointerId: 1,
+        isPrimary: true,
+      });
+      dispatchPointer("pointercancel", {
+        clientX: 300,
+        clientY: 400,
+        target: window,
+        timeStamp: 8,
+        pointerId: 1,
+        isPrimary: true,
+      });
+
+      expect(useMobileNavStore.getState().open).toBe(true);
+    });
+
+    // The helper is bound to the pointer that armed it. A second finger is
+    // somebody else's gesture: its release says nothing about this one, and the
+    // hand that started the drag is still on the glass when it lands.
+    it("ignores a second finger lifting while the arming pointer is still down", async () => {
+      renderDrawer();
+      const scrim = await screen.findByTestId("mobile-nav-drawer-scrim");
+
+      dispatchPointer("pointerdown", {
+        clientX: 300,
+        clientY: 400,
+        target: scrim,
+        timeStamp: 0,
+        pointerId: 1,
+        isPrimary: true,
+      });
+      dispatchPointer("pointerup", {
+        clientX: 100,
+        clientY: 100,
+        target: window,
+        timeStamp: 8,
+        pointerId: 2,
+        isPrimary: false,
+      });
+
+      expect(useMobileNavStore.getState().open).toBe(true);
+
+      // And the arming pointer's own release still decides, so the binding
+      // narrows the tracker rather than deafening it.
+      dispatchPointer("pointerup", {
+        clientX: 300,
+        clientY: 400,
+        target: window,
+        timeStamp: 20,
+        pointerId: 1,
+        isPrimary: true,
+      });
+
+      expect(useMobileNavStore.getState().open).toBe(false);
+    });
+
+    // Tap and drag enter through the same pointerdown on the scrim, so only the
+    // release can tell them apart: a pointer that never travelled is a tap to
+    // close. Dismissal rides that release rather than a click, which would
+    // otherwise fire a second time after every drag ending on the scrim.
+    it("closes on a scrim press that never travels", async () => {
+      renderDrawer();
+      const scrim = await screen.findByTestId("mobile-nav-drawer-scrim");
+
+      dispatchPointer("pointerdown", {
+        clientX: 300,
+        clientY: 400,
+        target: scrim,
+        timeStamp: 0,
+        pointerId: 1,
+        isPrimary: true,
+      });
+      dispatchPointer("pointerup", {
+        clientX: 300,
+        clientY: 400,
+        target: window,
+        timeStamp: 40,
+        pointerId: 1,
+        isPrimary: true,
+      });
+
+      expect(useMobileNavStore.getState().open).toBe(false);
+    });
+  });
+
   describe("identity row", () => {
     it("reaches both account actions in one tap", async () => {
       renderDrawer();

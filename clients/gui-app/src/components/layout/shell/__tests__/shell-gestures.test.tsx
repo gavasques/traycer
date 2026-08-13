@@ -6,7 +6,7 @@ import {
   classifyDirectionalIntent,
   commitsDirectionalGesture,
 } from "@/components/layout/shell/shell-gestures";
-import { useEdgeDragToOpenNav } from "@/components/layout/shell/use-edge-drag-to-open-nav";
+import { useNavDrawerPull } from "@/components/layout/shell/use-nav-drawer-pull";
 import { useDragToDismissKeyboard } from "@/components/layout/shell/use-drag-to-dismiss-keyboard";
 import { setMobileApp } from "@/lib/mobile-app";
 import { useMobileNavStore } from "@/stores/layout/mobile-nav-store";
@@ -178,6 +178,7 @@ let activeUnmounts: Array<() => void> = [];
 interface EdgeDragActivation {
   readonly travelPx: number;
   readonly clientX: number;
+  readonly closing: boolean;
 }
 
 /** The predicate for a screen with nothing already claiming the edge. */
@@ -192,13 +193,24 @@ const NOTHING_CLAIMED = (): boolean => false;
 function mountEdgeDrag(options: {
   readonly claimedElsewhere: (target: EventTarget | null) => boolean;
 }): ReadonlyArray<EdgeDragActivation> {
+  return mountPull({
+    withinPanel: options.claimedElsewhere,
+    withinLayer: options.claimedElsewhere,
+  });
+}
+
+function mountPull(options: {
+  readonly withinPanel: (target: EventTarget | null) => boolean;
+  readonly withinLayer: (target: EventTarget | null) => boolean;
+}): ReadonlyArray<EdgeDragActivation> {
   const activations: EdgeDragActivation[] = [];
   const { unmount } = renderHook(() =>
-    useEdgeDragToOpenNav({
-      onActivate: (event, travelPx) => {
-        activations.push({ travelPx, clientX: event.clientX });
+    useNavDrawerPull({
+      onActivate: (event, travelPx, closing) => {
+        activations.push({ travelPx, clientX: event.clientX, closing });
       },
-      claimedElsewhere: options.claimedElsewhere,
+      withinPanel: options.withinPanel,
+      withinLayer: options.withinLayer,
     }),
   );
   activeUnmounts.push(unmount);
@@ -223,6 +235,11 @@ afterEach(() => {
   });
   activeUnmounts = [];
   document.body.innerHTML = "";
+  document.documentElement.style.removeProperty("--safe-area-inset-left");
+  // The inset reader caches module-wide and only retires on a viewport event,
+  // so clearing the property is not enough - without this a test that set an
+  // inset would hand its geometry to every test after it.
+  window.dispatchEvent(new Event("resize"));
   setMobileApp(false);
   useMobileNavStore.setState({ open: false });
 });
@@ -299,7 +316,7 @@ describe("commitsDirectionalGesture", () => {
   });
 });
 
-describe("useEdgeDragToOpenNav", () => {
+describe("useNavDrawerPull - opening from the edge", () => {
   it("hands off the gesture once a rightward drag from the edge declares itself", () => {
     setMobileApp(true);
     const activations = mountEdgeDrag({ claimedElsewhere: NOTHING_CLAIMED });
@@ -574,15 +591,23 @@ describe("useEdgeDragToOpenNav", () => {
     expect(activations.length).toBe(0);
   });
 
-  it("no-ops when the drawer is already open", () => {
+  // While the scrim is showing, the edge belongs to it - and that is asked of
+  // the hit test, not of the drawer's state. The scrim only accepts pointers
+  // while it is covering something, so a pointer reaching it is itself the
+  // statement that this gesture is already spoken for.
+  it("stands down for a pointer the drawer's own layer accepted", () => {
     setMobileApp(true);
-    useMobileNavStore.setState({ open: true });
-    const activations = mountEdgeDrag({ claimedElsewhere: NOTHING_CLAIMED });
+    const scrim = document.createElement("div");
+    document.body.appendChild(scrim);
+    const activations = mountPull({
+      withinPanel: NOTHING_CLAIMED,
+      withinLayer: (target) => target === scrim,
+    });
 
     dispatchPointer("pointerdown", {
       clientX: 20,
       clientY: 100,
-      target: document.body,
+      target: scrim,
       timeStamp: 0,
       pointerId: 1,
       isPrimary: true,
@@ -590,7 +615,7 @@ describe("useEdgeDragToOpenNav", () => {
     dispatchPointer("pointermove", {
       clientX: 90,
       clientY: 100,
-      target: document.body,
+      target: scrim,
       timeStamp: 100,
       pointerId: 1,
       isPrimary: true,
@@ -599,7 +624,11 @@ describe("useEdgeDragToOpenNav", () => {
     expect(activations.length).toBe(0);
   });
 
-  it("does not activate while a text entry is focused", () => {
+  // The edge belongs to the drawer whether or not the keyboard is up. Standing
+  // down here would make the menu unreachable from any screen with a focused
+  // composer, which on a phone is most of them. The caller drops the keyboard
+  // as part of opening, so the two never share the screen.
+  it("still activates while a text entry is focused", () => {
     setMobileApp(true);
     focusInput();
     const activations = mountEdgeDrag({ claimedElsewhere: NOTHING_CLAIMED });
@@ -617,6 +646,34 @@ describe("useEdgeDragToOpenNav", () => {
       clientY: 100,
       target: document.body,
       timeStamp: 100,
+      pointerId: 1,
+      isPrimary: true,
+    });
+
+    expect(activations.length).toBe(1);
+  });
+
+  // Claiming nothing until the classifier is satisfied is what keeps the field
+  // itself usable: placing a caret near the screen edge is a tap, and a tap
+  // never reaches 15px of horizontal travel.
+  it("leaves a tap near the edge to the focused field", () => {
+    setMobileApp(true);
+    focusInput();
+    const activations = mountEdgeDrag({ claimedElsewhere: NOTHING_CLAIMED });
+
+    dispatchPointer("pointerdown", {
+      clientX: 20,
+      clientY: 100,
+      target: document.body,
+      timeStamp: 0,
+      pointerId: 1,
+      isPrimary: true,
+    });
+    dispatchPointer("pointerup", {
+      clientX: 21,
+      clientY: 101,
+      target: document.body,
+      timeStamp: 40,
       pointerId: 1,
       isPrimary: true,
     });
@@ -1054,7 +1111,7 @@ describe("useDragToDismissKeyboard", () => {
 // `stubHorizontalPan` backs a case the module-level scenarios above don't
 // otherwise exercise: a target that pans horizontally is still excluded from
 // the edge drag even when it doesn't declare `touch-action: none` outright.
-describe("useEdgeDragToOpenNav - horizontal pan surfaces", () => {
+describe("useNavDrawerPull - horizontal pan surfaces", () => {
   it("does not activate on a rail that already pans sideways", () => {
     setMobileApp(true);
     const activations = mountEdgeDrag({ claimedElsewhere: NOTHING_CLAIMED });
@@ -1075,6 +1132,284 @@ describe("useEdgeDragToOpenNav - horizontal pan surfaces", () => {
       clientX: 90,
       clientY: 100,
       target: rail,
+      timeStamp: 100,
+      pointerId: 1,
+      isPrimary: true,
+    });
+
+    expect(activations.length).toBe(0);
+  });
+});
+
+/**
+ * The pull zone is 32px of APP SURFACE, not 32px of screen. In landscape the
+ * sensor housing's inset can be wider than the zone itself, so a recognizer
+ * measuring from raw viewport coordinates puts its entire pull zone inside the
+ * cutout - reachable by nothing, on the one orientation where a drawer gesture
+ * is most useful.
+ *
+ * The two cases together pin the exact shape of the behavior rather than just
+ * its effect: the inset moves where the zone begins, and does NOT stretch how
+ * wide it is.
+ * Widening would quietly hand the drawer a 92px bite of whatever surface is
+ * underneath, which is the opposite of what a narrow edge zone is for.
+ */
+describe("useNavDrawerPull - the zone starts where the app surface does", () => {
+  const LEFT_INSET_PX = 60;
+
+  function withLeftInset(): ReadonlyArray<EdgeDragActivation> {
+    setMobileApp(true);
+    document.documentElement.style.setProperty(
+      "--safe-area-inset-left",
+      `${LEFT_INSET_PX}px`,
+    );
+    // The reader caches, and a viewport event is what retires it - the same
+    // signal a real rotation sends.
+    window.dispatchEvent(new Event("resize"));
+    return mountEdgeDrag({ claimedElsewhere: NOTHING_CLAIMED });
+  }
+
+  it("moves the zone inboard by the left inset", () => {
+    const activations = withLeftInset();
+
+    // Inside the app surface's own first 32px (60 + 32 = 92), and far outside
+    // the zone if the inset were ignored.
+    dispatchPointer("pointerdown", {
+      clientX: 70,
+      clientY: 100,
+      target: document.body,
+      timeStamp: 0,
+      pointerId: 1,
+      isPrimary: true,
+    });
+    dispatchPointer("pointermove", {
+      clientX: 140,
+      clientY: 100,
+      target: document.body,
+      timeStamp: 100,
+      pointerId: 1,
+      isPrimary: true,
+    });
+
+    expect(activations.length).toBe(1);
+  });
+
+  // The bound that an upper-limit-only check silently drops. Raw x below the
+  // inset is inside the cutout: not app surface, not reachable by intent, and
+  // accepting it would make the strip the inset's width PLUS the zone's -
+  // stretching it back over exactly the region the inset moved it out of.
+  it("refuses a pointer that lands before the app surface begins", () => {
+    const activations = withLeftInset();
+
+    dispatchPointer("pointerdown", {
+      clientX: LEFT_INSET_PX - 1,
+      clientY: 100,
+      target: document.body,
+      timeStamp: 0,
+      pointerId: 1,
+      isPrimary: true,
+    });
+    dispatchPointer("pointermove", {
+      clientX: 140,
+      clientY: 100,
+      target: document.body,
+      timeStamp: 100,
+      pointerId: 1,
+      isPrimary: true,
+    });
+
+    expect(activations.length).toBe(0);
+  });
+
+  it("accepts a pointer at exactly the first pixel of app surface", () => {
+    const activations = withLeftInset();
+
+    dispatchPointer("pointerdown", {
+      clientX: LEFT_INSET_PX,
+      clientY: 100,
+      target: document.body,
+      timeStamp: 0,
+      pointerId: 1,
+      isPrimary: true,
+    });
+    dispatchPointer("pointermove", {
+      clientX: 140,
+      clientY: 100,
+      target: document.body,
+      timeStamp: 100,
+      pointerId: 1,
+      isPrimary: true,
+    });
+
+    expect(activations.length).toBe(1);
+  });
+
+  it("keeps the zone 32px wide rather than widening it by the inset", () => {
+    const activations = withLeftInset();
+
+    // Past 60 + 32. A recognizer that added the inset to the WIDTH instead of
+    // the origin would claim this touch.
+    dispatchPointer("pointerdown", {
+      clientX: 100,
+      clientY: 100,
+      target: document.body,
+      timeStamp: 0,
+      pointerId: 1,
+      isPrimary: true,
+    });
+    dispatchPointer("pointermove", {
+      clientX: 170,
+      clientY: 100,
+      target: document.body,
+      timeStamp: 100,
+      pointerId: 1,
+      isPrimary: true,
+    });
+
+    expect(activations.length).toBe(0);
+  });
+});
+
+/**
+ * The panel is a SCROLLING surface, which makes it the hardest place to ask
+ * "is this drag mine". A drag engine left to claim on raw travel takes a share
+ * of every vertical swipe and drags the drawer sideways underneath a finger
+ * that was reading a list - the failure the user sees as the drawer fighting
+ * them. So the close pull meets the same classifier the open pull does, and
+ * these cases pin that it actually arbitrates rather than merely existing.
+ */
+describe("useNavDrawerPull - closing from the panel", () => {
+  // The layer holds the panel AND the scrim, so both answer `withinLayer`;
+  // only the panel answers `withinPanel`. That difference is what routes a
+  // pointer to a close pull or hands it to the scrim.
+  function mountOnPanel(
+    panel: HTMLElement,
+    scrim: HTMLElement,
+  ): ReadonlyArray<EdgeDragActivation> {
+    setMobileApp(true);
+    return mountPull({
+      withinPanel: (target) => target === panel,
+      withinLayer: (target) => target === panel || target === scrim,
+    });
+  }
+
+  function scrimNode(): HTMLElement {
+    const scrim = document.createElement("div");
+    document.body.appendChild(scrim);
+    return scrim;
+  }
+
+  function panelNode(): HTMLElement {
+    const panel = document.createElement("div");
+    document.body.appendChild(panel);
+    return panel;
+  }
+
+  function pull(panel: HTMLElement, to: { x: number; y: number }): void {
+    dispatchPointer("pointerdown", {
+      clientX: 200,
+      clientY: 300,
+      target: panel,
+      timeStamp: 0,
+      pointerId: 1,
+      isPrimary: true,
+    });
+    dispatchPointer("pointermove", {
+      clientX: to.x,
+      clientY: to.y,
+      target: panel,
+      timeStamp: 100,
+      pointerId: 1,
+      isPrimary: true,
+    });
+  }
+
+  // The reported bug, inverted into a guarantee. A near-vertical swipe with a
+  // little sideways lead is a scroll, and the drawer must not take any of it.
+  it("leaves a vertical-dominant swipe on the panel to the scroller", () => {
+    const panel = panelNode();
+    const activations = mountOnPanel(panel, scrimNode());
+
+    pull(panel, { x: 192, y: 380 });
+
+    expect(activations.length).toBe(0);
+  });
+
+  it("claims a leftward drag on the panel and reports it as closing", () => {
+    const panel = panelNode();
+    const activations = mountOnPanel(panel, scrimNode());
+
+    pull(panel, { x: 170, y: 302 });
+
+    expect(activations.length).toBe(1);
+    expect(activations[0]?.closing).toBe(true);
+    // Travel is reported along the pull's OWN direction, so a close reads
+    // positive exactly as an open does.
+    expect(activations[0]?.travelPx).toBe(30);
+  });
+
+  // Rightward on an open panel is the counter-direction: it is a hand pushing
+  // the drawer further open, which is nothing, and the classifier fails it
+  // rather than claiming a backwards close.
+  it("ignores a rightward drag on the open panel", () => {
+    const panel = panelNode();
+    const activations = mountOnPanel(panel, scrimNode());
+
+    pull(panel, { x: 260, y: 302 });
+
+    expect(activations.length).toBe(0);
+  });
+
+  // The panel wins over the edge branch even at the screen edge: an open
+  // drawer covers that region, so the pointer is on the panel and the pull is
+  // a close.
+  it("reads a pull that lands on the panel as closing even inside the edge zone", () => {
+    const panel = panelNode();
+    const activations = mountOnPanel(panel, scrimNode());
+
+    dispatchPointer("pointerdown", {
+      clientX: 20,
+      clientY: 300,
+      target: panel,
+      timeStamp: 0,
+      pointerId: 1,
+      isPrimary: true,
+    });
+    dispatchPointer("pointermove", {
+      clientX: 0,
+      clientY: 302,
+      target: panel,
+      timeStamp: 100,
+      pointerId: 1,
+      isPrimary: true,
+    });
+
+    expect(activations.length).toBe(1);
+    expect(activations[0]?.closing).toBe(true);
+  });
+
+  // A pointer the layer accepted but the panel did not is on the scrim, which
+  // claims its own pointers immediately and needs no classifier. Targeted at a
+  // real scrim node INSIDE the edge zone, because that is the case that
+  // matters: outside the zone the pointer would be turned away by geometry
+  // anyway, and the test would pass without proving anything about ownership.
+  it("stands down for a scrim pointer inside the edge zone", () => {
+    const panel = panelNode();
+    const scrim = scrimNode();
+    const activations = mountOnPanel(panel, scrim);
+
+    dispatchPointer("pointerdown", {
+      clientX: 20,
+      clientY: 300,
+      target: scrim,
+      timeStamp: 0,
+      pointerId: 1,
+      isPrimary: true,
+    });
+    dispatchPointer("pointermove", {
+      clientX: 90,
+      clientY: 302,
+      target: scrim,
       timeStamp: 100,
       pointerId: 1,
       isPrimary: true,

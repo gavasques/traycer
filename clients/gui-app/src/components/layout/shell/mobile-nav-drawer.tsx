@@ -216,7 +216,7 @@ export function MobileNavDrawer(): ReactNode {
           <SheetContent
             side="left"
             showCloseButton={false}
-            className="gap-0 p-0 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
+            className="gap-0 p-0 pb-safe-bottom"
             data-testid="mobile-nav-drawer"
             data-mobile-shell-touch-scope=""
           >

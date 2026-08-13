@@ -18,6 +18,7 @@ const FROM_CLOSED: NavDrawerRelease = {
   widthPx: PANEL_WIDTH_PX,
   velocityPxPerS: 0,
   openAtGestureStart: false,
+  cancelled: false,
 };
 
 const FROM_OPEN: NavDrawerRelease = {
@@ -25,6 +26,7 @@ const FROM_OPEN: NavDrawerRelease = {
   widthPx: PANEL_WIDTH_PX,
   velocityPxPerS: 0,
   openAtGestureStart: true,
+  cancelled: false,
 };
 
 describe("resolvesToOpen - from closed", () => {
@@ -126,6 +128,7 @@ describe("resolvesToOpen - the distance arm scales with the panel", () => {
           widthPx,
           velocityPxPerS: 0,
           openAtGestureStart: false,
+          cancelled: false,
         }),
       ).toBe(true);
     }
@@ -138,9 +141,48 @@ describe("resolvesToOpen - the distance arm scales with the panel", () => {
         widthPx,
         velocityPxPerS: 0,
         openAtGestureStart: false,
+        cancelled: false,
       };
       expect(resolvesToOpen({ ...shared, positionPx: arm })).toBe(true);
       expect(resolvesToOpen({ ...shared, positionPx: arm - 1 })).toBe(false);
     }
+  });
+});
+
+/**
+ * A gesture the system took away is not a gesture the user finished. Both arms
+ * are deliberately given something to bite on in these cases - a position well
+ * past the commit distance AND a velocity past the flick threshold, each
+ * pointing at the outcome cancellation must refuse - so a regression that moved
+ * the check below either arm fails here rather than passing by luck.
+ */
+describe("resolvesToOpen - a cancelled gesture decides nothing", () => {
+  it("stays open when a close drag is cancelled at the far end of its travel", () => {
+    expect(
+      resolvesToOpen({
+        ...FROM_OPEN,
+        positionPx: 5,
+        velocityPxPerS: -2000,
+        cancelled: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("stays closed when an open drag is cancelled at the far end of its travel", () => {
+    expect(
+      resolvesToOpen({
+        ...FROM_CLOSED,
+        positionPx: PANEL_WIDTH_PX - 5,
+        velocityPxPerS: 2000,
+        cancelled: true,
+      }),
+    ).toBe(false);
+  });
+
+  // The flag only ever restores; it is not a second way of saying "closed".
+  it("restores whichever side the gesture started from", () => {
+    const interrupted = { positionPx: 150, velocityPxPerS: 0, cancelled: true };
+    expect(resolvesToOpen({ ...FROM_OPEN, ...interrupted })).toBe(true);
+    expect(resolvesToOpen({ ...FROM_CLOSED, ...interrupted })).toBe(false);
   });
 });

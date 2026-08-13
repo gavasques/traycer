@@ -19,10 +19,12 @@ import {
 } from "motion/react";
 import {
   NAV_DRAWER_SETTLE,
+  NAV_DRAWER_TAP_SLOP_PX,
   NAV_DRAWER_SETTLE_REDUCED,
   resolvesToOpen,
 } from "@/components/layout/shell/nav-drawer-motion";
-import { useEdgeDragToOpenNav } from "@/components/layout/shell/use-edge-drag-to-open-nav";
+import { blurTextEntry } from "@/components/layout/shell/shell-gestures";
+import { useNavDrawerPull } from "@/components/layout/shell/use-nav-drawer-pull";
 import { useModalSurfaceContainment } from "@/components/layout/shell/use-modal-surface-containment";
 import { cn } from "@/lib/utils";
 
@@ -74,7 +76,15 @@ export function MobileNavDrawerSurface(
   // The endpoint the running settle is travelling to, or null when none is.
   // Kept so a resize mid-flight can re-aim it at the width that now exists.
   const settleTargetRef = useRef<boolean | null>(null);
-  const draggingRef = useRef(false);
+  // A pointer owns the panel from the instant a gesture claims it, which is
+  // EARLIER than motion reports a drag: the engine only calls back once the
+  // pointer has travelled past its own threshold. Anything that re-parks the
+  // panel has to stand down for that whole window, including the gap - a blur
+  // that drops the keyboard resizes the web view right there, and a re-park
+  // landing in the gap would snatch the panel out from under the finger.
+  const gestureRef = useRef(false);
+  const motionDraggingRef = useRef(false);
+  const releaseTeardownRef = useRef<(() => void) | null>(null);
   const openAtGestureStartRef = useRef(false);
   const widthRef = useRef(0);
   const [width, setWidth] = useState(0);
@@ -109,12 +119,28 @@ export function MobileNavDrawerSurface(
     setSettledOpen(next);
   }, []);
 
+  /**
+   * Total, by design: every path out of a gesture or a request goes through
+   * here, including the ones with nowhere to travel. Leaving those to skip the
+   * call would strand `inFlight` true, and the scrim is only inert to pointers
+   * while it is BOTH closed and at rest - a stuck flag would leave a
+   * transparent sheet swallowing the whole screen behind a shut drawer.
+   */
   const settle = useCallback(
     (toOpen: boolean): void => {
       settleRef.current?.stop();
+      const target = toOpen ? widthRef.current : 0;
+      if (x.get() === target) {
+        settleRef.current = null;
+        settleTargetRef.current = null;
+        setInFlight(false);
+        commitSettled(toOpen);
+        if (openRef.current !== toOpen) onOpenChangeRef.current(toOpen);
+        return;
+      }
       settleTargetRef.current = toOpen;
       setInFlight(true);
-      settleRef.current = animate(x, toOpen ? widthRef.current : 0, {
+      settleRef.current = animate(x, target, {
         ...(reducedMotionRef.current === true
           ? NAV_DRAWER_SETTLE_REDUCED
           : NAV_DRAWER_SETTLE),
@@ -147,7 +173,7 @@ export function MobileNavDrawerSurface(
     const sync = (): void => {
       widthRef.current = node.offsetWidth;
       setWidth(node.offsetWidth);
-      if (draggingRef.current) return;
+      if (gestureRef.current) return;
       const inFlightTarget = settleTargetRef.current;
       if (inFlightTarget !== null) {
         settle(inFlightTarget);
@@ -168,24 +194,102 @@ export function MobileNavDrawerSurface(
   // wait for the panel - so this only ever starts a settle, and that settle's
   // completion is what makes the request true.
   useEffect(() => {
-    if (draggingRef.current) return;
-    if (x.get() !== (open ? widthRef.current : 0)) {
-      settle(open);
-      return;
-    }
-    // Already standing at the endpoint the request asks for, so there is
-    // nothing to travel and the semantics reconcile at once. This is also the
-    // degenerate case of a panel that has never been laid out, where both
-    // endpoints are the same place.
+    if (gestureRef.current) return;
+    settle(open);
+  }, [open, settle]);
+
+  // Claims the panel for a pointer and clears whatever it interrupted. A
+  // settle overtaken here decides nothing; the gesture that took it over does.
+  const beginPointerGesture = useCallback((): void => {
+    gestureRef.current = true;
     settleRef.current?.stop();
     settleRef.current = null;
     settleTargetRef.current = null;
-    setInFlight(false);
-    commitSettled(open);
-  }, [commitSettled, open, settle, x]);
+    setInFlight(true);
+  }, []);
+
+  /**
+   * A gesture can claim the panel and then end without the engine ever
+   * reporting a drag, and there are two quite different ways that happens. One
+   * is a tap: the pointer genuinely never travelled. The other is a flick fast
+   * enough to begin and end inside a single frame - the engine batches moves to
+   * the next frame and cancels the pending one the instant the pointer lifts,
+   * so the whole gesture evaporates and looks identical to the tap from the
+   * outside. Telling them apart cannot be delegated, so this keeps its own
+   * coordinates.
+   *
+   * A cancelled pointer is never a tap either, whatever it travelled: the
+   * system took the gesture away, which is not a decision the user made.
+   */
+  const armPointerRelease = useCallback(
+    (
+      pointer: {
+        /**
+         * Which pointer armed this. Every other one is somebody else's finger:
+         * a second touch that lands and lifts while the arming one is still on
+         * the glass says nothing about this gesture, and reading its release as
+         * this gesture's release would retire the tracker with the hand that
+         * started it still dragging.
+         */
+        readonly id: number;
+        readonly x: number;
+        readonly y: number;
+      },
+      outcome: {
+        /** Released in place, under its own power. */
+        readonly onTap: () => void;
+        /** Travelled, or taken away. Either way the panel picks a side. */
+        readonly onSettle: () => void;
+      },
+    ): void => {
+      // One signal retires all three listeners, which keeps the teardown from
+      // having to name the handler that calls it - there is no ordering to get
+      // wrong and no listener that can be left behind.
+      const controller = new AbortController();
+      const listenerOptions = { signal: controller.signal };
+      let travelled = false;
+      const teardown = (): void => {
+        controller.abort();
+        releaseTeardownRef.current = null;
+      };
+      const track = (event: PointerEvent): void => {
+        if (event.pointerId !== pointer.id) return;
+        const dx = event.clientX - pointer.x;
+        const dy = event.clientY - pointer.y;
+        if (Math.hypot(dx, dy) > NAV_DRAWER_TAP_SLOP_PX) travelled = true;
+      };
+      const finish = (event: PointerEvent): void => {
+        if (event.pointerId !== pointer.id) return;
+        teardown();
+        // The engine adopted the gesture, so its own release decides.
+        if (motionDraggingRef.current) return;
+        gestureRef.current = false;
+        if (travelled || event.type === "pointercancel") {
+          outcome.onSettle();
+          return;
+        }
+        outcome.onTap();
+      };
+      releaseTeardownRef.current?.();
+      window.addEventListener("pointermove", track, listenerOptions);
+      window.addEventListener("pointerup", finish, listenerOptions);
+      window.addEventListener("pointercancel", finish, listenerOptions);
+      releaseTeardownRef.current = teardown;
+    },
+    [],
+  );
+
+  // A gesture interrupted by unmount never gets its release, so the listeners
+  // it armed would outlive the surface holding a stale closure.
+  useEffect(() => {
+    return () => {
+      releaseTeardownRef.current?.();
+    };
+  }, []);
 
   const handleDragStart = useCallback((): void => {
-    draggingRef.current = true;
+    gestureRef.current = true;
+    motionDraggingRef.current = true;
     openAtGestureStartRef.current = settledOpenRef.current;
     settleRef.current?.stop();
     settleRef.current = null;
@@ -194,45 +298,62 @@ export function MobileNavDrawerSurface(
   }, []);
 
   const handleDragEnd = useCallback(
-    (_event: MouseEvent | TouchEvent | PointerEvent, info: PanInfo): void => {
-      draggingRef.current = false;
+    (event: MouseEvent | TouchEvent | PointerEvent, info: PanInfo): void => {
+      motionDraggingRef.current = false;
+      gestureRef.current = false;
       settle(
         resolvesToOpen({
           positionPx: x.get(),
           widthPx: widthRef.current,
           velocityPxPerS: info.velocity.x,
           openAtGestureStart: openAtGestureStartRef.current,
+          // Once the engine has adopted a gesture it reports cancellation
+          // through this same callback, as an ordinary release carrying a
+          // cancel event - so the distinction survives only if it is read off
+          // the event here.
+          cancelled: event.type === "pointercancel",
         }),
       );
     },
     [settle, x],
   );
 
-  useEdgeDragToOpenNav({
-    onActivate: (event, travelPx) => {
-      settleRef.current?.stop();
-      settleRef.current = null;
-      settleTargetRef.current = null;
-      setInFlight(true);
+  useNavDrawerPull({
+    onActivate: (event, travelPx, closing) => {
+      beginPointerGesture();
+      // Pulling the drawer out while typing is a request for the menu, not for
+      // the caret - so the keyboard goes away with the same gesture rather
+      // than leaving the drawer sharing the screen with it. The draft is
+      // untouched; only focus moves. Blurring HERE rather than at the settle
+      // also means the containment captures a blurred document as the place to
+      // return focus to, so closing the drawer cannot raise the keyboard again.
+      blurTextEntry();
       // Meet the finger where the drag declared itself, so what follows is 1:1
       // against the ORIGINAL touch-down rather than against the point 15px
-      // later where the classifier made up its mind. The drag engine reads the
-      // live value as its origin, so seeding it here is all the handoff needs.
-      x.jump(Math.min(Math.max(travelPx, 0), widthRef.current));
+      // later where the classifier made up its mind. Measured from the live
+      // position rather than from an endpoint, so a pull that interrupts a
+      // settle picks the panel up where it actually is. The drag engine reads
+      // that same live value as its origin, so seeding is the whole handoff.
+      const seeded = x.get() + (closing ? -travelPx : travelPx);
+      x.jump(Math.min(Math.max(seeded, 0), widthRef.current));
       dragControls.start(event);
-      // A pointer that lifts between the classifier activating and the drag
-      // engine's first move would otherwise leave the panel parked at that
-      // seeded offset with nothing left to release it.
-      const finish = (): void => {
-        window.removeEventListener("pointerup", finish);
-        window.removeEventListener("pointercancel", finish);
-        if (draggingRef.current) return;
-        settle(settledOpenRef.current);
-      };
-      window.addEventListener("pointerup", finish);
-      window.addEventListener("pointercancel", finish);
+      // The classifier already required travel, so neither outcome here can be
+      // a tap - both simply put the panel back on a side.
+      armPointerRelease(
+        { id: event.pointerId, x: event.clientX, y: event.clientY },
+        {
+          onTap: () => {
+            settle(settledOpenRef.current);
+          },
+          onSettle: () => {
+            settle(settledOpenRef.current);
+          },
+        },
+      );
     },
-    claimedElsewhere: (target) =>
+    withinPanel: (target) =>
+      target instanceof Node && (panelRef.current?.contains(target) ?? false),
+    withinLayer: (target) =>
       target instanceof Node && (layerRef.current?.contains(target) ?? false),
   });
 
@@ -265,21 +386,61 @@ export function MobileNavDrawerSurface(
       className="pointer-events-none fixed inset-0 z-50"
       data-testid="mobile-nav-drawer-layer"
     >
+      {/* The scrim is part of the drawer, not a backdrop behind it. A hand
+          that pulled the panel out expects to be able to push it back from
+          anywhere it is covering, so a pointer landing here is handed to the
+          panel's own drag rather than being treated as a click target - the
+          same handoff the edge pull uses, except the panel is already at the
+          open position, so there is nothing to seed and the tracking is 1:1
+          from the first pixel.
+
+          Dismissal rides the release rather than a click. A tap and a drag
+          enter through the same pointerdown, and only the release can tell them
+          apart - by the distance that pointer actually covered, measured here,
+          because the engine's silence does not distinguish a press that never
+          moved from a flick that outran a frame. Leaving it on `onClick` would
+          have fired a second dismissal after every drag that ended here. */}
       <m.div
         aria-hidden
         className={cn(
           "absolute inset-0 bg-black/40 supports-backdrop-filter:backdrop-blur-xs",
-          settledOpen ? "pointer-events-auto" : "pointer-events-none",
+          // Interactive for as long as the scrim is showing anything, which
+          // includes a settle still in flight - otherwise a drawer caught
+          // mid-open could not be pushed back from the side it is uncovering.
+          settledOpen || inFlight
+            ? "pointer-events-auto"
+            : "pointer-events-none",
         )}
         style={{ opacity: scrimOpacity }}
-        onClick={() => {
-          onOpenChange(false);
+        data-testid="mobile-nav-drawer-scrim"
+        onPointerDown={(event) => {
+          if (!event.isPrimary) return;
+          beginPointerGesture();
+          dragControls.start(event);
+          armPointerRelease(
+            { id: event.pointerId, x: event.clientX, y: event.clientY },
+            {
+              onTap: dismiss,
+              // A flick that the engine never adopted still travelled, and a
+              // rightward one asked for the drawer to STAY - dismissing it
+              // would be the opposite of what the hand did.
+              onSettle: () => {
+                settle(settledOpenRef.current);
+              },
+            },
+          );
         }}
       />
       {/* The park. Keeping the closed rest position in CSS rather than in the
           motion value means the very first paint is already correct, with no
-          frame at x=0 while a layout effect measures the panel. */}
-      <div className="absolute inset-y-0 left-0 w-3/4 -translate-x-full sm:max-w-sm">
+          frame at x=0 while a layout effect measures the panel.
+
+          It also owns the top edge. A `fixed` layer resolves against the
+          viewport rather than the app root's padding box, so nothing above has
+          reserved the status-bar strip on its behalf - the panel starts below
+          the bar because this says where it starts, and its own `h-full` then
+          resolves against the shortened park. */}
+      <div className="absolute top-safe-top bottom-0 left-safe-left w-3/4 -translate-x-full sm:max-w-sm">
         <m.div
           ref={panelRef}
           role="dialog"
@@ -290,6 +451,16 @@ export function MobileNavDrawerSurface(
           tabIndex={-1}
           drag="x"
           dragControls={dragControls}
+          // The engine's own pointer listener is off, so every pull enters
+          // through the recognizer above and meets the same classifier. Left
+          // on, it would start a drag after three pixels in ANY direction and
+          // then apply the horizontal component of it - which on a scrolling
+          // panel means a share of every vertical swipe drags the drawer
+          // sideways. Its built-in axis lock is not the answer either: it locks
+          // on whichever axis first passes ten pixels, checking Y first, so it
+          // both keeps claiming near-vertical drags and starts refusing fast
+          // diagonal ones the app means to accept.
+          dragListener={false}
           dragConstraints={{ left: 0, right: width }}
           // Rubber-band only at the closed stop, where the give happens off
           // screen. Elasticity at the open stop would pull the panel past its
@@ -301,7 +472,12 @@ export function MobileNavDrawerSurface(
           onDragStart={handleDragStart}
           onDragEnd={handleDragEnd}
           style={{ x }}
-          className="pointer-events-auto flex h-full w-full flex-col border-r bg-popover bg-clip-padding pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] text-popover-foreground shadow-lg outline-none"
+          // `touch-pan-y` and `select-none` are the engine's own doing when it
+          // owns the listener; with that off they have to be stated. The first
+          // hands vertical scrolling to the browser and keeps the horizontal
+          // axis for the drawer; the second stops a long sideways pull over a
+          // task title from turning into a text selection.
+          className="pointer-events-auto flex h-full w-full touch-pan-y flex-col border-r bg-popover bg-clip-padding pb-safe-bottom text-popover-foreground shadow-lg outline-none select-none"
           data-testid="mobile-nav-drawer"
           data-mobile-shell-touch-scope=""
         >

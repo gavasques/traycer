@@ -16,6 +16,7 @@ import { ConfirmDestructiveDialog } from "@/components/ui/confirm-destructive-di
 import { useProvidersSkillsList } from "@/hooks/providers/use-providers-skills-list-query";
 import { useProvidersSkillsMutate } from "@/hooks/providers/use-providers-skills-mutate-mutation";
 import { reportableErrorToast } from "@/lib/reportable-error-toast";
+import { SETTINGS_ROW_STACK } from "@/components/settings/settings-row-layout";
 import { cn } from "@/lib/utils";
 import { ProviderSkillComposerDialog } from "./provider-skill-composer-dialog";
 import {
@@ -248,8 +249,13 @@ function ProviderSkillsTabBody({
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="min-w-0 flex-1">
+      <div
+        className={cn(
+          "flex flex-wrap items-start justify-between gap-2",
+          SETTINGS_ROW_STACK.container,
+        )}
+      >
+        <div className={cn("min-w-0 flex-1", SETTINGS_ROW_STACK.label)}>
           <div className="text-ui-sm font-medium text-foreground">Skills</div>
           <p className="text-ui-xs text-muted-foreground">
             Invoked by the agent when relevant, or manually with / in chat.

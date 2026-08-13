@@ -58,9 +58,29 @@ History keeps its modal on every viewport.
 
 Supporting pieces, all viewport-agnostic where possible:
 
+- `settings-row-layout.ts` (`SETTINGS_ROW_STACK`) holds the narrow-width half
+  of the label-beside-control geometry every row shares. It is a WIDTH FLOOR,
+  not a stack: flex line-breaking reads an item's basis clamped by its own
+  `min-width`, so raising the label's floor to `70%` below `md` pushes any
+  control wider than the remaining third onto a line of its own before any
+  shrinking happens. Wide controls (selects, inputs, chip rows, action
+  clusters) therefore stack under the label at phone width, while a switch or
+  an icon button stays beside it - a settings toggle reads as one line on a
+  phone, the way it does natively. Every class carries `max-md:` bar the
+  `flex-wrap` the mechanism depends on, so it layers onto the row that uses it
+  (padding, borders and typography stay that row's own) and is inert from `md`
+  up - the pointer-width rendering is unchanged.
+  Rows that are two columns from their own markup rather than through
+  `SettingsRow` - the Shell panel's program and startup-flags rows,
+  Diagnostics' memory and log-detail rows, the host identity/updates rows, the
+  worktree branch-prefix row, the Skills header and the notification-hook rows
+  - apply it directly. Without a floor the control keeps its intrinsic width
+    and the label takes what is left, which on a phone is a sliver: a two-word
+    label breaks one word per line.
 - `settings-row.tsx` uses `flex-wrap` + a label `basis` so small controls
   (switches) stay inline while wide controls wrap below the label on narrow
-  containers.
+  containers; `SETTINGS_ROW_STACK` raises that floor below `md` so the split
+  lands in the right place on a phone.
 - `settings-panel-shell.tsx` (and the inline shells in the Keybindings and
   Shell panels) step padding down below `sm`; the shell header wraps.
 - The Providers rail collapses below `md` into a full-width provider `Select`
@@ -80,6 +100,9 @@ Supporting pieces, all viewport-agnostic where possible:
   aware (see below).
 - `settings-touch-targets.css` Coarse-pointer hit-area rules for the route
   shell (see below).
+- `settings-row-layout.ts` The `max-md:` label floor shared by every
+  label-beside-control row, `SettingsRow`'s and the bespoke ones alike - what
+  decides, per row width, which controls stack and which stay inline.
 - `settings-row.tsx` Shared label/description/control row - also density-aware.
   The label owns the flexible width; controls stay pinned to the trailing edge.
   If a wide control wraps, it remains right-aligned on its new line instead of

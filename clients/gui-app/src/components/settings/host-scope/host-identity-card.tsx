@@ -13,6 +13,7 @@ import {
   type HostScopeOption,
 } from "@/components/settings/host-scope/host-scope-model";
 import type { HostScope } from "@/components/settings/host-scope/use-host-scope";
+import { SETTINGS_ROW_STACK } from "@/components/settings/settings-row-layout";
 import { cn } from "@/lib/utils";
 
 /**
@@ -82,8 +83,18 @@ export function HostIdentityCard(props: {
       data-testid="host-identity-card"
       aria-label={`${props.displayName} overview`}
     >
-      <div className="flex flex-wrap items-start justify-between gap-4 px-5 py-4">
-        <div className="flex min-w-0 flex-1 items-start gap-3">
+      <div
+        className={cn(
+          "flex flex-wrap items-start justify-between gap-4 px-5 py-4",
+          SETTINGS_ROW_STACK.container,
+        )}
+      >
+        <div
+          className={cn(
+            "flex min-w-0 flex-1 items-start gap-3",
+            SETTINGS_ROW_STACK.label,
+          )}
+        >
           <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted/60 text-muted-foreground">
             <HostGlyph host={host} className="size-4.5" />
           </span>
@@ -128,7 +139,10 @@ export function HostIdentityCard(props: {
         </div>
         {props.actions === null ? null : (
           <div
-            className="flex shrink-0 flex-wrap items-center justify-end gap-2"
+            className={cn(
+              "flex shrink-0 flex-wrap items-center justify-end gap-2",
+              SETTINGS_ROW_STACK.control,
+            )}
             data-testid="host-identity-actions"
           >
             {props.actions}
@@ -173,10 +187,13 @@ export function ThisWindowCard(props: {
   }
   return (
     <div
-      className="flex flex-wrap items-center justify-between gap-3 border-t border-border/40 px-5 py-3"
+      className={cn(
+        "flex flex-wrap items-center justify-between gap-3 border-t border-border/40 px-5 py-3",
+        SETTINGS_ROW_STACK.container,
+      )}
       data-testid="host-this-window-inactive"
     >
-      <div className="min-w-0">
+      <div className={cn("min-w-0", SETTINGS_ROW_STACK.label)}>
         <p className="text-ui-sm text-foreground">
           This window uses{" "}
           <span className="font-medium">

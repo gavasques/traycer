@@ -8,8 +8,10 @@ import {
   DEFAULT_WORKTREE_BRANCH_PREFIX,
   useSettingsStore,
 } from "@/stores/settings/settings-store";
+import { SETTINGS_ROW_STACK } from "@/components/settings/settings-row-layout";
 import { worktreeBranchPrefixError } from "@/lib/worktree/worktree-branch-prefix-validation";
 import { pickFriendlyBranchSuffix } from "@/lib/worktree/random-friendly-name";
+import { cn } from "@/lib/utils";
 
 const RESET_TOOLTIP = `Reset to "${DEFAULT_WORKTREE_BRANCH_PREFIX}"`;
 // Mirrors the agent-selection-guide editor's debounce-autosave convention
@@ -185,8 +187,13 @@ export function WorktreeBranchPrefixSection(): ReactNode {
 
   return (
     <div className="overflow-hidden rounded-lg border border-border/60 bg-card/40">
-      <div className="flex flex-wrap items-center gap-3.5 px-3.5 py-2.5">
-        <div className="min-w-0 flex-1">
+      <div
+        className={cn(
+          "flex flex-wrap items-center gap-3.5 px-3.5 py-2.5",
+          SETTINGS_ROW_STACK.container,
+        )}
+      >
+        <div className={cn("min-w-0 flex-1", SETTINGS_ROW_STACK.label)}>
           <div className="flex items-center gap-2">
             <span className="text-ui-sm font-medium text-foreground">
               Default branch prefix

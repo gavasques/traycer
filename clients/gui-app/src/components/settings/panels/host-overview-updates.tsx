@@ -18,7 +18,9 @@ import {
   useHostUpdateCheck,
   useHostUpdateInstall,
 } from "@/components/settings/panels/host-overview-rpc";
+import { SETTINGS_ROW_STACK } from "@/components/settings/settings-row-layout";
 import { toastFromHostError } from "@/lib/host-error-toast";
+import { cn } from "@/lib/utils";
 import type { HostRpcRegistry } from "@/lib/host";
 
 /**
@@ -91,8 +93,18 @@ export function HostOverviewUpdatesRegion(props: {
       className="flex flex-col border-t border-border/40"
       data-testid="host-overview-updates"
     >
-      <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-2.5 text-ui-sm">
-        <span className="min-w-0 flex-1 text-muted-foreground">
+      <div
+        className={cn(
+          "flex flex-wrap items-center justify-between gap-3 px-5 py-2.5 text-ui-sm",
+          SETTINGS_ROW_STACK.container,
+        )}
+      >
+        <span
+          className={cn(
+            "min-w-0 flex-1 text-muted-foreground",
+            SETTINGS_ROW_STACK.label,
+          )}
+        >
           {describeCheckState({
             manifest,
             checking: checkMutation.isPending,
@@ -101,7 +113,12 @@ export function HostOverviewUpdatesRegion(props: {
             upToDate,
           })}
         </span>
-        <div className="flex flex-wrap items-center justify-end gap-2">
+        <div
+          className={cn(
+            "flex flex-wrap items-center justify-end gap-2",
+            SETTINGS_ROW_STACK.control,
+          )}
+        >
           {latest !== null && !upToDate ? (
             <HostOverviewActionButton
               label={`Update to v${latest}`}

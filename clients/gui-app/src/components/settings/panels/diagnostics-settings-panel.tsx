@@ -6,6 +6,7 @@ import type { HostClient } from "@traycer-clients/shared/host-client/host-client
 import type { DiagnosticsLogTarget } from "@traycer/protocol/host/diagnostics/index";
 import { SettingsPanelShell } from "@/components/settings/settings-panel-shell";
 import { SettingsGroup } from "@/components/settings/settings-group";
+import { SETTINGS_ROW_STACK } from "@/components/settings/settings-row-layout";
 import {
   HostConfigUnsupportedNotice,
   LocalConfigFallbackNotice,
@@ -511,8 +512,18 @@ function MemoryDiagnosticsGroup(): ReactNode {
       dataTestId={undefined}
       fill={false}
     >
-      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5">
-        <span className="min-w-0 flex-1 text-ui-xs text-muted-foreground">
+      <div
+        className={cn(
+          "flex flex-wrap items-center justify-between gap-3 px-4 py-2.5",
+          SETTINGS_ROW_STACK.container,
+        )}
+      >
+        <span
+          className={cn(
+            "min-w-0 flex-1 text-ui-xs text-muted-foreground",
+            SETTINGS_ROW_STACK.label,
+          )}
+        >
           Captures a heap snapshot of this window for a memory report. The app
           stops responding while the snapshot is written, and the file can be
           several gigabytes.
@@ -564,7 +575,10 @@ function TemporaryDebugReminderRow(props: {
   const { pending, onFocusChange, onReset } = props;
   return (
     <div
-      className="flex flex-wrap items-center justify-between gap-3 bg-muted/20 px-4 py-2.5 text-ui-xs text-muted-foreground"
+      className={cn(
+        "flex flex-wrap items-center justify-between gap-3 bg-muted/20 px-4 py-2.5 text-ui-xs text-muted-foreground",
+        SETTINGS_ROW_STACK.container,
+      )}
       data-testid="diagnostics-log-detail-reminder"
       onFocusCapture={() => onFocusChange(true)}
       onBlurCapture={(event) => {
@@ -577,7 +591,12 @@ function TemporaryDebugReminderRow(props: {
         }
       }}
     >
-      <span className="flex min-w-0 flex-1 items-center gap-1.5">
+      <span
+        className={cn(
+          "flex min-w-0 flex-1 items-center gap-1.5",
+          SETTINGS_ROW_STACK.label,
+        )}
+      >
         <Info className="size-3.5 shrink-0" aria-hidden />
         One or more levels differ from Info for troubleshooting. Reset when
         you&apos;re done.

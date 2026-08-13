@@ -5,6 +5,8 @@ import {
   formatCheckedAtTooltip,
   updatesDescription,
 } from "@/components/settings/panels/host-settings-panel-model";
+import { SETTINGS_ROW_STACK } from "@/components/settings/settings-row-layout";
+import { cn } from "@/lib/utils";
 import type {
   DownloadProgress,
   HostRegistryUpdateState,
@@ -51,8 +53,18 @@ export function HostUpdateRegion(props: HostUpdateRegionProps) {
     onRefresh,
   } = props;
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/40 bg-muted/10 px-5 py-2.5 text-ui-sm">
-      <span className="min-w-0 flex-1 text-muted-foreground">
+    <div
+      className={cn(
+        "flex flex-wrap items-center justify-between gap-3 border-t border-border/40 bg-muted/10 px-5 py-2.5 text-ui-sm",
+        SETTINGS_ROW_STACK.container,
+      )}
+    >
+      <span
+        className={cn(
+          "min-w-0 flex-1 text-muted-foreground",
+          SETTINGS_ROW_STACK.label,
+        )}
+      >
         {updatesDescription({
           registryState,
           registryFetching,
@@ -100,7 +112,12 @@ function UpdatesControl(props: {
 
   if (updateReady) {
     return (
-      <div className="flex flex-wrap items-center justify-end gap-2">
+      <div
+        className={cn(
+          "flex flex-wrap items-center justify-end gap-2",
+          SETTINGS_ROW_STACK.control,
+        )}
+      >
         <span
           className="font-mono text-code-xs text-muted-foreground"
           data-testid="settings-host-staged-version"
@@ -171,7 +188,12 @@ function UpdatesControl(props: {
 
   const tooltipLabel = formatCheckedAtTooltip(registryState?.checkedAt ?? null);
   return (
-    <div className="flex flex-wrap items-center justify-end gap-2">
+    <div
+      className={cn(
+        "flex flex-wrap items-center justify-end gap-2",
+        SETTINGS_ROW_STACK.control,
+      )}
+    >
       <span className="text-ui-sm text-emerald-500">Up to date</span>
       <TooltipWrapper
         label={tooltipLabel}

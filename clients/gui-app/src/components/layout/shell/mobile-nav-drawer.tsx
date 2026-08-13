@@ -8,7 +8,9 @@ import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
 import "@/components/layout/shell/mobile-shell-touch-targets.css";
+import { MobileNavDrawerSurface } from "@/components/layout/shell/mobile-nav-drawer-surface";
 import { Analytics, AnalyticsEvent } from "@/lib/analytics";
+import { isMobileApp } from "@/lib/mobile-app";
 import { computeInitials } from "@/lib/auth/compute-initials";
 import { resolveManageSubscriptionUrl } from "@/lib/auth/manage-subscription-url";
 import { useRunnerHost } from "@/providers/use-runner-host";
@@ -55,6 +57,9 @@ export function MobileNavDrawer(): ReactNode {
   const { openSettings } = useSystemTabModalActions();
   const runnerHost = useRunnerHost();
   const [signOutOpen, setSignOutOpen] = useState(false);
+  // Immutable after boot, so a plain read is stable for this component's
+  // whole life - no resize can flip it the way the viewport hook flips.
+  const installedApp = isMobileApp();
 
   const close = () => {
     setOpen(false);
@@ -86,25 +91,11 @@ export function MobileNavDrawer(): ReactNode {
       });
   };
 
-  return (
+  // The panel is identical on both primitives; only the frame around it
+  // differs, so it is built once rather than duplicated per branch.
+  const panel = (
     <>
-      {/* Outside the `Sheet`, so the confirm can't be unmounted out from under
-          the user by an unrelated drawer close. */}
-      <SignOutConfirmDialog
-        open={signOutOpen}
-        onOpenChange={setSignOutOpen}
-        onConfirm={close}
-      />
-      <Sheet open={open} onOpenChange={setOpen}>
-        <SheetContent
-          side="left"
-          showCloseButton={false}
-          className="gap-0 p-0 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
-          data-testid="mobile-nav-drawer"
-          data-mobile-shell-touch-scope=""
-        >
-          <SheetTitle className="sr-only">Menu</SheetTitle>
-          {/* Identity plus the two account actions as icons beside the name -
+      {/* Identity plus the two account actions as icons beside the name -
             the same pair the desktop `UserMenu` offers behind the avatar, both
             one tap here. Manage subscription takes the slot the notification
             bell vacated when it moved to the header.
@@ -112,92 +103,128 @@ export function MobileNavDrawer(): ReactNode {
             `px-5` is the nav rows' effective inset below (`p-2` + `px-3`), so
             the avatar shares a left edge with their glyphs; no bottom padding
             beyond `pb-2` because the `nav` supplies the rest of the gap. */}
-          {profile === null ? null : (
-            <div className="flex shrink-0 items-center gap-3 px-5 pt-4 pb-2">
-              <Avatar size="sm">
-                {profile.avatarUrl !== null ? (
-                  <AvatarImage src={profile.avatarUrl} alt="" />
-                ) : null}
-                <AvatarFallback>
-                  {computeInitials(profile.userName, profile.email)}
-                </AvatarFallback>
-              </Avatar>
-              <div className="flex min-w-0 flex-1 flex-col">
-                <span className="truncate text-ui-sm font-medium text-foreground">
-                  {profile.userName}
-                </span>
-                <span className="truncate text-ui-xs text-muted-foreground">
-                  {profile.email}
-                </span>
-              </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                aria-label="Manage subscription"
-                data-testid="mobile-nav-manage-subscription"
-                onClick={handleManageSubscription}
-              >
-                <SquareArrowOutUpRight className="size-4" />
-              </Button>
-              {/* Opens the confirm rather than signing out: unlike its
+      {profile === null ? null : (
+        <div className="flex shrink-0 items-center gap-3 px-5 pt-4 pb-2">
+          <Avatar size="sm">
+            {profile.avatarUrl !== null ? (
+              <AvatarImage src={profile.avatarUrl} alt="" />
+            ) : null}
+            <AvatarFallback>
+              {computeInitials(profile.userName, profile.email)}
+            </AvatarFallback>
+          </Avatar>
+          <div className="flex min-w-0 flex-1 flex-col pointer-coarse:touch-chrome">
+            <span className="truncate text-ui-sm font-medium text-foreground">
+              {profile.userName}
+            </span>
+            <span className="truncate text-ui-xs text-muted-foreground">
+              {profile.email}
+            </span>
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Manage subscription"
+            data-testid="mobile-nav-manage-subscription"
+            onClick={handleManageSubscription}
+          >
+            <SquareArrowOutUpRight className="size-4" />
+          </Button>
+          {/* Opens the confirm rather than signing out: unlike its
                 neighbours this control doesn't `close()` first, so cancelling
                 puts the user back in the drawer where they were. */}
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                aria-label="Sign out"
-                className="text-destructive hover:text-destructive"
-                data-testid="mobile-nav-sign-out"
-                onClick={() => {
-                  setSignOutOpen(true);
-                }}
-              >
-                <LogOut className="size-4" />
-              </Button>
-            </div>
-          )}
-          {/* "New task" sits outside the scroll container so it stays pinned
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Sign out"
+            className="text-destructive hover:text-destructive"
+            data-testid="mobile-nav-sign-out"
+            onClick={() => {
+              setSignOutOpen(true);
+            }}
+          >
+            <LogOut className="size-4" />
+          </Button>
+        </div>
+      )}
+      {/* "New task" sits outside the scroll container so it stays pinned
             while the recent-task list below it scrolls. */}
-          <nav className="flex min-h-0 flex-1 flex-col p-2">
-            <Button
-              type="button"
-              variant="ghost"
-              // Weight alone separates the primary action from the history rows
-              // below (which are explicitly `font-normal`). A resting fill was
-              // tried and read as a heavy grey slab against an otherwise flat
-              // panel.
-              className={cn(ROW_CLASS, "shrink-0 font-medium text-foreground")}
-              data-testid="mobile-nav-new-task"
-              onClick={handleNewTask}
-            >
-              <Plus className="size-4" />
-              <span className="flex-1 text-left">New task</span>
-            </Button>
-            <div
-              className={cn(
-                "mt-1 min-h-0 flex-1 overflow-y-auto",
-                LIST_FADE_CLASS,
-              )}
-            >
-              <DrawerTaskList onNavigate={close} />
-            </div>
-          </nav>
-          <div className="flex shrink-0 flex-col gap-1 border-t border-border/60 p-2">
-            <Button
-              type="button"
-              variant="ghost"
-              className={ROW_CLASS}
-              data-testid="mobile-nav-settings"
-              onClick={handleSettings}
-            >
-              <Settings className="size-4" />
-              <span className="flex-1 text-left">Settings</span>
-            </Button>
-          </div>
-        </SheetContent>
-      </Sheet>
+      <nav className="flex min-h-0 flex-1 flex-col p-2">
+        <Button
+          type="button"
+          variant="ghost"
+          // Weight alone separates the primary action from the history rows
+          // below (which are explicitly `font-normal`). A resting fill would
+          // read as a heavy grey slab against an otherwise flat panel.
+          className={cn(ROW_CLASS, "shrink-0 font-medium text-foreground")}
+          data-testid="mobile-nav-new-task"
+          onClick={handleNewTask}
+        >
+          <Plus className="size-4" />
+          <span className="flex-1 text-left">New task</span>
+        </Button>
+        <div
+          className={cn("mt-1 min-h-0 flex-1 overflow-y-auto", LIST_FADE_CLASS)}
+        >
+          <DrawerTaskList onNavigate={close} />
+        </div>
+      </nav>
+      <div className="flex shrink-0 flex-col gap-1 border-t border-border/60 p-2">
+        <Button
+          type="button"
+          variant="ghost"
+          className={ROW_CLASS}
+          data-testid="mobile-nav-settings"
+          onClick={handleSettings}
+        >
+          <Settings className="size-4" />
+          <span className="flex-1 text-left">Settings</span>
+        </Button>
+      </div>
+    </>
+  );
+
+  return (
+    <>
+      {/* Outside the drawer, so the confirm can't be unmounted out from under
+          the user by an unrelated drawer close. */}
+      <SignOutConfirmDialog
+        open={signOutOpen}
+        onOpenChange={setSignOutOpen}
+        onConfirm={close}
+      />
+      {installedApp ? (
+        /* A hand-driven surface rather than a dialog primitive, for one
+           reason: it has to follow the finger from the screen edge. Every
+           dialog primitive available here mounts its panel on open, so there
+           is no panel to drag while the drawer is closed, and no amount of
+           configuration produces one - the panel has to outlive the open
+           state, which means owning the transform outright.
+
+           Branched on the PRODUCT flag, not the viewport, because the drawer
+           itself is mounted by form factor: a narrow desktop window renders
+           this component too, and it has a pointer rather than a finger. A
+           surface whose only dismissal is a drag would be a surface that
+           window cannot close, so it takes the Sheet. */
+        <MobileNavDrawerSurface open={open} onOpenChange={setOpen}>
+          {panel}
+        </MobileNavDrawerSurface>
+      ) : (
+        <Sheet open={open} onOpenChange={setOpen}>
+          <SheetContent
+            side="left"
+            showCloseButton={false}
+            className="gap-0 p-0 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
+            data-testid="mobile-nav-drawer"
+            data-mobile-shell-touch-scope=""
+          >
+            <SheetTitle className="sr-only">Menu</SheetTitle>
+            {panel}
+          </SheetContent>
+        </Sheet>
+      )}
     </>
   );
 }

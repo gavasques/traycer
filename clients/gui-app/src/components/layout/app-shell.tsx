@@ -8,6 +8,7 @@ import { MigrationBlockingModalHost } from "@/components/layout/dialogs/migratio
 import { AppHeader } from "@/components/layout/header/app-header";
 import { HostStatusStrip } from "@/components/layout/host-status-strip";
 import { MobileNavDrawer } from "@/components/layout/shell/mobile-nav-drawer";
+import { useDragToDismissKeyboard } from "@/components/layout/shell/use-drag-to-dismiss-keyboard";
 import { TopLevelTabHost } from "@/components/layout/top-level-tab-host";
 import { TopLevelSurfaceActivationProvider } from "@/components/layout/top-level-surface-activation-provider";
 import { HostScopeReady } from "@/components/layout/host-readiness-controller";
@@ -42,6 +43,11 @@ export function AppShell(props: AppShellProps) {
   // app-wide mount supplies that edge, because an episode is a HOST fact and
   // not a property of any open tab.
   useChatForkEventQuery();
+  // App-wide rather than composer-local: every text entry in the app raises the
+  // same keyboard, and the drag that dismisses it usually starts on the content
+  // above rather than on the field itself. Self-gated on the mobile-app product
+  // flag, so desktop attaches nothing.
+  useDragToDismissKeyboard();
 
   return (
     <PrimaryFocusCoordinatorProvider>

@@ -151,7 +151,13 @@ export function MobileTerminalKeyBar(props: MobileTerminalKeyBarProps) {
       data-mobile-shell-touch-scope=""
       data-testid="mobile-terminal-key-bar"
       className={cn(
-        "shrink-0 border-t border-canvas-border/70 bg-canvas px-1 pt-1",
+        // `touch-none` states in CSS what the cancelled `touchstart` below
+        // already enforces: this bar consumes its touches and none of them are
+        // pans. The shell-wide recognizers read it to keep off - without it the
+        // leftmost key column sits inside the drawer's edge zone, and a drag
+        // off a key would open the drawer or dismiss the very keyboard the bar
+        // exists to supplement.
+        "shrink-0 touch-none border-t border-canvas-border/70 bg-canvas px-1 pt-1",
         keyboardOpen ? "pb-1" : "pb-[max(0.25rem,env(safe-area-inset-bottom))]",
       )}
     >

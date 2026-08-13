@@ -28,6 +28,7 @@ import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { DropLine } from "@/components/ui/drop-line";
 import { Kbd } from "@/components/ui/kbd";
+import { ShortcutHint } from "@/components/ui/shortcut-hint";
 import {
   Tooltip,
   TooltipContent,
@@ -393,7 +394,9 @@ function SplitGroupButton(props: SplitGroupButtonProps) {
         <span className="flex items-center gap-2">
           <span>{actionLabel}</span>
           {shortcut === null ? null : (
-            <Kbd>{formatChordForDisplay(shortcut)}</Kbd>
+            <ShortcutHint>
+              <Kbd>{formatChordForDisplay(shortcut)}</Kbd>
+            </ShortcutHint>
           )}
         </span>
         <span className="text-background/70">

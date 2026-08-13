@@ -7,8 +7,9 @@ import type {
   InterviewQuestion,
 } from "@traycer/protocol/persistence/epic/schemas";
 import { Button } from "@/components/ui/button";
-import { Kbd, KbdGroup } from "@/components/ui/kbd";
-import { modLabel } from "@/lib/keybindings/platform";
+import { Kbd } from "@/components/ui/kbd";
+import { PrimaryActionShortcutHint } from "@/components/ui/primary-action-shortcut-hint";
+import { ShortcutHint } from "@/components/ui/shortcut-hint";
 import { InterviewForkActions } from "@/components/chat/segments/interview-fork-actions";
 import { QuestionPage } from "./question-page";
 import { QUESTION_TRANSITION, useInterviewCard } from "./use-interview-card";
@@ -155,7 +156,9 @@ export function PendingInterviewCard(props: PendingInterviewCardProps) {
             onClick={skip}
           >
             Skip
-            <Kbd>Esc</Kbd>
+            <ShortcutHint>
+              <Kbd>Esc</Kbd>
+            </ShortcutHint>
           </Button>
           {isLast ? (
             <Button
@@ -167,10 +170,7 @@ export function PendingInterviewCard(props: PendingInterviewCardProps) {
             >
               <Check className="size-3.5" aria-hidden />
               Submit
-              <KbdGroup>
-                <Kbd>{modLabel()}</Kbd>
-                <Kbd>↵</Kbd>
-              </KbdGroup>
+              <PrimaryActionShortcutHint />
             </Button>
           ) : (
             <Button
@@ -181,10 +181,7 @@ export function PendingInterviewCard(props: PendingInterviewCardProps) {
               onClick={goNext}
             >
               Next
-              <KbdGroup>
-                <Kbd>{modLabel()}</Kbd>
-                <Kbd>↵</Kbd>
-              </KbdGroup>
+              <PrimaryActionShortcutHint />
             </Button>
           )}
         </div>

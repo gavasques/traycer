@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import { InputGroup, InputGroupAddon } from "@/components/ui/input-group";
 import { SearchIcon, CheckIcon } from "lucide-react";
 import { Kbd } from "@/components/ui/kbd";
+import { ShortcutHint } from "@/components/ui/shortcut-hint";
 
 function Command({
   className,
@@ -136,22 +137,28 @@ function CommandItem({
   );
 }
 
+// The row's trailing chord chip. Gated as a whole rather than at its one call
+// site: the wrapper span is also what `CommandItem` keys its check-mark off
+// (`group-has-data-[slot=command-shortcut]`), so a bound command must either
+// show its chord or read as a plain row.
 function CommandShortcut({
   className,
   children,
   ...props
 }: React.ComponentProps<"span">) {
   return (
-    <span
-      data-slot="command-shortcut"
-      className={cn(
-        "ml-auto text-ui-xs text-muted-foreground group-data-selected/command-item:text-foreground",
-        className,
-      )}
-      {...props}
-    >
-      <Kbd className="font-mono tabular-nums">{children}</Kbd>
-    </span>
+    <ShortcutHint>
+      <span
+        data-slot="command-shortcut"
+        className={cn(
+          "ml-auto text-ui-xs text-muted-foreground group-data-selected/command-item:text-foreground",
+          className,
+        )}
+        {...props}
+      >
+        <Kbd className="font-mono tabular-nums">{children}</Kbd>
+      </span>
+    </ShortcutHint>
   );
 }
 

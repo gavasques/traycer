@@ -3,6 +3,7 @@ import { useStore } from "zustand";
 import { Popover, PopoverTrigger } from "@/components/ui/popover";
 import { TooltipWrapper } from "@/components/ui/tooltip-wrapper";
 import { Kbd } from "@/components/ui/kbd";
+import { ShortcutHint } from "@/components/ui/shortcut-hint";
 import { HarnessModelTrigger } from "@/components/home/pickers/harness-model-trigger";
 import {
   findUpgradeServiceTierForModel,
@@ -967,10 +968,12 @@ function HarnessModelPickerTooltip({
         <TooltipSummaryRow label="Profile" value={profileLabel} />
       )}
       {shortcutLabel === null ? null : (
-        <div className="mt-0.5 flex min-w-0 items-center justify-between gap-3 border-t border-background/15 pt-1">
-          <span className="text-background/70">Shortcut</span>
-          <Kbd className="text-code-xs">{shortcutLabel}</Kbd>
-        </div>
+        <ShortcutHint>
+          <div className="mt-0.5 flex min-w-0 items-center justify-between gap-3 border-t border-background/15 pt-1">
+            <span className="text-background/70">Shortcut</span>
+            <Kbd className="text-code-xs">{shortcutLabel}</Kbd>
+          </div>
+        </ShortcutHint>
       )}
     </div>
   );

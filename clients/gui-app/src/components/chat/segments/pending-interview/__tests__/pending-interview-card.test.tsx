@@ -140,10 +140,15 @@ function card(): HTMLElement {
   return screen.getByTestId("interview-card");
 }
 
-// The proceed (Next/Submit) action button, identified by its ⏎ shortcut hint -
-// distinct from the pager's "Next question" / "Previous question" buttons.
+// The proceed (Next/Submit) action button, identified by its exact accessible
+// name - distinct from the pager's "Next question" / "Previous question"
+// buttons. `PrimaryActionShortcutHint` marks its chord `aria-hidden`, so the
+// name carries no "↵"; the anchored regex is what rules out "Next question"
+// matching "Next".
 function proceedButton(): HTMLButtonElement {
-  return screen.getByRole<HTMLButtonElement>("button", { name: /↵/ });
+  return screen.getByRole<HTMLButtonElement>("button", {
+    name: /^(Submit|Next)$/,
+  });
 }
 
 describe("PendingInterviewCard keyboard navigation", () => {
@@ -422,9 +427,7 @@ describe("PendingInterviewCard keyboard navigation", () => {
     expect(
       screen.getByRole<HTMLButtonElement>("button", { name: /Skip/ }).disabled,
     ).toBe(true);
-    expect(
-      screen.getByRole<HTMLButtonElement>("button", { name: /↵/ }).disabled,
-    ).toBe(true);
+    expect(proceedButton().disabled).toBe(true);
     expect(
       screen.getByRole<HTMLButtonElement>("button", {
         name: "Previous question",

@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SwitcherAgentsList } from "@/components/epic-canvas/mobile/switcher-agents-list";
 import { SwitcherArtifactsList } from "@/components/epic-canvas/mobile/switcher-artifacts-list";
+import { STATUS_DOT_CLASSES } from "@/components/epic-canvas/sidebar/epic-sidebar-tree-shared";
 import { SwitcherTerminalsList } from "@/components/epic-canvas/mobile/switcher-terminals-list";
 
 interface FixtureRecord {
@@ -255,7 +256,12 @@ describe("<SwitcherArtifactsList />", () => {
     expect(screen.queryByTestId("switcher-artifact-row-chat-1")).toBeNull();
     const row = screen.getByTestId("switcher-artifact-row-tk-1");
     expect(row.textContent).toContain("Ticket One");
-    expect(screen.getByTitle("In Progress")).toBeTruthy();
+    // The status dot is a decorative (`aria-hidden`) touch-surface affordance
+    // with no title/aria-label - status color is the only signal, mirroring
+    // the desktop `STATUS_DOT_CLASSES` palette.
+    const statusDot = row.querySelector(".rounded-full");
+    expect(statusDot).not.toBeNull();
+    expect(statusDot?.className).toContain(STATUS_DOT_CLASSES[1]);
   });
 });
 

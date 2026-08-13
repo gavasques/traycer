@@ -20,6 +20,7 @@ const VIEW_TAB_ID = "view-tab-1";
 // EpicSessionProvider (mirrors tab-group-view.test).
 vi.mock("@/lib/epic-selectors", () => ({
   useEpicArtifact: (id: string) => ({ id }),
+  useEpicChatRetraction: () => null,
   useEpicTabDisplayTitle: (node: { readonly name: string }) => node.name,
   useEpicLiveArtifactTitleGenerating: () => false,
   useEpicPermissionRole: () => "owner",
@@ -55,6 +56,45 @@ vi.mock("@/components/epic-canvas/mobile/mobile-current-tile-bar", () => ({
 vi.mock("@/components/epic-canvas/mobile/tab-switcher-sheet", () => ({
   TabSwitcherSheet: () => null,
 }));
+
+// ActiveTabBody's published-copy fallback (`usePublishedChatFallbackRef`)
+// reads reachability, the active host, the host client, cloud chats, and the
+// chat session registry through these hook seams, unconditionally on every
+// render regardless of tab type - stubbed the same way `tab-group-view.test`
+// stubs them so this provider-less suite never reaches `useQueryClient`. None
+// of this file's fixtures are chat tabs, so every seam here answers the
+// "nothing special" default.
+vi.mock("@/hooks/agent/use-host-reachability", () => ({
+  useHostReachability: () => ({ status: "reachable", hostLabel: "host-A" }),
+}));
+
+vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
+  useReactiveActiveHostId: () => null,
+}));
+
+vi.mock("@/lib/host", () => ({
+  useHostClient: () => null,
+}));
+
+vi.mock("@/hooks/chats/use-cloud-chat-queries", () => ({
+  useCloudChatList: () => ({
+    data: undefined,
+    isError: false,
+    isPending: false,
+    isFetching: false,
+  }),
+}));
+
+vi.mock(
+  "@/lib/registries/chat-session-registry",
+  async (importOriginal) => ({
+    ...(await importOriginal<
+      typeof import("@/lib/registries/chat-session-registry")
+    >()),
+    useExistingChatSessionHandle: () => null,
+    useExistingChatSessionFatalClose: () => null,
+  }),
+);
 
 function spec(n: number): EpicCanvasTileRef {
   return {

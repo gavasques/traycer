@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ProviderList } from "@/components/providers/provider-list";
+import { HarnessIcon } from "@/components/home/pickers/harness-icon";
 import { useProvidersList } from "@/hooks/providers/use-providers-list-query";
 import { useProvidersSetEnabled } from "@/hooks/providers/use-providers-set-enabled-mutation";
 import { useRefreshProviders } from "@/hooks/providers/use-refresh-providers";
@@ -41,6 +42,7 @@ import {
 } from "@/components/settings/host-scope/use-host-scope";
 import type { HostRpcRegistry } from "@/lib/host";
 import { HostRuntimeContext, useHostBinding } from "@/lib/host/runtime";
+import { useIsMobileViewport } from "@/hooks/ui/use-mobile-viewport";
 import { useRelativeTimestamp } from "@/lib/relative-time";
 import { cn } from "@/lib/utils";
 import {
@@ -75,6 +77,7 @@ import {
 } from "./provider-rail-filter";
 import { TerminalAgentArgsSection } from "./terminal-agent-args-section";
 import { ProviderEnvOverridesSection } from "./provider-env-overrides-section";
+import { ProviderSectionHub } from "./provider-section-hub";
 import { ProviderCliCandidatesSection } from "./provider-cli-candidates-section";
 import {
   providerTabInputs,
@@ -763,9 +766,21 @@ function ProvidersMobileSelect(props: {
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
+        {/* The same `HarnessIcon` the desktop rail draws through
+            `ProviderList`, so the two presentations of the provider list mark a
+            provider the same way. `SelectItem` wraps its children in Radix's
+            `ItemText`, which portals the SELECTED item into the trigger - so
+            the icon rides the closed state too, from this one place. */}
         {props.providers.map((provider) => (
           <SelectItem key={provider.providerId} value={provider.providerId}>
-            {PROVIDER_DISPLAY_NAMES[provider.providerId]}
+            <span className="flex min-w-0 items-center gap-2">
+              <HarnessIcon
+                harnessId={providerIdToGuiHarnessId(provider.providerId)}
+              />
+              <span className="min-w-0 truncate">
+                {PROVIDER_DISPLAY_NAMES[provider.providerId]}
+              </span>
+            </span>
           </SelectItem>
         ))}
       </SelectContent>
@@ -850,6 +865,10 @@ function ProviderDetail({
   // explicit prop since it's also reused by the picker's tab-scoped flow.
   const hostClient = useHostClient();
   const switchId = useId();
+  // Layout question ("is the window narrow?"), so the viewport signal - the
+  // rail is a pointer affordance, and a narrow desktop window wants the phone
+  // presentation for the same reason a phone does.
+  const isMobile = useIsMobileViewport();
   // The API-key draft outlives the `account` tab body that renders it. Radix
   // unmounts an inactive `TabsContent`, so holding this inside the section
   // would blank a pasted key on any tab switch. Held HERE for the same reason
@@ -857,6 +876,24 @@ function ProviderDetail({
   // by provider, so a provider switch still discards the draft - a key typed
   // for one provider must never appear in another's field.
   const [apiKeyDraft, setApiKeyDraft] = useState("");
+  // Phone-only: whether `ProviderSectionHub`'s grid is open. Held here rather
+  // than inside the hub so it resets per provider for free - `ProvidersRailLayout`
+  // keys this component by host+provider, so every provider is entered with its
+  // sections enumerated, which is the whole point of the grid.
+  //
+  // Collapsed on arrival for a DEEP LINK, and only then: `focusTab` means the
+  // caller (the model picker's "Add API key" CTA, say) already named the
+  // section, so opening a chooser over it would be asking a question that was
+  // answered. Read straight from the store during the initial render, which is
+  // before `ProvidersRailLayout`'s mount effect clears it - a later remount
+  // reads `null` and opens expanded, which is what a manual visit should do.
+  // Compared against the RESOLVED tab so a deep link naming a section this
+  // provider does not support (which lands on `tabs[0]` instead) still gets the
+  // grid it needs.
+  const [hubExpanded, setHubExpanded] = useState<boolean>(() => {
+    const focusTab = useProvidersFocusStore.getState().focusTab;
+    return focusTab === null || focusTab !== activeTab;
+  });
   const [addProfileOpen, setAddProfileOpen] = useState(false);
   const [failedProfileAttempt, setFailedProfileAttempt] =
     useState<FailedProviderProfileAttempt | null>(null);
@@ -967,7 +1004,15 @@ function ProviderDetail({
           value={activeTab}
           onValueChange={(value) => {
             const next = tabs.find((tab) => tab === value);
-            if (next !== undefined) onActiveTabChange(next);
+            if (next === undefined) return;
+            onActiveTabChange(next);
+            // Collapsing HERE, on the selection itself, rather than in the hub
+            // tile's own handler: Radix activates a trigger from mouseDown,
+            // from keyboard roving focus, and from `Enter`/`Space`, and this is
+            // the one place all three arrive at. The tile keeps a click handler
+            // only for the case that never reaches here - re-picking the
+            // section that is already active, which must still close the grid.
+            setHubExpanded(false);
           }}
           // `gap-0`, with the rail-to-body spacing moved INSIDE the scroll box
           // as `pt-4`. With a gap here the scroll box would start 4 units below
@@ -975,25 +1020,44 @@ function ProviderDetail({
           // by the body, the clip edge and the rule are the same line.
           className="flex min-h-0 flex-1 flex-col gap-0"
         >
-          {/* Line (underline) tabs, not the filled default. Seven unrelated
-              panes is NAVIGATION, and a filled track reads as a segmented
-              control - which is for re-presenting one dataset, and tops out
-              around four options. The old bar also cancelled the primitive's
-              `w-fit` with `w-full` while keeping content-width triggers, so
-              the filled slab spanned the pane and every unused pixel piled up
-              on the right as dead space. Full width is kept here for the
-              BORDER (a rail spanning the pane), while the track itself is
-              transparent, so there is nothing left to look empty. */}
-          <TabsList
-            variant="line"
-            className="h-auto w-full max-w-full shrink-0 flex-wrap justify-start rounded-none border-b border-border/60 px-0 pb-1.5"
-          >
-            {tabs.map((tab) => (
-              <TabsTrigger key={tab} value={tab} className="flex-none px-3">
-                {providerTabLabel(tab, PROVIDER_TAB_LABELS, state.providerId)}
-              </TabsTrigger>
-            ))}
-          </TabsList>
+          {/* Two presentations of ONE selection. The pointer-width rail is the
+              line bar; below `md` it is `ProviderSectionHub`, because the bar's
+              `flex-wrap` is what a phone gets - two ragged rows of the pane's
+              fourth chrome row. The branch is presentation only: both render
+              Radix tab triggers against the same `Tabs` value, so the bodies
+              below and the one-mounted-pane invariant are untouched by it. */}
+          {isMobile ? (
+            <ProviderSectionHub
+              tabs={tabs}
+              activeTab={activeTab}
+              state={state}
+              expanded={hubExpanded}
+              onExpandedChange={setHubExpanded}
+              labelFor={(tab) =>
+                providerTabLabel(tab, PROVIDER_TAB_LABELS, state.providerId)
+              }
+            />
+          ) : (
+            /* Line (underline) tabs, not the filled default. Seven unrelated
+               panes is NAVIGATION, and a filled track reads as a segmented
+               control - which is for re-presenting one dataset, and tops out
+               around four options. The old bar also cancelled the primitive's
+               `w-fit` with `w-full` while keeping content-width triggers, so
+               the filled slab spanned the pane and every unused pixel piled up
+               on the right as dead space. Full width is kept here for the
+               BORDER (a rail spanning the pane), while the track itself is
+               transparent, so there is nothing left to look empty. */
+            <TabsList
+              variant="line"
+              className="h-auto w-full max-w-full shrink-0 flex-wrap justify-start rounded-none border-b border-border/60 px-0 pb-1.5"
+            >
+              {tabs.map((tab) => (
+                <TabsTrigger key={tab} value={tab} className="flex-none px-3">
+                  {providerTabLabel(tab, PROVIDER_TAB_LABELS, state.providerId)}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          )}
 
           {/* The scroll owner. Radix mounts only the ACTIVE content, so there
               is exactly one scroll box at a time and switching tabs starts it

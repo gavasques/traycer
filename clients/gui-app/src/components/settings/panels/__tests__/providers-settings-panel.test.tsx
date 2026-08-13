@@ -6536,3 +6536,264 @@ describe("<ProvidersSettingsPanel />", () => {
     expect(screen.queryByRole("dialog", { name: "Add profile" })).toBeNull();
   });
 });
+
+// -----------------------------------------------------------------------------
+// Mobile section hub: below `md`, `ProviderDetail` swaps the desktop tab rail
+// for `ProviderSectionHub` (see `provider-section-hub.tsx`). A separate,
+// top-level `describe` rather than nesting inside the suite above - it needs
+// its own narrow-viewport `beforeEach`/`afterEach` (the outer suite's tests
+// assume the default 1024px width), and keeping the override scoped to these
+// tests is what stops it leaking into every test above or below.
+// -----------------------------------------------------------------------------
+
+// `FULL_TABS` (general/env/usage/mcp/plugins/skills) has no `account` or
+// `modelProviders` entry, so it cannot exercise every hub tile. This adds
+// both, on top of the same `mcp`/`plugins`/`skills` capability blocks.
+const HUB_EIGHT_TABS: ProviderNativeCapabilities = {
+  ...FULL_TABS,
+  supportedTabs: [
+    "general",
+    "usage",
+    "env",
+    "modelProviders",
+    "mcp",
+    "plugins",
+    "skills",
+  ],
+};
+
+// Advertises only `general` and `mcp`; combined with `apiKey.supported` below
+// this yields exactly three tabs (account, general, mcp) via
+// `supportedTabsFor` - see `provider-settings-tabs.ts`.
+const HUB_THREE_TABS: ProviderNativeCapabilities = {
+  supportedTabs: ["general", "mcp"],
+  mcp: SAMPLE_MCP,
+  plugins: null,
+  skills: null,
+  modelProviders: null,
+};
+
+function hubProviderState(input: {
+  readonly providerId: ProviderCliState["providerId"];
+  readonly nativeCapabilities: ProviderNativeCapabilities;
+}): ProviderCliState {
+  return providerState({
+    providerId: input.providerId,
+    selected: { kind: "bundled" },
+    candidates: [],
+    envOverrides: [],
+    nativeCapabilities: input.nativeCapabilities,
+    // Every hub tile in these fixtures has to include `account`, so the key
+    // has to be supported - `configured: false` keeps the tile's "No key"
+    // caption (see `providerSectionMeta`) rather than adding a second
+    // configured-vs-not axis these tests don't need.
+    apiKey: { supported: true, configured: false, source: null },
+  });
+}
+
+describe("<ProvidersSettingsPanel /> mobile section hub", () => {
+  beforeEach(() => {
+    // `useIsMobileViewport` reads `window.innerWidth` directly (not
+    // `matchMedia().matches`, which the global test shim always reports as
+    // `false`), so setting it before render is enough to force the phone
+    // presentation.
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: 400,
+    });
+    useProvidersFocusStore.setState({
+      focusHarnessId: null,
+      focusHostId: null,
+      focusTargetHostId: null,
+      focusProfileId: null,
+      startSignIn: false,
+      focusTab: null,
+    });
+    hostScopeMocks.setHostId.mockClear();
+    hostScopeMocks.hostId = "host-a";
+    hostScopeMocks.host = undefined;
+    hostScopeMocks.status = undefined;
+    hostScopeMocks.client = null;
+    // Default fixture for the "entering a provider" tests below: a single
+    // provider advertising every hub section.
+    providerMocks.listResult.data = {
+      providers: [
+        hubProviderState({
+          providerId: "claude-code",
+          nativeCapabilities: HUB_EIGHT_TABS,
+        }),
+      ],
+    };
+    providerMocks.listResult.isError = false;
+    providerMocks.listResult.error = undefined;
+  });
+
+  afterEach(() => {
+    cleanup();
+    // Restore before the next file's tests (or the suite above, if test order
+    // ever changes) see the default desktop width again.
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: 1024,
+    });
+    useProvidersFocusStore.setState({
+      focusHarnessId: null,
+      focusHostId: null,
+      focusTargetHostId: null,
+      focusProfileId: null,
+      startSignIn: false,
+      focusTab: null,
+    });
+  });
+
+  it("expands the grid with every supported section on entering a provider", () => {
+    render(
+      <TooltipProvider>
+        <ProvidersSettingsPanel />
+      </TooltipProvider>,
+    );
+
+    const grid = screen.getByRole("tablist");
+    expect(within(grid).getAllByRole("tab")).toHaveLength(8);
+    // `account`'s tile always carries a "No key"/"Key set" caption (see
+    // `providerSectionMeta`), so its accessible name is never the bare label -
+    // matched by prefix here, exactly like every other tile below.
+    expect(within(grid).getByRole("tab", { name: /^Account/ })).toBeDefined();
+    expect(
+      within(grid).getByRole("tab", { name: "Profiles & Limits" }),
+    ).toBeDefined();
+    expect(within(grid).getByRole("tab", { name: "CLI & Args" })).toBeDefined();
+    expect(within(grid).getByRole("tab", { name: "Env" })).toBeDefined();
+    expect(
+      within(grid).getByRole("tab", { name: "Model Providers" }),
+    ).toBeDefined();
+    expect(within(grid).getByRole("tab", { name: "MCP" })).toBeDefined();
+    expect(within(grid).getByRole("tab", { name: "Plugins" })).toBeDefined();
+    expect(within(grid).getByRole("tab", { name: "Skills" })).toBeDefined();
+
+    // Expanded on arrival (no deep-linked tab), so the bar reads "Collapse".
+    expect(screen.getByRole("button", { name: /Collapse/ })).toBeDefined();
+  });
+
+  it("collapses the grid to a bar and shows the picked section's body", () => {
+    render(
+      <TooltipProvider>
+        <ProvidersSettingsPanel />
+      </TooltipProvider>,
+    );
+
+    // Hub tiles are real Radix triggers, so the shared mouseDown helper works
+    // on them exactly as it does on the desktop tab bar.
+    selectTab("Env");
+
+    // The grid is gone entirely, not merely empty - `ProviderSectionHub`
+    // renders no `TabsPrimitive.List` at all while collapsed.
+    expect(screen.queryByRole("tablist")).toBeNull();
+    expect(screen.queryAllByRole("tab")).toHaveLength(0);
+
+    const bar = screen.getByRole("button", { name: /All sections/ });
+    expect(bar.textContent).toContain("Env");
+    expect(screen.getByText("Environment variables")).toBeDefined();
+  });
+
+  it("re-expands the grid from the All sections control", () => {
+    render(
+      <TooltipProvider>
+        <ProvidersSettingsPanel />
+      </TooltipProvider>,
+    );
+
+    selectTab("Env");
+    // Not a tab - a plain button that only opens/closes the grid.
+    fireEvent.click(screen.getByRole("button", { name: /All sections/ }));
+
+    const grid = screen.getByRole("tablist");
+    expect(within(grid).getAllByRole("tab")).toHaveLength(8);
+    expect(screen.getByRole("button", { name: /Collapse/ })).toBeDefined();
+    // The selection itself survived the expand/collapse round trip.
+    expect(
+      within(grid).getByRole("tab", { name: "Env" }).getAttribute("data-state"),
+    ).toBe("active");
+  });
+
+  it("opens a deep link collapsed, straight on the requested tab", () => {
+    providerMocks.listResult.data = {
+      providers: [
+        providerState({
+          providerId: "opencode",
+          selected: { kind: "bundled" },
+          candidates: OPENCODE_CANDIDATES,
+          envOverrides: [],
+          nativeCapabilities: FULL_TABS,
+        }),
+        providerState({
+          providerId: "traycer",
+          selected: { kind: "bundled" },
+          candidates: [],
+          envOverrides: [],
+          nativeCapabilities: FULL_TABS,
+        }),
+        providerState({
+          providerId: "openrouter",
+          selected: { kind: "bundled" },
+          candidates: [],
+          envOverrides: [],
+          nativeCapabilities: FULL_TABS,
+        }),
+      ],
+    };
+    useProvidersFocusStore.setState({
+      focusHarnessId: "opencode",
+      focusTab: "env",
+    });
+
+    render(
+      <TooltipProvider>
+        <ProvidersSettingsPanel />
+      </TooltipProvider>,
+    );
+
+    // Collapsed on arrival: the deep link already named the section, so
+    // opening a chooser over it would ask a question that was answered.
+    expect(screen.queryByRole("tablist")).toBeNull();
+    expect(screen.queryAllByRole("tab")).toHaveLength(0);
+    const bar = screen.getByRole("button", { name: /All sections/ });
+    expect(bar.textContent).toContain("Env");
+    expect(screen.getByText("Environment variables")).toBeDefined();
+  });
+
+  it("renders exactly a 3-section provider's sections, no others", () => {
+    providerMocks.listResult.data = {
+      providers: [
+        hubProviderState({
+          providerId: "amp",
+          nativeCapabilities: HUB_THREE_TABS,
+        }),
+      ],
+    };
+
+    render(
+      <TooltipProvider>
+        <ProvidersSettingsPanel />
+      </TooltipProvider>,
+    );
+
+    const grid = screen.getByRole("tablist");
+    expect(within(grid).getAllByRole("tab")).toHaveLength(3);
+    expect(within(grid).getByRole("tab", { name: /^Account/ })).toBeDefined();
+    expect(within(grid).getByRole("tab", { name: "CLI & Args" })).toBeDefined();
+    expect(within(grid).getByRole("tab", { name: "MCP" })).toBeDefined();
+    expect(within(grid).queryByRole("tab", { name: "Env" })).toBeNull();
+    expect(
+      within(grid).queryByRole("tab", { name: "Profiles & Limits" }),
+    ).toBeNull();
+    expect(
+      within(grid).queryByRole("tab", { name: "Usage limits" }),
+    ).toBeNull();
+    expect(
+      within(grid).queryByRole("tab", { name: "Model Providers" }),
+    ).toBeNull();
+    expect(within(grid).queryByRole("tab", { name: "Plugins" })).toBeNull();
+    expect(within(grid).queryByRole("tab", { name: "Skills" })).toBeNull();
+  });
+});

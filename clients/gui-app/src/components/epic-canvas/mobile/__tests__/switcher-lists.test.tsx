@@ -107,11 +107,18 @@ vi.mock("@/hooks/terminal/use-terminal-kill-mutation", () => ({
 vi.mock("@/hooks/epic/use-epic-nested-focus-navigation", () => ({
   useEpicNestedFocusNavigation: () => vi.fn(),
 }));
-// The Artifacts list carries a "+" create affordance (Agents and
-// Terminals do not - their creation lives in the switcher's create row); stub the
-// menu so the list header renders and editor-gating can be asserted in
-// isolation.
+// Each category list renders its own create row/menu (Agents: New chat,
+// Terminals: New terminal, Artifacts: a "+" kind menu); stub all three to
+// markers so their own wiring (composer mode, the terminal picker dialog, the
+// artifact-kind dropdown) doesn't need to mount here - this file exercises
+// each list's editor gating and row positioning in isolation.
 vi.mock("@/components/epic-canvas/mobile/switcher-create-actions", () => ({
+  SwitcherNewChatRow: () => (
+    <button type="button" data-testid="switcher-new-chat" />
+  ),
+  SwitcherNewTerminalRow: () => (
+    <button type="button" data-testid="switcher-new-terminal" />
+  ),
   SwitcherNewArtifactMenu: () => (
     <button type="button" data-testid="new-artifact-action" />
   ),
@@ -260,7 +267,7 @@ describe("<SwitcherArtifactsList />", () => {
 });
 
 describe("switcher create affordances (editor-gated)", () => {
-  it("renders no per-category '+' for Agents (creation lives in the switcher's create row)", () => {
+  it("shows the New chat row as the first row for an editor and hides it for a viewer", () => {
     holder.records = [
       {
         id: "chat-1",
@@ -271,13 +278,55 @@ describe("switcher create affordances (editor-gated)", () => {
         hostId: "host-A",
       },
     ];
+    const editor = render(<SwitcherAgentsList {...PROPS} />);
+    const newChatRow = screen.getByTestId("switcher-new-chat");
+    const firstItemRow = screen.getByTestId("switcher-agent-row-chat-1");
+    // DOCUMENT_POSITION_FOLLOWING on `firstItemRow` relative to `newChatRow`
+    // means the create row comes first in document order.
+    expect(
+      newChatRow.compareDocumentPosition(firstItemRow) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    editor.unmount();
+
+    holder.role = "viewer";
     render(<SwitcherAgentsList {...PROPS} />);
-    expect(screen.queryByTestId("new-agent-action")).toBeNull();
+    expect(screen.queryByTestId("switcher-new-chat")).toBeNull();
   });
 
-  it("renders no per-category '+' for Terminals (creation lives in the switcher's create row)", () => {
+  it("keeps the New chat row above the empty-state message when there are no agents", () => {
+    render(<SwitcherAgentsList {...PROPS} />);
+    expect(screen.getByTestId("switcher-new-chat")).toBeTruthy();
+    expect(screen.getByText("No agents yet.")).toBeTruthy();
+  });
+
+  it("shows the New terminal row as the first row for an editor and hides it for a viewer", () => {
+    holder.sessions = [
+      {
+        sessionId: "term-1",
+        title: "Build",
+        activeProcessName: null,
+        cwd: "/repo",
+      },
+    ];
+    const editor = render(<SwitcherTerminalsList {...PROPS} />);
+    const newTerminalRow = screen.getByTestId("switcher-new-terminal");
+    const firstItemRow = screen.getByTestId("switcher-terminal-row-term-1");
+    expect(
+      newTerminalRow.compareDocumentPosition(firstItemRow) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    editor.unmount();
+
+    holder.role = "viewer";
     render(<SwitcherTerminalsList {...PROPS} />);
-    expect(screen.queryByTestId("new-terminal-action")).toBeNull();
+    expect(screen.queryByTestId("switcher-new-terminal")).toBeNull();
+  });
+
+  it("keeps the New terminal row above the empty-state message when there are no terminals", () => {
+    render(<SwitcherTerminalsList {...PROPS} />);
+    expect(screen.getByTestId("switcher-new-terminal")).toBeTruthy();
+    expect(screen.getByText("No terminals yet.")).toBeTruthy();
   });
 
   it("shows New artifact for an editor and hides it for a viewer", () => {

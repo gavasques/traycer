@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Check } from "lucide-react";
+import { Check, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 /**
@@ -43,6 +43,33 @@ export function SwitcherListRow(props: {
       </Button>
       {actions}
     </div>
+  );
+}
+
+/**
+ * The "make another one" row at the head of a category list. Same geometry and
+ * weight as the item rows below it, so creating reads as one more entry in the
+ * list rather than a banner over it; the leading "+" is what marks it apart.
+ */
+export function SwitcherNewItemRow(props: {
+  readonly label: string;
+  readonly onSelect: () => void;
+  readonly testId: string;
+}) {
+  const { label, onSelect, testId } = props;
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      onClick={onSelect}
+      data-testid={testId}
+      className="flex min-h-11 w-full items-center justify-start gap-2 rounded-md px-2 text-left font-normal text-muted-foreground"
+    >
+      <span className="flex size-4 shrink-0 items-center justify-center">
+        <Plus className="size-4" />
+      </span>
+      <span className="min-w-0 flex-1 truncate text-ui-sm">{label}</span>
+    </Button>
   );
 }
 

@@ -1,12 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import {
-  act,
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-} from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TabSwitcherSheet } from "@/components/epic-canvas/mobile/tab-switcher-sheet";
@@ -53,23 +47,6 @@ vi.mock("@/components/epic-canvas/mobile/switcher-artifacts-list", () => ({
 }));
 vi.mock("@/components/epic-canvas/mobile/switcher-panel-embed", () => ({
   SwitcherPanelEmbed: () => <div data-testid="mock-panel-embed" />,
-}));
-
-// The create row's own editor-gating, New chat / New terminal wiring is
-// covered end-to-end in switcher-create-row.test.tsx; here it is stubbed to a
-// marker + a New-chat button so this suite can assert positioning (above the
-// category tabs) and that its close call reaches the sheet's `onOpenChange`.
-vi.mock("@/components/epic-canvas/mobile/switcher-create-row", () => ({
-  SwitcherCreateRow: (props: { readonly onClose: () => void }) => (
-    <div data-testid="mock-switcher-create-row">
-      <button
-        type="button"
-        data-testid="switcher-new-chat"
-        onClick={props.onClose}
-      />
-      <button type="button" data-testid="switcher-new-terminal" />
-    </div>
-  ),
 }));
 
 const TAB_ID = "tab-switcher-test";
@@ -145,25 +122,6 @@ describe("<TabSwitcherSheet />", () => {
     renderSheet(true, () => {});
     const heading = screen.getByText("Switch tab");
     expect(heading.className).toContain("sr-only");
-  });
-
-  it("renders the create row above the category tabs", () => {
-    renderSheet(true, () => {});
-    const createRow = screen.getByTestId("mock-switcher-create-row");
-    const tabs = screen.getAllByRole("tab")[0];
-    // DOCUMENT_POSITION_FOLLOWING on `tabs` relative to `createRow` means
-    // createRow comes first in document order.
-    expect(
-      createRow.compareDocumentPosition(tabs) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-  });
-
-  it("New chat in the create row closes the sheet", () => {
-    const onOpenChange = vi.fn();
-    renderSheet(true, onOpenChange);
-    fireEvent.click(screen.getByTestId("switcher-new-chat"));
-    expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
   it("persists a category selection to the left-panel store and swaps the body", async () => {

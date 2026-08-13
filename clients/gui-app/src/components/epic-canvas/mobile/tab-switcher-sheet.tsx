@@ -8,7 +8,6 @@ import {
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
 import { SwitcherCategoryTabs } from "@/components/epic-canvas/mobile/switcher-category-tabs";
-import { SwitcherCreateRow } from "@/components/epic-canvas/mobile/switcher-create-row";
 import {
   MOBILE_SWITCHER_CATEGORY_DEFS,
   clampToSwitcherCategory,
@@ -61,11 +60,11 @@ function isEmbedOriginatedTileRef(ref: EpicCanvasTileRef): boolean {
 }
 
 /**
- * The mobile tab switcher: a drag-dismissable `vaul` bottom sheet holding the
- * create row, a category bar mirroring the desktop left-panel registry, and a
- * content region showing the active category - flat lists for
- * Agents/Terminals/Artifacts, the embedded desktop File-tree / Git-diff panel
- * bodies for the rest.
+ * The mobile tab switcher: a drag-dismissable `vaul` bottom sheet whose
+ * category bar mirrors the desktop left-panel registry and whose content region
+ * shows the active category - flat lists for Agents/Terminals/Artifacts, the
+ * embedded desktop File-tree / Git-diff panel bodies for the rest. Creating is
+ * a row inside the category that owns the kind, not a sheet-level control.
  *
  * Opened from the mobile header's switcher trigger. Only meaningful on phones -
  * it is mounted from `MobileEpicTileView`, which itself renders only under the
@@ -138,11 +137,6 @@ export function TabSwitcherSheet(props: TabSwitcherSheetProps) {
               content says what it is, so it carries no visible heading. */}
           <DrawerTitle className="sr-only">Switch tab</DrawerTitle>
         </DrawerHeader>
-        <SwitcherCreateRow
-          epicId={epicId}
-          tabId={tabId}
-          onClose={handleClose}
-        />
         <Tabs
           value={activeCategory}
           onValueChange={handleCategoryChange}

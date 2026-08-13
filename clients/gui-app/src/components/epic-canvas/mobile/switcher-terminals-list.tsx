@@ -7,7 +7,10 @@ import {
   SwitcherListRow,
 } from "@/components/epic-canvas/mobile/switcher-list-row";
 import { SwitcherRowActions } from "@/components/epic-canvas/mobile/switcher-row-actions";
+import { SwitcherNewTerminalRow } from "@/components/epic-canvas/mobile/switcher-create-actions";
 import { useSwitcherActivate } from "@/components/epic-canvas/mobile/use-switcher-activate";
+import { useEpicPermissionRole } from "@/lib/epic-selectors";
+import { isEditableRole } from "@/lib/epic-permissions";
 import { useHostClient } from "@/lib/host";
 import { UNKNOWN_HOST_PLACEHOLDER } from "@/lib/host/constants";
 import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
@@ -39,22 +42,32 @@ export function SwitcherTerminalsList(props: SwitcherListProps) {
     isVisibleEpicTerminalSession(session, epicId),
   );
 
+  const canMutate = isEditableRole(useEpicPermissionRole());
+
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain p-1 pb-safe-bottom">
+      {/* Editor-gated: a viewer's create is server-rejected, so an ungated row
+          would only lead to a dead end. Inside the scroll region and above the
+          items, so it is the first thing in the list either way. */}
+      {canMutate ? (
+        <SwitcherNewTerminalRow
+          epicId={epicId}
+          tabId={tabId}
+          onClose={onClose}
+        />
+      ) : null}
       {sessions.length === 0 ? (
         <SwitcherListEmpty message="No terminals yet." />
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain p-1 pb-[env(safe-area-inset-bottom)]">
-          {sessions.map((session) => (
-            <SwitcherTerminalRow
-              key={session.sessionId}
-              session={session}
-              epicId={epicId}
-              tabId={tabId}
-              onClose={onClose}
-            />
-          ))}
-        </div>
+        sessions.map((session) => (
+          <SwitcherTerminalRow
+            key={session.sessionId}
+            session={session}
+            epicId={epicId}
+            tabId={tabId}
+            onClose={onClose}
+          />
+        ))
       )}
     </div>
   );

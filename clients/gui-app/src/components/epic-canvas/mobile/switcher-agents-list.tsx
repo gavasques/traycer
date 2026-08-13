@@ -6,12 +6,15 @@ import {
   SwitcherListRow,
 } from "@/components/epic-canvas/mobile/switcher-list-row";
 import { SwitcherRowActions } from "@/components/epic-canvas/mobile/switcher-row-actions";
+import { SwitcherNewChatRow } from "@/components/epic-canvas/mobile/switcher-create-actions";
 import { useSwitcherActivate } from "@/components/epic-canvas/mobile/use-switcher-activate";
 import { useOrderedSwitcherRecords } from "@/components/epic-canvas/mobile/switcher-record-order";
 import {
   useEpicArtifactRecords,
+  useEpicPermissionRole,
   type EpicTreeRecord,
 } from "@/lib/epic-selectors";
+import { isEditableRole } from "@/lib/epic-permissions";
 import {
   computeDescendantCounts,
   formatCascadeSummary,
@@ -45,24 +48,29 @@ export function SwitcherAgentsList(props: SwitcherListProps) {
     [records],
   );
   const agents = useOrderedSwitcherRecords(filtered);
+  const canMutate = isEditableRole(useEpicPermissionRole());
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain p-1 pb-safe-bottom">
+      {/* Editor-gated: a viewer's create is server-rejected, so an ungated row
+          would only lead to a dead end. Inside the scroll region and above the
+          items, so it is the first thing in the list either way. */}
+      {canMutate ? (
+        <SwitcherNewChatRow epicId={epicId} tabId={tabId} onClose={onClose} />
+      ) : null}
       {agents.length === 0 ? (
         <SwitcherListEmpty message="No agents yet." />
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain p-1 pb-[env(safe-area-inset-bottom)]">
-          {agents.map((record) => (
-            <SwitcherAgentRow
-              key={record.id}
-              record={record}
-              records={records}
-              epicId={epicId}
-              tabId={tabId}
-              onClose={onClose}
-            />
-          ))}
-        </div>
+        agents.map((record) => (
+          <SwitcherAgentRow
+            key={record.id}
+            record={record}
+            records={records}
+            epicId={epicId}
+            tabId={tabId}
+            onClose={onClose}
+          />
+        ))
       )}
     </div>
   );

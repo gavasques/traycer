@@ -1,6 +1,10 @@
 import type { ReactNode } from "react";
 import { m, useReducedMotion } from "motion/react";
 import {
+  isHostReachable,
+  type HostAvailability,
+} from "@traycer-clients/shared/host-client/host-directory";
+import {
   Bell,
   Check,
   CheckCircle2,
@@ -21,7 +25,6 @@ import { useHostDirectoryEntry } from "@/hooks/host/use-host-directory-entry";
 import { useReactiveLocalHostEntry } from "@/hooks/host/use-reactive-local-host-entry";
 import { notificationPayloadRequiresOriginHost } from "@/hooks/notifications/use-notification-activation";
 import { useIsTextTruncated } from "@/hooks/ui/use-is-text-truncated";
-import { classifyNotificationLifecycle } from "@/lib/notifications/notification-lifecycle";
 import {
   classifyProviderPackNotificationLocality,
   presentProviderPackNotificationBody,
@@ -47,22 +50,23 @@ interface NotificationRowProps {
   readonly highlightRelocation: boolean;
   readonly onActivate: (row: MergedNotificationRow) => void;
   readonly onAcknowledge: (row: MergedNotificationRow) => void;
-  /** Dismiss an unresolved `needs_action` Attention row (stamps `resolvedAt`).
-   * Only reached for blocking-tier Attention rows; every other row uses
-   * `onAcknowledge`. */
-  readonly onResolve: (row: MergedNotificationRow) => void;
 }
 
 function isOriginUnavailable(input: {
   readonly row: MergedNotificationRow;
-  readonly originStatus: "available" | "unavailable" | undefined;
+  readonly originStatus: HostAvailability | undefined;
 }): boolean {
   const requiresOriginHost =
     input.row.payload !== null &&
     notificationPayloadRequiresOriginHost(input.row.payload);
   if (!requiresOriginHost) return false;
   if (input.row.originHostId === null) return true;
-  return input.originStatus !== "available";
+  // A busy host is reachable (int #48): the row must not grey out an
+  // approval whose origin is merely slow. Absent directory entry stays
+  // fail-closed.
+  return (
+    input.originStatus === undefined || !isHostReachable(input.originStatus)
+  );
 }
 
 /**
@@ -92,16 +96,11 @@ function rowMotionProps(options: {
   };
 }
 
-function isBlockingAttentionRow(row: MergedNotificationRow): boolean {
-  const lifecycle = classifyNotificationLifecycle(row);
-  return lifecycle.section === "attention" && lifecycle.tier === "blocking";
-}
-
 /**
  * One flat, balanced two-line row - a small semantic glyph, title/meta
  * content, trailing relative time, and exactly one primary interactive
  * control. A navigable row's primary control is the row itself (click to
- * activate) with a sibling resolve/mark-as-read affordance while unread; a
+ * activate) with a sibling mark-as-read affordance while unread; a
  * payload-less row never pretends to navigate - its only control is an
  * explicit acknowledge button, so neither shape ever nests a button inside
  * a button. Unread state is a full-height accent
@@ -139,7 +138,6 @@ export function NotificationRow(props: NotificationRowProps): ReactNode {
     row,
     originStatus: originHost?.status,
   });
-  const isBlockingAttention = isBlockingAttentionRow(row);
   const glyph = notificationRowGlyph(row);
   const Icon = glyph.icon;
 
@@ -221,9 +219,7 @@ export function NotificationRow(props: NotificationRowProps): ReactNode {
           row={row}
           isNavigable={packPresentation.isNavigable}
           isRead={isRead}
-          isBlockingAttention={isBlockingAttention}
           onAcknowledge={props.onAcknowledge}
-          onResolve={props.onResolve}
         />
       </div>
     </m.li>
@@ -327,32 +323,16 @@ interface NotificationRowTrailingControlProps {
   readonly row: MergedNotificationRow;
   readonly isNavigable: boolean;
   readonly isRead: boolean;
-  readonly isBlockingAttention: boolean;
   readonly onAcknowledge: (row: MergedNotificationRow) => void;
-  readonly onResolve: (row: MergedNotificationRow) => void;
 }
 
-/** The sibling trailing control. On an unresolved `needs_action` Attention row
- * it is a "Dismiss" affordance - the same right-edge tick normal rows carry,
- * but wired to `onResolve` (which stamps `resolvedAt`) so the row leaves
- * Attention without answering the underlying prompt. Every other row keeps
- * the original acknowledge control - "Mark as read" on a navigable row or
- * "Acknowledge" on a payload-less one. All variants are shown only while
- * unread: a read row has nothing left to press, and reusing the tick for
- * another disposition makes the read-state affordance ambiguous. */
+/** The sibling trailing control acknowledges every unread row, including
+ * questions and permission requests. Acknowledging notification awareness
+ * never resolves the underlying chat workflow. */
 function NotificationRowTrailingControl(
   props: NotificationRowTrailingControlProps,
 ): ReactNode {
   if (props.isRead) return null;
-  if (props.isBlockingAttention) {
-    return (
-      <NotificationRowControlButton
-        label="Dismiss"
-        testId="notification-dismiss"
-        onClick={() => props.onResolve(props.row)}
-      />
-    );
-  }
   return (
     <NotificationRowControlButton
       label={props.isNavigable ? "Mark as read" : "Acknowledge"}
@@ -372,9 +352,8 @@ interface NotificationRowControlButtonProps {
   readonly onClick: () => void;
 }
 
-/** The shared right-edge tick button. Dismiss / mark-as-read / acknowledge are
- * the same affordance visually (same icon, size, and styling / testid family);
- * only the label, testid, and click target differ. It is a sibling of the
+/** The shared right-edge tick button. Mark-as-read and acknowledge use the
+ * same affordance visually. It is a sibling of the
  * navigable body button, never nested inside it, so a click can't activate the
  * row. */
 function NotificationRowControlButton(

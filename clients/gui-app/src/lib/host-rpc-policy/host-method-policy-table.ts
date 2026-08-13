@@ -363,7 +363,7 @@ export const HOST_METHOD_POLL_TABLE = {
     joinResponseTimeoutMs: null,
     poll: null,
   },
-  // Dismissing an attention row resolves it (persists the acknowledgement).
+  // Retained for compatible occurrence-scoped workflow resolution callers.
   "host.notifications.resolve": {
     mode: "fifo",
     joinResponseTimeoutMs: null,
@@ -820,6 +820,32 @@ export const HOST_METHOD_POLL_TABLE = {
   // One-shot read: the doc content of an unreachable owner's chat cannot
   // change while its owner is away.
   "epic.chatReplicaRead": { ...LATEST_SCHEDULING, poll: null },
+  // The store-backed chat RECORD channel (chat-sync-v2 ticket 49).
+  //
+  // POLLED, at a cadence, and the reason is that there is no invalidation edge
+  // to ride. The facts this serves - a chat was created, renamed, re-parented,
+  // archived, deleted - are committed to the chat DATABASE and, since the
+  // single-write pivot, are written NOWHERE the renderer already listens: not
+  // into the epic Y.Doc (whose update stream is the only per-epic push channel
+  // a client has), and not into any per-epic frame on `epic.subscribe`. The
+  // host's registry does emit a change stream internally, but it has no wire
+  // surface, and giving it one is a new STREAM method - handshake-fatal against
+  // a released peer on a surface whose whole point here is to degrade quietly.
+  //
+  // A condition policy was the alternative and does not fit: `defineConditionPolicy`
+  // classifies from THIS method's own response, and nothing in a list of chat
+  // rows says whether another one is about to appear. The honest classification
+  // is "always maybe", which is a fixed interval wearing a lane's clothes.
+  //
+  // 20s: a local in-memory registry read, one per open epic. It bounds how long
+  // a chat created on ANOTHER device (or by an agent, or by the CLI) stays
+  // missing from this renderer's tree - the same staleness the sidebar's own
+  // cloud list already tolerates at 30s - and the client's own mutations do not
+  // wait for it, since they invalidate this key on success.
+  "epic.listChatRecords": {
+    ...LATEST_SCHEDULING,
+    poll: { kind: "fixed", intervalMs: 20 * SECOND_MS },
+  },
   // The publisher's own convergence sweep is 30s, so a 45s local read is
   // responsive without asking faster than the underlying state can change.
   "epic.chatBackupStatus": {
@@ -868,6 +894,15 @@ export const HOST_METHOD_POLL_TABLE = {
   // No poll: the PR detail stream is what notices a new push, and a re-render
   // off a changed `headRefOid` re-keys the query on its own.
   "pr.getLocalDiff": { ...LATEST_SCHEDULING, poll: null },
+  // The composer's PR/issue mention sections. Both are latest-wins with no
+  // poll: the menu is open for seconds at a time and drives every fetch
+  // explicitly (open, refresh click, filter change), so there is no cadence
+  // to keep - and a superseded read has nothing worth waiting for.
+  "mention.githubCatalog": { ...LATEST_SCHEDULING, poll: null },
+  // Latest-wins is load-bearing here rather than incidental: the section
+  // searches as the user types, and a queued query that has already been
+  // retyped past must not be the one that lands.
+  "mention.githubSearch": { ...LATEST_SCHEDULING, poll: null },
   // Creating a terminal allocates a host PTY session.
   "terminal.create": { mode: "fifo", joinResponseTimeoutMs: null, poll: null },
   // Killing a terminal terminates a host PTY session.

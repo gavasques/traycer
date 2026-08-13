@@ -27,6 +27,7 @@ import { AuthSessionExpiredToastBridge } from "@/providers/auth-session-expired-
 import { CommandPaletteProvider } from "@/providers/command-palette-provider";
 import { HostCredentialProvisionProvider } from "@/providers/host-credential-provision-provider";
 import { ComposerRunSettingsPersistLifecycleBridge } from "@/providers/composer-run-settings-persist-lifecycle-bridge";
+import { GithubMentionFiltersPersistLifecycleBridge } from "@/providers/github-mention-filters-persist-lifecycle-bridge";
 import { ComposerHarnessMemoryPersistLifecycleBridge } from "@/providers/composer-harness-memory-persist-lifecycle-bridge";
 import { WorktreeIntentMemoryPersistLifecycleBridge } from "@/providers/worktree-intent-memory-persist-lifecycle-bridge";
 import { WorktreeIntentStagingPersistLifecycleBridge } from "@/providers/worktree-intent-staging-persist-lifecycle-bridge";
@@ -40,6 +41,7 @@ import { HarnessCatalogPrefetcher } from "@/providers/harness-catalog-prefetcher
 import { HistoryPruneProvider } from "@/providers/history-prune-provider";
 import { KeybindingProvider } from "@/providers/keybinding-provider";
 import { NotificationsSessionProvider } from "@/providers/notifications-session-provider";
+import { ChatRecordsStreamMount } from "@/providers/chat-records-stream-mount";
 import { WorktreeChangedStreamMount } from "@/providers/worktree-changed-stream-mount";
 import { RateLimitQueueProvider } from "@/providers/rate-limit-queue-provider";
 import { RunnerHostProvider } from "@/providers/runner-host-provider";
@@ -210,34 +212,37 @@ function TraycerAuthenticatedRuntime(props: TraycerAuthenticatedRuntimeProps) {
         <HostCredentialProvisionProvider>
           <EpicSessionLifecycleBridge>
             <ComposerRunSettingsPersistLifecycleBridge>
-              <ComposerHarnessMemoryPersistLifecycleBridge>
-                <WorktreeIntentMemoryPersistLifecycleBridge>
-                  <WorktreeIntentStagingPersistLifecycleBridge>
-                    <EpicCanvasPersistLifecycleBridge>
-                      <LandingTerminalPersistLifecycleBridge>
-                        <LandingTerminalTombstoneRecoveryBridge />
-                        <EpicTabExistenceReconciler />
-                        <HostStreamProvider>
-                          <HostScopeReady scope="default-host">
-                            <WorktreeChangedStreamMount />
-                          </HostScopeReady>
-                          <AppLocalNotificationsPersistLifecycleBridge>
-                            <ReadingPositionPersistLifecycleBridge>
-                              <NotificationsSessionProvider
-                                navigate={props.router.navigate}
-                              >
-                                <TraycerAppRuntimeSurface
-                                  router={props.router}
-                                />
-                              </NotificationsSessionProvider>
-                            </ReadingPositionPersistLifecycleBridge>
-                          </AppLocalNotificationsPersistLifecycleBridge>
-                        </HostStreamProvider>
-                      </LandingTerminalPersistLifecycleBridge>
-                    </EpicCanvasPersistLifecycleBridge>
-                  </WorktreeIntentStagingPersistLifecycleBridge>
-                </WorktreeIntentMemoryPersistLifecycleBridge>
-              </ComposerHarnessMemoryPersistLifecycleBridge>
+              <GithubMentionFiltersPersistLifecycleBridge>
+                <ComposerHarnessMemoryPersistLifecycleBridge>
+                  <WorktreeIntentMemoryPersistLifecycleBridge>
+                    <WorktreeIntentStagingPersistLifecycleBridge>
+                      <EpicCanvasPersistLifecycleBridge>
+                        <LandingTerminalPersistLifecycleBridge>
+                          <LandingTerminalTombstoneRecoveryBridge />
+                          <EpicTabExistenceReconciler />
+                          <HostStreamProvider>
+                            <HostScopeReady scope="default-host">
+                              <WorktreeChangedStreamMount />
+                              <ChatRecordsStreamMount />
+                            </HostScopeReady>
+                            <AppLocalNotificationsPersistLifecycleBridge>
+                              <ReadingPositionPersistLifecycleBridge>
+                                <NotificationsSessionProvider
+                                  navigate={props.router.navigate}
+                                >
+                                  <TraycerAppRuntimeSurface
+                                    router={props.router}
+                                  />
+                                </NotificationsSessionProvider>
+                              </ReadingPositionPersistLifecycleBridge>
+                            </AppLocalNotificationsPersistLifecycleBridge>
+                          </HostStreamProvider>
+                        </LandingTerminalPersistLifecycleBridge>
+                      </EpicCanvasPersistLifecycleBridge>
+                    </WorktreeIntentStagingPersistLifecycleBridge>
+                  </WorktreeIntentMemoryPersistLifecycleBridge>
+                </ComposerHarnessMemoryPersistLifecycleBridge>
+              </GithubMentionFiltersPersistLifecycleBridge>
             </ComposerRunSettingsPersistLifecycleBridge>
           </EpicSessionLifecycleBridge>
         </HostCredentialProvisionProvider>

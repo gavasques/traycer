@@ -111,7 +111,9 @@ function selectHostIndicatorState(
  * snapshots, already filtered for cleared/superseded), and every row carries
  * the entity columns, severity, kind and markers, so it can mirror the host's
  * derivation over rows from EVERY host rather than only the connected one.
- * Pending prompts are ORed normally. Terminal rows first resolve to the newest
+ * An epic aggregates direct rows plus only its supplied live chats; a chat
+ * aggregates only its own rows. Pending prompts are ORed normally. Terminal
+ * rows first resolve to the newest
  * outcome for each lifecycle group and exact entity within one origin host,
  * whose timestamps share a clock domain. Those per-host winners are then
  * rolled into epic state. This lets a later success replace an earlier failure
@@ -196,9 +198,12 @@ function cloudIndicatorEntryIsWanted(
   wantedChatIds: ReadonlySet<string>,
 ): boolean {
   const { epicId, chatId } = row.entry;
+  const isLiveChat = chatId !== null && wantedChatIds.has(chatId);
   return (
-    (epicId !== null && wantedEpicIds.has(epicId)) ||
-    (chatId !== null && wantedChatIds.has(chatId))
+    (epicId !== null &&
+      wantedEpicIds.has(epicId) &&
+      (chatId === null || isLiveChat)) ||
+    isLiveChat
   );
 }
 
@@ -484,4 +489,36 @@ function mergePendingForkChats(
     };
   }
   return { epics: response.epics, chats };
+}
+
+/**
+ * Two indicator responses folded into one, flag by flag.
+ *
+ * Used to combine per-HOST reads of one surface: chat ids on a canvas tab strip
+ * can belong to different hosts, each answered by its own `indicatorState` call,
+ * and the surface below reads a single chatId-keyed map. A spread-merge would
+ * make the last answer win for an id two hosts both reported on - `chatId` is
+ * host-minted and not unique across hosts, so that is a reachable state - and
+ * silently extinguish a real pending flag. The host's own aggregate is
+ * `MAX(CASE WHEN ...)`, so OR is the same rule applied one level up.
+ */
+export function mergeIndicatorStateResponses(
+  base: HostNotificationsIndicatorStateResponse,
+  next: HostNotificationsIndicatorStateResponse,
+): HostNotificationsIndicatorStateResponse {
+  return {
+    epics: mergeIndicatorRecords(base.epics, next.epics),
+    chats: mergeIndicatorRecords(base.chats, next.chats),
+  };
+}
+
+function mergeIndicatorRecords(
+  base: Readonly<Record<string, HostNotificationsIndicatorState>>,
+  next: Readonly<Record<string, HostNotificationsIndicatorState>>,
+): Record<string, HostNotificationsIndicatorState> {
+  const merged: Record<string, HostNotificationsIndicatorState> = { ...base };
+  for (const [id, state] of Object.entries(next)) {
+    merged[id] = mergeIndicatorFlags(merged[id], state);
+  }
+  return merged;
 }

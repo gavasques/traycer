@@ -83,6 +83,18 @@ Supporting pieces, all viewport-agnostic where possible:
   lands in the right place on a phone.
 - `settings-panel-shell.tsx` (and the inline shells in the Keybindings and
   Shell panels) step padding down below `sm`; the shell header wraps.
+- A row whose control wrapped still has to decide what to DO with its new
+  line, and that is per-control rather than something the floor can express -
+  a button should not stretch, a text field should. The worktree branch-prefix
+  row is the worked example: below `md` its cluster spans the line
+  (`max-md:w-full`), the input flexes into it, and its description drops to
+  `md:truncate` so the sentence wraps once it owns the width instead of
+  ellipsing. Its reserved reset slot keeps leading the field at every width,
+  and the small inset that costs below `md` is deliberate - responsive
+  `order-*` would close it by splitting visual order from DOM order, and the
+  slot holds a labelled button, so focus and screen-reader order would then
+  reach Reset before the field it acts on (WCAG 2.4.3 / 1.3.2). No `order-*`
+  on interactive content: source order is the only order.
 - The Providers rail collapses below `md` into a full-width provider `Select`
   above the detail pane. `EnvOverrideEditor` rows restack onto two lines below
   `sm` and hide the column header.

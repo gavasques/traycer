@@ -6673,6 +6673,15 @@ describe("<ProvidersSettingsPanel /> mobile section hub", () => {
 
     // Expanded on arrival (no deep-linked tab), so the bar reads "Collapse".
     expect(screen.getByRole("button", { name: /Collapse/ })).toBeDefined();
+
+    // While the grid owns the screen, the active section's body carries the
+    // `hidden` attribute rather than being unmounted, so there is no VISIBLE
+    // tabpanel - but it is still findable by asking for hidden elements too.
+    // Testing Library's role queries exclude `hidden` elements by default and
+    // only see them when `{ hidden: true }` is passed, which every assertion
+    // below that distinguishes "hidden" from "unmounted" relies on.
+    expect(screen.queryByRole("tabpanel")).toBeNull();
+    expect(screen.getByRole("tabpanel", { hidden: true })).toBeDefined();
   });
 
   it("collapses the grid to a bar and shows the picked section's body", () => {
@@ -6694,6 +6703,10 @@ describe("<ProvidersSettingsPanel /> mobile section hub", () => {
     const bar = screen.getByRole("button", { name: /All sections/ });
     expect(bar.textContent).toContain("Env");
     expect(screen.getByText("Environment variables")).toBeDefined();
+    // Collapsing brings the section body back into view - the visible-role
+    // query only succeeds once the `hidden` attribute from the expanded state
+    // is gone.
+    expect(screen.getByRole("tabpanel")).toBeDefined();
   });
 
   it("re-expands the grid from the All sections control", () => {
@@ -6714,6 +6727,9 @@ describe("<ProvidersSettingsPanel /> mobile section hub", () => {
     expect(
       within(grid).getByRole("tab", { name: "Env" }).getAttribute("data-state"),
     ).toBe("active");
+    // Re-expanding hides the section body again rather than unmounting it.
+    expect(screen.queryByRole("tabpanel")).toBeNull();
+    expect(screen.getByRole("tabpanel", { hidden: true })).toBeDefined();
   });
 
   it("opens a deep link collapsed, straight on the requested tab", () => {
@@ -6760,6 +6776,11 @@ describe("<ProvidersSettingsPanel /> mobile section hub", () => {
     const bar = screen.getByRole("button", { name: /All sections/ });
     expect(bar.textContent).toContain("Env");
     expect(screen.getByText("Environment variables")).toBeDefined();
+    // The regression this guards against: a deep link that lands collapsed
+    // must not also land on a body still carrying `hidden` from the mount -
+    // collapsed-on-arrival means the requested section is immediately
+    // readable, not merely present in the DOM.
+    expect(screen.getByRole("tabpanel")).toBeDefined();
   });
 
   it("renders exactly a 3-section provider's sections, no others", () => {
@@ -6795,5 +6816,26 @@ describe("<ProvidersSettingsPanel /> mobile section hub", () => {
     ).toBeNull();
     expect(within(grid).queryByRole("tab", { name: "Plugins" })).toBeNull();
     expect(within(grid).queryByRole("tab", { name: "Skills" })).toBeNull();
+  });
+
+  it("keeps the same tabpanel element mounted across an expand/collapse round trip", () => {
+    render(
+      <TooltipProvider>
+        <ProvidersSettingsPanel />
+      </TooltipProvider>,
+    );
+
+    // Expanded on arrival; the active section's body is mounted but hidden.
+    const hiddenPanel = screen.getByRole("tabpanel", { hidden: true });
+
+    // Re-clicking the already-active tile collapses the grid through the
+    // tile's own click handler rather than a Radix value change, so the
+    // active section never switches - this isolates the expand/collapse
+    // toggle from a tab change and proves the body is the SAME element,
+    // just no longer hidden, rather than a fresh mount.
+    const grid = screen.getByRole("tablist");
+    fireEvent.click(within(grid).getByRole("tab", { name: /^Account/ }));
+
+    expect(screen.getByRole("tabpanel")).toBe(hiddenPanel);
   });
 });

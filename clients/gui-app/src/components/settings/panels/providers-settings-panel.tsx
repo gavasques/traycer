@@ -1070,6 +1070,20 @@ function ProviderDetail({
             <TabsContent
               key={tab}
               value={tab}
+              // An open section grid owns the screen: the grid is the question
+              // "which section?", and the previous section's body answering a
+              // different one underneath it is noise on a phone, where the two
+              // together are taller than the viewport.
+              //
+              // HIDDEN, not unmounted. Radix computes `hidden` from presence
+              // and spreads caller props after it, so this only overrides the
+              // active pane's `false` - the body stays mounted with its
+              // queries, scroll position and half-typed fields intact, and
+              // opening the grid stays a cancellable gesture (Collapse returns
+              // you to exactly what you left). It also keeps the pane count at
+              // one, where unmounting on every expand would re-run that
+              // section's list queries each time the grid is dismissed.
+              hidden={isMobile ? hubExpanded : undefined}
               className="-mx-5 mt-0 min-h-0 overflow-y-auto px-5 pt-4 pb-5"
             >
               <ProviderTabBody

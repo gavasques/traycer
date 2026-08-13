@@ -7,13 +7,12 @@ import {
   useRef,
   useState,
 } from "react";
-import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
 import { useShallow } from "zustand/react/shallow";
 import {
   ArrowDownToLine,
   Check,
   ExternalLink,
-  Layers,
   ListChecks,
   Paintbrush,
   Pencil,
@@ -23,7 +22,6 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { HostRpcError } from "@traycer-clients/shared/host-transport/host-messenger";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -38,7 +36,6 @@ import {
 import { UnsyncedEpicMoveDialog } from "@/components/layout/dialogs/unsynced-epic-move-dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ReportIssueAction } from "@/components/report-issue/report-issue-action";
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
 import { DeleteTasksDialog } from "@/components/epics/delete-tasks-dialog";
 import { SweepWorktreesDialog } from "@/components/epics/sweep-worktrees-dialog";
@@ -58,14 +55,12 @@ import {
 import { useInlineRename } from "@/hooks/ui/use-inline-rename";
 import { withMemberToggled } from "@/lib/immutable-set";
 import { cn } from "@/lib/utils";
-import { createReportIssueContext } from "@/lib/report-issue-context";
 import {
   InputGroup,
   InputGroupAddon,
   InputGroupButton,
   InputGroupInput,
 } from "@/components/ui/input-group";
-import { Skeleton } from "@/components/ui/skeleton";
 import { ClearFiltersButton } from "@/components/home/toolbar/clear-filters-button";
 import type {
   HistoryItem,
@@ -78,15 +73,25 @@ import {
   DEFAULT_SORT,
 } from "@/components/home/data/home-page.data";
 import { EpicsFilterPopover } from "@/components/epics/epics-filter-popover";
+import {
+  EpicsListEmpty,
+  EpicsListError,
+  EpicsListFilteredEmpty,
+  EpicsListFilteringLoading,
+  EpicsListLoading,
+  EpicsListShowMore,
+  HistoryRowLeadingIcon,
+} from "@/components/epics/epics-list-shared";
+import { historyItemDisplayTitle } from "@/components/epics/history-item-title";
+import { MobileHistoryList } from "@/components/epics/mobile/mobile-history-list";
+import { useHistoryOpenItem } from "@/components/epics/use-history-open-item";
+import { useIsMobileViewport } from "@/hooks/ui/use-mobile-viewport";
 import { EpicsSortMenu } from "@/components/epics/epics-sort-menu";
-import { NotificationIndicatorIcon } from "@/components/notifications/notification-indicator-icon";
-import { useSurfaceNotificationIndicatorState } from "@/components/notifications/notification-indicator-context";
 import { NotificationIndicatorsProvider } from "@/components/notifications/notification-indicators-provider";
 import {
   useHistoryQuery,
   type HistoryFacets,
 } from "@/hooks/home/use-history-query";
-import { useEpicActivityStatus } from "@/hooks/epic/use-epic-activity-status";
 import { useNotificationIndicators } from "@/hooks/notifications/use-notification-indicators-query";
 import {
   useAmbientHistorySearchState,
@@ -94,12 +99,7 @@ import {
   type HistorySearchController,
 } from "@/hooks/home/use-history-search-state";
 import { useRefreshSpinner } from "@/hooks/use-refresh-spinner";
-import {
-  activateTabIntent,
-  openPhaseMigrationIntent,
-} from "@/lib/tab-navigation";
 import { epicDisplayTitle } from "@/lib/display-title";
-import { openEpicFromList as openEpicFromCommand } from "@/lib/commands/actions/open-epic-from-list";
 import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
 import type {
   HistorySearchPatch,
@@ -121,19 +121,6 @@ const VIEWER_DELETE_TOOLTIP = "Viewers cannot select task for deletion.";
 const NO_DELETE_PERMISSION_TOOLTIP =
   "You don't have permission to delete this task.";
 const HISTORY_REFRESH_TIMEOUT_MS = 10_000;
-
-// Single source of a row's display label for both visible text and accessible
-// names. `item.title` is the RAW title (epics can be empty); apply the
-// source-aware "Untitled task" fallback for epics, while phases already carry
-// their own baked fallback and render verbatim.
-function historyItemDisplayTitle(item: HistoryItem): string {
-  return item.taskType === "phase"
-    ? item.title
-    : epicDisplayTitle({
-        title: item.title,
-        initialUserPrompt: item.initialUserPrompt,
-      });
-}
 
 export type EpicsListPanelVariant = "page" | "embedded" | "picker";
 
@@ -293,6 +280,15 @@ function EpicsListPanelBody(props: EpicsListPanelBodyProps): ReactNode {
     search,
     nowMs: props.historyNowMs,
   });
+
+  // Read at gesture time so pull-to-refresh can install its listeners once,
+  // rather than re-attaching a non-passive touch handler whenever the query
+  // hands back a fresh `refetch`.
+  const refetchRef = useRef(refetch);
+  useEffect(() => {
+    refetchRef.current = refetch;
+  });
+  const refreshHistory = useCallback(() => refetchRef.current(), []);
 
   const items = data?.items ?? EMPTY_ITEMS;
   const worktreesByEpicId = data?.worktreesByEpicId ?? EMPTY_WORKTREES_BY_EPIC;
@@ -592,33 +588,33 @@ function EpicsListPanelBody(props: EpicsListPanelBodyProps): ReactNode {
           refresh={{ isFetching, hostId, onRefetch: refetch }}
         />
         <NotificationIndicatorsProvider indicators={notificationIndicators}>
-          <div className="min-h-0 flex-1 overflow-y-auto pb-10">
-            <EpicsListBody
-              error={error}
-              isPending={isPending}
-              isFetching={isFetching}
-              hasActiveFilters={hasActiveFilters}
-              items={items}
-              onRetry={handleRetry}
-              selectionMode={selectionMode}
-              selectionEnabled={selectionEnabled}
-              selectedIds={selectedIds}
-              onToggleSelection={toggleSelection}
-              onRequestDelete={requestDelete}
-              onRequestSweep={requestSweep}
-              onSetPinned={handleSetPinned}
-              pendingSetPinnedEpicIds={pendingSetPinnedEpicIds}
-              hasNextPage={hasNextPage}
-              isFetchingNextPage={isFetchingNextPage}
-              onLoadMore={fetchNextPage}
-              onSelectEpic={onSelectEpic}
-              onOpenItem={onOpenItem}
-              onOpenInNewWindow={openInNewWindowFlow.requestOpen}
-              openInNewWindowAvailable={openInNewWindowFlow.isAvailable}
-              worktreesByEpicId={worktreesByEpicId}
-              openEpicIds={openEpicIdSet}
-            />
-          </div>
+          <HistoryListBody
+            variant={variant}
+            error={error}
+            isPending={isPending}
+            isFetching={isFetching}
+            hasActiveFilters={hasActiveFilters}
+            items={items}
+            onRetry={handleRetry}
+            selectionMode={selectionMode}
+            selectionEnabled={selectionEnabled}
+            selectedIds={selectedIds}
+            onToggleSelection={toggleSelection}
+            onRequestDelete={requestDelete}
+            onRequestSweep={requestSweep}
+            onSetPinned={handleSetPinned}
+            pendingSetPinnedEpicIds={pendingSetPinnedEpicIds}
+            hasNextPage={hasNextPage}
+            isFetchingNextPage={isFetchingNextPage}
+            onLoadMore={fetchNextPage}
+            onSelectEpic={onSelectEpic}
+            onOpenItem={onOpenItem}
+            onOpenInNewWindow={openInNewWindowFlow.requestOpen}
+            openInNewWindowAvailable={openInNewWindowFlow.isAvailable}
+            worktreesByEpicId={worktreesByEpicId}
+            openEpicIds={openEpicIdSet}
+            onRefresh={refreshHistory}
+          />
         </NotificationIndicatorsProvider>
       </section>
       <DeleteTasksDialog
@@ -940,6 +936,84 @@ function describeDeleteTitle(
   return `Delete "${matchTitle}"?`;
 }
 
+interface HistoryListBodyProps extends EpicsListBodyProps {
+  readonly variant: EpicsListPanelVariant;
+  readonly onRefresh: () => Promise<unknown>;
+}
+
+/**
+ * Picks the list body the form factor calls for, and owns nothing else.
+ *
+ * FORM FACTOR, not product: the phone list is a layout, and a desktop window
+ * narrowed past the breakpoint gets it for the same reason it gets the
+ * hamburger and the single-tile canvas. `variant="picker"` is excluded because
+ * it is a read-only destination browser - its rows have no actions for a tray
+ * to hold and no selection for a hold to enter.
+ *
+ * Separate from the panel so the choice, the mobile-only activation hook and
+ * the desktop scroller travel together instead of adding three more branches
+ * to a body that already carries the panel's whole selection and delete flow.
+ */
+function HistoryListBody(props: HistoryListBodyProps): ReactNode {
+  const isMobileViewport = useIsMobileViewport();
+  const openHistoryItem = useHistoryOpenItem({
+    onSelectEpic: props.onSelectEpic,
+    onOpenItem: props.onOpenItem,
+  });
+  if (isMobileViewport && props.variant !== "picker") {
+    return (
+      <MobileHistoryList
+        error={props.error}
+        isPending={props.isPending}
+        isFetching={props.isFetching}
+        hasActiveFilters={props.hasActiveFilters}
+        items={props.items}
+        onRetry={props.onRetry}
+        selectionMode={props.selectionMode}
+        selectedIds={props.selectedIds}
+        onToggleSelection={props.onToggleSelection}
+        onRequestDelete={props.onRequestDelete}
+        onSetPinned={props.onSetPinned}
+        pendingSetPinnedEpicIds={props.pendingSetPinnedEpicIds}
+        hasNextPage={props.hasNextPage}
+        isFetchingNextPage={props.isFetchingNextPage}
+        onLoadMore={props.onLoadMore}
+        onOpenItem={openHistoryItem}
+        onRefresh={props.onRefresh}
+      />
+    );
+  }
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto pb-10">
+      <EpicsListBody
+        error={props.error}
+        isPending={props.isPending}
+        isFetching={props.isFetching}
+        hasActiveFilters={props.hasActiveFilters}
+        items={props.items}
+        onRetry={props.onRetry}
+        selectionMode={props.selectionMode}
+        selectionEnabled={props.selectionEnabled}
+        selectedIds={props.selectedIds}
+        onToggleSelection={props.onToggleSelection}
+        onRequestDelete={props.onRequestDelete}
+        onRequestSweep={props.onRequestSweep}
+        onSetPinned={props.onSetPinned}
+        pendingSetPinnedEpicIds={props.pendingSetPinnedEpicIds}
+        hasNextPage={props.hasNextPage}
+        isFetchingNextPage={props.isFetchingNextPage}
+        onLoadMore={props.onLoadMore}
+        onSelectEpic={props.onSelectEpic}
+        onOpenItem={props.onOpenItem}
+        onOpenInNewWindow={props.onOpenInNewWindow}
+        openInNewWindowAvailable={props.openInNewWindowAvailable}
+        worktreesByEpicId={props.worktreesByEpicId}
+        openEpicIds={props.openEpicIds}
+      />
+    </div>
+  );
+}
+
 interface EpicsListBodyProps {
   readonly error: Error | null;
   readonly isPending: boolean;
@@ -1003,14 +1077,7 @@ function EpicsListBody(props: EpicsListBodyProps): ReactNode {
     return <EpicsListLoading />;
   }
   if (items.length === 0 && !hasActiveFilters) {
-    return (
-      <div
-        className="flex flex-col items-center justify-center gap-2 py-16 text-center text-ui-sm text-muted-foreground"
-        data-testid="epics-list-empty"
-      >
-        <p className="font-medium text-foreground">No tasks yet</p>
-      </div>
-    );
+    return <EpicsListEmpty />;
   }
   if (items.length === 0 && hasActiveFilters && isFetching) {
     return <EpicsListFilteringLoading />;
@@ -1041,55 +1108,14 @@ function EpicsListBody(props: EpicsListBodyProps): ReactNode {
           ))}
         </ul>
       ) : (
-        <div
-          className="flex flex-col items-center justify-center gap-2 py-16 text-center text-ui-sm text-muted-foreground"
-          data-testid="epics-list-filtered-empty"
-        >
-          <p className="font-medium text-foreground">
-            No tasks match these filters.
-          </p>
-        </div>
+        <EpicsListFilteredEmpty />
       )}
-      {hasNextPage ? (
-        <div className="mt-3 flex justify-center">
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            disabled={isFetchingNextPage}
-            onClick={onLoadMore}
-            data-testid="epics-list-show-more"
-          >
-            {isFetchingNextPage ? (
-              <AgentSpinningDots
-                variant="dots"
-                className="text-muted-foreground"
-                testId={undefined}
-              />
-            ) : null}
-            Show more
-          </Button>
-        </div>
-      ) : null}
-    </>
-  );
-}
-
-function EpicsListFilteringLoading() {
-  return (
-    <div
-      className="flex flex-col items-center justify-center gap-2 py-16 text-center text-ui-sm text-muted-foreground"
-      data-testid="epics-list-filter-loading"
-      aria-busy="true"
-      aria-live="polite"
-    >
-      <AgentSpinningDots
-        variant="dots"
-        className="text-muted-foreground"
-        testId={undefined}
+      <EpicsListShowMore
+        hasNextPage={hasNextPage}
+        isFetchingNextPage={isFetchingNextPage}
+        onLoadMore={onLoadMore}
       />
-      <p className="font-medium text-foreground">Searching tasks</p>
-    </div>
+    </>
   );
 }
 
@@ -1203,8 +1229,7 @@ const EpicsListRow = memo(function EpicsListRow(props: EpicsListRowProps) {
   const deleteDisabledTooltip = historyDeleteDisabledTooltip(item);
   const { mutate: renameEpicTitle, isPending: isRenamePending } =
     useEpicUpdateTitle();
-  const navigate = useNavigate();
-  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const openHistoryItem = useHistoryOpenItem({ onSelectEpic, onOpenItem });
   const linkTabId = useEpicCanvasStore(
     (s) => s.resolveTabIdForEpic(item.epicId) ?? item.epicId,
   );
@@ -1260,40 +1285,8 @@ const EpicsListRow = memo(function EpicsListRow(props: EpicsListRowProps) {
     [],
   );
   const openEpic = useCallback(() => {
-    if (onOpenItem !== null) {
-      onOpenItem(item);
-      return;
-    }
-    onSelectEpic?.(item.epicId);
-    if (isPhase) {
-      // Route the Phase deep link through the canonical activation boundary so
-      // the controller snapshots first (a rejected navigation restores the prior
-      // tab) instead of a raw navigate over a route builder that mutated source
-      // selection. `migrationSource: "phase"` threads through the epic search.
-      activateTabIntent(
-        navigate,
-        openPhaseMigrationIntent({
-          phaseId: item.epicId,
-          name: item.title,
-          focus: {
-            focusedAt: undefined,
-            focusArtifactId: undefined,
-            focusThreadId: undefined,
-            migrationSource: "phase",
-          },
-        }),
-        undefined,
-      );
-      return;
-    }
-    // Passing the row's title threads it through tab creation so the
-    // cold-open canvas skeleton can render the real epic title at +0ms,
-    // not "Untitled task" until the snapshot arrives.
-    openEpicFromCommand(navigate, item.epicId, pathname, {
-      title: item.title,
-      source: "direct_ui",
-    });
-  }, [isPhase, item, navigate, onOpenItem, onSelectEpic, pathname]);
+    openHistoryItem(item);
+  }, [item, openHistoryItem]);
   const toggleEpicSelection = () => {
     if (!canDeleteItem) return;
     onToggleSelection(item.epicId);
@@ -1551,31 +1544,6 @@ function HistoryPinControl(props: {
       </TooltipTrigger>
       <TooltipContent>{label}</TooltipContent>
     </Tooltip>
-  );
-}
-
-function HistoryRowLeadingIcon(props: { readonly item: HistoryItem }) {
-  const activityStatus = useEpicActivityStatus(
-    props.item.taskType === "epic" ? props.item.epicId : null,
-  );
-  const indicatorState = useSurfaceNotificationIndicatorState(
-    { epicId: props.item.epicId },
-    null,
-  );
-  return (
-    <NotificationIndicatorIcon
-      state={indicatorState}
-      running={activityStatus === "idle" ? false : activityStatus}
-      subjectId={props.item.epicId}
-      testIdPrefix="epics-list-row"
-      className="text-muted-foreground group-hover/list-row:text-foreground"
-      style={undefined}
-      runningTitle="Task activity in progress"
-      defaultIcon={
-        <Layers className="size-4 shrink-0 text-muted-foreground group-hover/list-row:text-foreground" />
-      }
-      statusPresentation="message"
-    />
   );
 }
 
@@ -1887,93 +1855,4 @@ function HistoryRowDeleteControl(props: {
       <TooltipContent>{props.deleteDisabledTooltip}</TooltipContent>
     </Tooltip>
   );
-}
-
-function EpicsListLoading() {
-  return (
-    <div
-      className="flex flex-col gap-2"
-      data-testid="epics-list-loading"
-      aria-busy="true"
-      aria-label="Loading tasks"
-    >
-      {[0, 1, 2, 3].map((i) => (
-        <Skeleton key={i} className="h-12 w-full rounded-md" />
-      ))}
-    </div>
-  );
-}
-
-interface EpicsListErrorProps {
-  readonly error: Error;
-  readonly onRetry: () => void;
-}
-
-function EpicsListError(props: EpicsListErrorProps) {
-  const { error, onRetry } = props;
-  const [showDetails, setShowDetails] = useState<boolean>(false);
-  return (
-    <div
-      className="flex flex-col items-start gap-3 rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-ui-sm"
-      data-testid="epics-list-error"
-      role="alert"
-    >
-      <p className="font-medium text-destructive">{errorHeadline(error)}</p>
-      <div className="flex flex-wrap items-center gap-2">
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          data-testid="epics-list-error-retry"
-          onClick={onRetry}
-        >
-          Retry
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          data-testid="epics-list-error-toggle-details"
-          aria-expanded={showDetails}
-          onClick={() => {
-            setShowDetails((value) => !value);
-          }}
-        >
-          {showDetails ? "Hide details" : "Show details"}
-        </Button>
-        <ReportIssueAction
-          context={createReportIssueContext({
-            title: "Failed to load Epics",
-            message: "The Epic list could not be loaded.",
-            code: error instanceof HostRpcError ? error.code : null,
-            source: "Epic list",
-          })}
-          presentation="text"
-          className={undefined}
-        />
-      </div>
-      {showDetails ? (
-        <pre
-          className="w-full overflow-x-auto rounded-md bg-background/70 p-2 font-mono text-code-xs text-muted-foreground"
-          data-testid="epics-list-error-details"
-        >
-          {formatError(error)}
-        </pre>
-      ) : null}
-    </div>
-  );
-}
-
-function errorHeadline(error: Error): string {
-  if (error instanceof HostRpcError) {
-    if (error.code === "UNAUTHORIZED") return "Please sign in again.";
-    if (error.code === "FORBIDDEN") {
-      return "You don't have permission to view these epics.";
-    }
-  }
-  return "Couldn't reach Traycer Cloud";
-}
-
-function formatError(error: Error): string {
-  return `${error.name}: ${error.message}`;
 }

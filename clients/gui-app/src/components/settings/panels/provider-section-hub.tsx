@@ -55,7 +55,8 @@ const PROVIDER_SECTION_ICONS: Record<ProviderTabKey, LucideIcon> = {
  * queries and unbounded lists.
  *
  * The grid keeps the one-pane-at-a-time invariant intact - only the LIST is
- * bespoke, so Radix still mounts exactly one `TabsContent` - and it absorbs the
+ * bespoke, so Radix still mounts exactly one `TabsContent` BODY (every pane's
+ * div stays in the DOM, hidden while inactive) - and it absorbs the
  * 3-8 sections `supportedTabsFor` can return with no per-count geometry:
  * two columns, however many rows that takes.
  *

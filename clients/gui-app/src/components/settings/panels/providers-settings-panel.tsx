@@ -902,7 +902,8 @@ function ProviderDetail({
   // presentation for the same reason a phone does.
   const isMobile = useIsMobileViewport();
   // The API-key draft outlives the `account` tab body that renders it. Radix
-  // unmounts an inactive `TabsContent`, so holding this inside the section
+  // keeps every pane's div in the DOM but unmounts an inactive pane's BODY,
+  // so holding this inside the section
   // would blank a pasted key on any tab switch. Held HERE for the same reason
   // `selectedProfileId` is below: `ProvidersRailLayout` keys `<ProviderDetail>`
   // by provider, so a provider switch still discards the draft - a key typed
@@ -1099,8 +1100,9 @@ function ProviderDetail({
             </TabsList>
           )}
 
-          {/* From `md` up, the scroll owner. Radix mounts only the ACTIVE
-              content, so there is exactly one scroll box at a time and
+          {/* From `md` up, the scroll owner. Radix keeps every pane's div in
+              the DOM but hides all except the active one and mounts only its
+              body, so there is exactly one live scroll box at a time and
               switching sections starts it at the top - which is what you want
               when the panes are unrelated. Pinning the rail this way (a sibling
               row outside the scroll box) rather than with `position: sticky` is

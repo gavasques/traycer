@@ -277,8 +277,19 @@ describe("analytics", () => {
       token: "phc_test_project_key",
       distinct_id: "7b6e23f5-8a3d-4d2b-923c-8d02b8ef80d1",
     });
+    // Identity events carry the same registered app globals as declared
+    // events - the surface a sign-in came from is as real as a click's.
     expect(Object.keys(identify?.properties ?? {}).sort()).toEqual(
-      ["$anon_distinct_id", "distinct_id", "token"].sort(),
+      [
+        "$anon_distinct_id",
+        "app",
+        "app_surface",
+        "app_version",
+        "distinct_id",
+        "platform",
+        "release_channel",
+        "token",
+      ].sort(),
     );
     // Email is the ONLY person property allowed through; everything else the
     // SDK staged on $set/$set_once (name, custom props, referrer/campaign
@@ -375,7 +386,15 @@ describe("analytics", () => {
       distinct_id: "7b6e23f5-8a3d-4d2b-923c-8d02b8ef80d1",
     });
     expect(Object.keys(setEvent?.properties ?? {}).sort()).toEqual(
-      ["distinct_id", "token"].sort(),
+      [
+        "app",
+        "app_surface",
+        "app_version",
+        "distinct_id",
+        "platform",
+        "release_channel",
+        "token",
+      ].sort(),
     );
     expect(JSON.stringify(captured)).not.toMatch(/Alice/);
   });

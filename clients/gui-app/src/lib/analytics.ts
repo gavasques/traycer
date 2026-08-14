@@ -1997,9 +1997,17 @@ export function sanitizePostHogCaptureResult(
   if (result === null) return null;
   const rawProperties: Record<string, unknown> = { ...result.properties };
   if (result.event === "$identify") {
+    // The identity events carry the same app globals as declared events -
+    // "which surface emitted this" holds for a sign-in exactly as it does
+    // for a click, and the globals allowlist bounds what passes.
     const identity = safeIngestionProperties(rawProperties, true);
-    if (identity === null) return null;
-    const sanitized = captureResult("$identify", identity, result.timestamp);
+    const identifyGlobals = safeAppGlobals(rawProperties);
+    if (identity === null || identifyGlobals === null) return null;
+    const sanitized = captureResult(
+      "$identify",
+      { ...identity, ...identifyGlobals },
+      result.timestamp,
+    );
     const personProperties = safePersonProperties(
       stagedPersonProperties(result, rawProperties),
     );
@@ -2009,12 +2017,19 @@ export function sanitizePostHogCaptureResult(
   }
   if (result.event === "$set") {
     const identity = safeIngestionProperties(rawProperties, false);
+    const setGlobals = safeAppGlobals(rawProperties);
     const personProperties = safePersonProperties(
       stagedPersonProperties(result, rawProperties),
     );
-    if (identity === null || personProperties === null) return null;
+    if (identity === null || setGlobals === null || personProperties === null) {
+      return null;
+    }
     return {
-      ...captureResult("$set", identity, result.timestamp),
+      ...captureResult(
+        "$set",
+        { ...identity, ...setGlobals },
+        result.timestamp,
+      ),
       $set: personProperties,
     };
   }

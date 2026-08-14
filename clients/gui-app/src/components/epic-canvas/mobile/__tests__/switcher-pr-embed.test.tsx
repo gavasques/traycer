@@ -32,7 +32,9 @@ vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
 }));
 
 const tileNavigationMocks = vi.hoisted(() => ({
-  openTileInEpic: vi.fn(),
+  // Typed so assertions can read the recorded call without `any` leaking
+  // through `mock.calls`.
+  openTileInEpic: vi.fn<(epicId: string, tile: unknown) => void>(),
   openTileInTab: vi.fn(),
   openTilePreviewInEpic: vi.fn(),
   openTilePreviewInTab: vi.fn(),
@@ -159,7 +161,9 @@ describe("<SwitcherPanelEmbed /> pull-requests category", () => {
     renderEmbed();
     await user.click(screen.getByTestId("pr-row"));
     expect(tileNavigationMocks.openTileInEpic).toHaveBeenCalledTimes(1);
-    const [epicId, tile] = tileNavigationMocks.openTileInEpic.mock.calls[0];
+    const call = tileNavigationMocks.openTileInEpic.mock.calls.at(0);
+    if (call === undefined) throw new Error("expected a tile-open call");
+    const [epicId, tile] = call;
     expect(epicId).toBe(EPIC_ID);
     expect(tile).toMatchObject({
       type: "pr-detail",

@@ -7,9 +7,9 @@ import {
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { ComposerPickerItem } from "@/lib/composer/types";
 import {
   createComposerPickerStore,
+  type ComposerPickerItem,
   type ComposerPickerStore,
 } from "../../picker/composer-picker-store";
 import { ComposerMenu } from "../composer-menu";

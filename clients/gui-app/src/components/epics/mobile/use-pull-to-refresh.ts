@@ -144,8 +144,10 @@ export function usePullToRefresh(args: PullToRefreshArgs): PullToRefresh {
       if (isRefreshingRef.current) return;
       if (scroller.scrollTop > 0) return;
       if (isTextEntryFocused()) return;
-      const touch = event.touches[0];
-      if (touch === undefined) return;
+      // `item()` is the null-returning accessor; indexing types as always-
+      // present here, which makes an `undefined` guard a lint error.
+      const touch = event.touches.item(0);
+      if (touch === null) return;
       tracking = {
         touchId: touch.identifier,
         x: touch.clientX,

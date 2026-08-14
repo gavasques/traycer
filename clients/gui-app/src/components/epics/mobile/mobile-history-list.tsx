@@ -1,10 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { useCallback, useRef, useState, type ReactNode } from "react";
 import { ArrowDown, RefreshCwIcon } from "lucide-react";
 import type { HistoryItem } from "@/components/home/data/home-page.data";
 import {
@@ -96,11 +90,11 @@ export function MobileHistoryList(props: MobileHistoryListProps): ReactNode {
   }, []);
 
   // Selection mode replaces what a touch on a row means, so a tray left open
-  // from before it was entered would be an action the row can no longer reach.
-  useEffect(() => {
-    if (!selectionMode) return;
-    setOpenTrayEpicId(null);
-  }, [selectionMode]);
+  // from before it was entered would be an action the row can no longer
+  // reach. Derived at render rather than reset in an effect: the tray is
+  // simply never open while selection mode holds, and the stored id survives
+  // only as far as the next explicit open.
+  const visibleTrayEpicId = selectionMode ? null : openTrayEpicId;
 
   const pull = usePullToRefresh({
     scrollRef,
@@ -150,7 +144,7 @@ export function MobileHistoryList(props: MobileHistoryListProps): ReactNode {
           onRetry={onRetry}
           selectionMode={selectionMode}
           selectedIds={selectedIds}
-          openTrayEpicId={openTrayEpicId}
+          openTrayEpicId={visibleTrayEpicId}
           onTrayOpenChange={handleTrayOpenChange}
           onToggleSelection={onToggleSelection}
           onRequestDelete={onRequestDelete}

@@ -20,11 +20,17 @@ interface SubscriptionArgs {
 
 // The WS transport is the external boundary; fake it so the probe's own
 // contract - what it subscribes and what it writes - stays observable.
-const subscriptionState = vi.hoisted(() => ({
-  items: null as readonly PrLightItem[] | null,
-  methodSupport: "supported" as string,
-  lastArgs: null as SubscriptionArgs | null,
-}));
+const subscriptionState = vi.hoisted(
+  (): {
+    items: readonly PrLightItem[] | null;
+    methodSupport: string;
+    lastArgs: SubscriptionArgs | null;
+  } => ({
+    items: null,
+    methodSupport: "supported",
+    lastArgs: null,
+  }),
+);
 vi.mock("@/hooks/pr/use-pr-list-subscription", () => ({
   usePrListSubscription: (args: SubscriptionArgs) => {
     subscriptionState.lastArgs = args;

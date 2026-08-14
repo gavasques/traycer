@@ -221,7 +221,11 @@ export function SplitSlotChooserContent(
               onOpenItem={openHistoryItem}
               routeSearch={null}
               historyNowMs={null}
-              autoFocusSearch={sideFocused === true && !isMobileApp()}
+              // A ternary, not `&&`: the leaked-render lint rewrites a JSX
+              // `&&` into a null-armed ternary, and this prop is strictly
+              // boolean - spelling both arms keeps the fixer away and the
+              // types exact.
+              autoFocusSearch={sideFocused ? !isMobileApp() : false}
             />
           ) : (
             <p className="px-1 py-2 text-ui-sm text-muted-foreground">

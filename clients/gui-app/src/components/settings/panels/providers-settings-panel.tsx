@@ -1123,15 +1123,21 @@ function ProviderDetail({
               // different one underneath it is noise on a phone, where the two
               // together are taller than the viewport.
               //
-              // HIDDEN, not unmounted. Radix computes `hidden` from presence
-              // and spreads caller props after it, so this only overrides the
-              // active pane's `false` - the body stays mounted with its
-              // queries, scroll position and half-typed fields intact, and
-              // opening the grid stays a cancellable gesture (Collapse returns
-              // you to exactly what you left). It also keeps the pane count at
-              // one, where unmounting on every expand would re-run that
-              // section's list queries each time the grid is dismissed.
-              hidden={isMobile ? hubExpanded : undefined}
+              // HIDDEN, not unmounted. `hidden` keeps the active body mounted
+              // with its queries, scroll position and half-typed fields
+              // intact, so opening the grid stays a cancellable gesture
+              // (Collapse returns you to exactly what you left).
+              //
+              // The key is spread CONDITIONALLY because Radix mounts every
+              // pane's div - active or not (its Presence force-mounts
+              // function children; only the BODY inside is gated) - and hides
+              // the inactive ones purely through a computed `hidden` that
+              // caller props spread over. Passing the key with `false` or
+              // `undefined` therefore un-hides every INACTIVE pane too, and
+              // seven empty-but-visible panes' vertical paddings stack into a
+              // band of dead space above or below the active body (before it
+              // for late tabs, after it for early ones).
+              {...(isMobile && hubExpanded ? { hidden: true } : {})}
               className="-mx-5 mt-0 px-5 pt-4 pb-5 md:min-h-0 md:overflow-y-auto"
             >
               <ProviderTabBody

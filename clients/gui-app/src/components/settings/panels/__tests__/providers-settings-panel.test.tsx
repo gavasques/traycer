@@ -6674,14 +6674,18 @@ describe("<ProvidersSettingsPanel /> mobile section hub", () => {
     // Expanded on arrival (no deep-linked tab), so the bar reads "Collapse".
     expect(screen.getByRole("button", { name: /Collapse/ })).toBeDefined();
 
-    // While the grid owns the screen, the active section's body carries the
-    // `hidden` attribute rather than being unmounted, so there is no VISIBLE
-    // tabpanel - but it is still findable by asking for hidden elements too.
-    // Testing Library's role queries exclude `hidden` elements by default and
-    // only see them when `{ hidden: true }` is passed, which every assertion
-    // below that distinguishes "hidden" from "unmounted" relies on.
+    // While the grid owns the screen, no tabpanel is VISIBLE - but nothing is
+    // unmounted either. Radix mounts every pane's div regardless of selection
+    // (its Presence force-mounts function children) and gates only the BODY
+    // inside, so all eight divs are findable by asking for hidden elements,
+    // and exactly the active one still holds its mounted body. Testing
+    // Library's role queries exclude `hidden` elements by default and only
+    // see them when `{ hidden: true }` is passed, which every assertion below
+    // that distinguishes "hidden" from "unmounted" relies on.
     expect(screen.queryByRole("tabpanel")).toBeNull();
-    expect(screen.getByRole("tabpanel", { hidden: true })).toBeDefined();
+    const panes = screen.getAllByRole("tabpanel", { hidden: true });
+    expect(panes).toHaveLength(8);
+    expect(panes.filter((pane) => pane.childElementCount > 0)).toHaveLength(1);
   });
 
   it("collapses the grid to a bar and shows the picked section's body", () => {
@@ -6709,6 +6713,29 @@ describe("<ProvidersSettingsPanel /> mobile section hub", () => {
     expect(screen.getByRole("tabpanel")).toBeDefined();
   });
 
+  it("keeps every inactive section pane hidden while the grid is collapsed", () => {
+    render(
+      <TooltipProvider>
+        <ProvidersSettingsPanel />
+      </TooltipProvider>,
+    );
+
+    selectTab("Env");
+
+    // The dead-space regression this pins. Radix mounts EVERY pane's div -
+    // active or not - and hides the inactive ones only through a computed
+    // `hidden` that caller props spread over. Passing the prop with `false`
+    // or `undefined` (rather than omitting the key) therefore un-hid all
+    // seven empty inactive panes, and their stacked vertical paddings
+    // rendered as a blank band above or below the active body on phones.
+    expect(screen.getAllByRole("tabpanel")).toHaveLength(1);
+    const mounted = screen.getAllByRole("tabpanel", { hidden: true });
+    expect(mounted).toHaveLength(8);
+    expect(mounted.filter((pane) => pane.hasAttribute("hidden"))).toHaveLength(
+      7,
+    );
+  });
+
   it("re-expands the grid from the All sections control", () => {
     render(
       <TooltipProvider>
@@ -6727,9 +6754,15 @@ describe("<ProvidersSettingsPanel /> mobile section hub", () => {
     expect(
       within(grid).getByRole("tab", { name: "Env" }).getAttribute("data-state"),
     ).toBe("active");
-    // Re-expanding hides the section body again rather than unmounting it.
+    // Re-expanding hides the section body again rather than unmounting it:
+    // no visible tabpanel, but exactly one of the (always-mounted) pane divs
+    // still holds its body.
     expect(screen.queryByRole("tabpanel")).toBeNull();
-    expect(screen.getByRole("tabpanel", { hidden: true })).toBeDefined();
+    expect(
+      screen
+        .getAllByRole("tabpanel", { hidden: true })
+        .filter((pane) => pane.childElementCount > 0),
+    ).toHaveLength(1);
   });
 
   it("opens a deep link collapsed, straight on the requested tab", () => {
@@ -6826,7 +6859,14 @@ describe("<ProvidersSettingsPanel /> mobile section hub", () => {
     );
 
     // Expanded on arrival; the active section's body is mounted but hidden.
-    const hiddenPanel = screen.getByRole("tabpanel", { hidden: true });
+    // Every pane's div is mounted whether active or not, so the active one is
+    // the single pane still holding a body.
+    const hiddenPanel = screen
+      .getAllByRole("tabpanel", { hidden: true })
+      .find((pane) => pane.childElementCount > 0);
+    if (hiddenPanel === undefined) {
+      throw new Error("expected the active section's body to stay mounted");
+    }
 
     // Re-clicking the already-active tile collapses the grid through the
     // tile's own click handler rather than a Radix value change, so the

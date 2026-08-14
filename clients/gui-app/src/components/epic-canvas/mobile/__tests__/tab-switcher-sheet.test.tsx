@@ -59,6 +59,39 @@ vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
   useReactiveActiveHostId: () => HOST_ID,
 }));
 
+// The presence probe is a live PR subscription; stand in for it with a fake
+// that reports whatever this test wants the host to have answered, so the
+// bootstrap path (probe -> presence -> tab) stays observable without a
+// transport.
+const probeState = vi.hoisted(() => ({
+  mounts: 0,
+  reports: null as boolean | null,
+}));
+vi.mock(
+  "@/components/epic-canvas/mobile/switcher-pr-presence-probe",
+  async () => {
+    const { useEffect } = await import("react");
+    const { usePrPresenceStore } = await import(
+      "@/stores/epics/pr-presence-store"
+    );
+    return {
+      SwitcherPrPresenceProbe: (props: {
+        readonly epicId: string;
+        readonly hostId: string | null;
+      }) => {
+        const record = usePrPresenceStore((s) => s.recordPrPresence);
+        useEffect(() => {
+          probeState.mounts += 1;
+          const reports = probeState.reports;
+          if (reports === null || props.hostId === null) return;
+          record(props.hostId, props.epicId, reports);
+        }, [props.epicId, props.hostId, record]);
+        return null;
+      },
+    };
+  },
+);
+
 const TAB_ID = "tab-switcher-test";
 const EPIC_ID = "epic-1";
 const HOST_ID = "host-A";
@@ -82,6 +115,11 @@ function setPullRequestPresence(hasPullRequests: boolean): void {
   });
 }
 
+function resetProbe(): void {
+  probeState.mounts = 0;
+  probeState.reports = null;
+}
+
 function renderSheet(open: boolean, onOpenChange: (open: boolean) => void) {
   return render(
     <TabSwitcherSheet
@@ -99,6 +137,7 @@ describe("<TabSwitcherSheet />", () => {
     // Reset the shared left-panel store so category selection never leaks.
     useLeftPanelStore.setState({ activePanelIdByTabId: {} });
     setPullRequestPresence(false);
+    resetProbe();
   });
   afterEach(cleanup);
 
@@ -221,9 +260,34 @@ describe("<TabSwitcherSheet />", () => {
     expect(screen.getByTestId("mock-agents-list")).toBeTruthy();
   });
 
+  it("reveals the tab on a device with no recorded presence once the probe reports PRs", () => {
+    // The bootstrap case: nothing in the presence store, so without the probe
+    // the tab could never appear and the body that writes presence could never
+    // mount. The probe answers first, and the bar picks it up live.
+    probeState.reports = true;
+    renderSheet(true, () => {});
+    expect(screen.getByRole("tab", { name: "Pull Requests" })).toBeTruthy();
+  });
+
+  it("leaves the tab off when the probe reports the epic has no PRs", () => {
+    probeState.reports = false;
+    renderSheet(true, () => {});
+    expect(screen.queryByRole("tab", { name: "Pull Requests" })).toBeNull();
+  });
+
   it("renders nothing when closed (controlled open prop)", () => {
     renderSheet(false, () => {});
     expect(screen.queryByTestId("mobile-tab-switcher-sheet")).toBeNull();
+  });
+
+  it("does not run the presence probe while the sheet is closed", () => {
+    renderSheet(false, () => {});
+    expect(probeState.mounts).toBe(0);
+  });
+
+  it("runs the presence probe while the sheet is open", () => {
+    renderSheet(true, () => {});
+    expect(probeState.mounts).toBe(1);
   });
 
   it("renders nothing on desktop even when asked to open", () => {
@@ -263,6 +327,29 @@ function prDetailRef(id: string, instanceId: string): PrDetailTileRef {
   };
 }
 
+/** A live pane holding no tiles - what the user sees after closing the last tab. */
+function seedCanvasWithNoTiles(): void {
+  const root: TilePane = {
+    kind: "pane",
+    id: "pane-A",
+    tabInstanceIds: [],
+    activeTabId: null,
+    previewTabId: null,
+    activationHistory: [],
+  };
+  useEpicCanvasStore.setState({
+    tabsById: { [TAB_ID]: { tabId: TAB_ID, epicId: EPIC_ID, name: "Epic 1" } },
+    canvasByTabId: {
+      [TAB_ID]: {
+        root,
+        activePaneId: "pane-A",
+        tilesByInstanceId: {},
+        sizesByGroupId: {},
+      },
+    },
+  });
+}
+
 function seedCanvas(
   tilesByInstanceId: Record<string, EpicCanvasTileRef>,
   activeTabId: string,
@@ -293,6 +380,7 @@ describe("<TabSwitcherSheet /> close-on-open", () => {
     mobileState.value = true;
     useLeftPanelStore.setState({ activePanelIdByTabId: {} });
     setPullRequestPresence(false);
+    resetProbe();
   });
   afterEach(() => {
     cleanup();
@@ -310,6 +398,37 @@ describe("<TabSwitcherSheet /> close-on-open", () => {
     expect(onOpenChange).not.toHaveBeenCalled();
     act(() => seedCanvas(tiles, "inst-2")); // shown tile -> workspace-file
     expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("closes when the FIRST tile of an empty pane is a PR detail", () => {
+    // The switcher is the way back from an empty pane, so its first observation
+    // there is `null` - which must not read as "nothing observed yet" and
+    // suppress the close, leaving the drawer over the tile just opened.
+    setPullRequestPresence(true);
+    seedCanvasWithNoTiles();
+    const onOpenChange = vi.fn();
+    renderSheet(true, onOpenChange);
+    expect(onOpenChange).not.toHaveBeenCalled();
+    act(() => seedCanvas({ "inst-1": prDetailRef("pr-7", "inst-1") }, "inst-1"));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("closes when the FIRST tile of an empty pane is a file-tree tap", () => {
+    seedCanvasWithNoTiles();
+    const onOpenChange = vi.fn();
+    renderSheet(true, onOpenChange);
+    act(() =>
+      seedCanvas({ "inst-1": workspaceFileRef("f1", "inst-1") }, "inst-1"),
+    );
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("stays open when an empty pane grows a background chat/artifact tile", () => {
+    seedCanvasWithNoTiles();
+    const onOpenChange = vi.fn();
+    renderSheet(true, onOpenChange);
+    act(() => seedCanvas({ "inst-1": artifactRef("a1", "inst-1") }, "inst-1"));
+    expect(onOpenChange).not.toHaveBeenCalled();
   });
 
   it("closes when a PR row tap lands its detail tile", () => {

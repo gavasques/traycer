@@ -40,6 +40,7 @@ import {
   resolveFileTransferPaths,
   uniquePaths,
 } from "@/lib/files/file-transfer-paths";
+import { isMobileApp } from "@/lib/mobile-app";
 import { cn } from "@/lib/utils";
 import { appLogger } from "@/lib/logger";
 import { useTerminalTheme } from "@/lib/terminal-theme";
@@ -1364,6 +1365,12 @@ function useActiveTerminalFocus(
   const paneActivationFocusIntent = usePaneActivationFocusIntent();
   const focusVisibleTerminal = useCallback(() => {
     if (!shouldFocusOnActivePane) return;
+    // A phone keyboard must be summoned by a tap, not by pane activation: on
+    // the installed mobile app the terminal takes focus only from the tile's
+    // tap-to-focus path, which keeps the pane readable until the user asks to
+    // type. The key bar still reaches the engine while it is unfocused - it
+    // injects through `term.input`, not the hidden textarea.
+    if (isMobileApp()) return;
     if (paneActivationFocusIntent.shouldYieldAutoFocus()) return;
     focusTerminalInstance(instanceId);
   }, [instanceId, paneActivationFocusIntent, shouldFocusOnActivePane]);

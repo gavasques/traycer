@@ -25,6 +25,7 @@ import {
   type ComposerEditorIncarnation,
 } from "@/lib/composer/composer-editor-incarnation";
 import type { MentionAttachment } from "@/lib/composer/types";
+import { isMobileApp } from "@/lib/mobile-app";
 import { cn } from "@/lib/utils";
 import {
   focusActiveComposer,
@@ -364,7 +365,10 @@ function ComposerPromptEditorImpl(props: ComposerPromptEditorProps) {
     {
       extensions,
       content: normalizedInitial.content,
-      autofocus: isActive ? "end" : false,
+      // On the installed mobile app a phone keyboard must be summoned by a
+      // tap, never by a composer merely mounting active - so the editor takes
+      // the caret only where a hardware keyboard makes that free.
+      autofocus: isActive && !isMobileApp() ? "end" : false,
       immediatelyRender: false,
       editable: !disabled,
       editorProps: {
@@ -439,6 +443,11 @@ function ComposerPromptEditorImpl(props: ComposerPromptEditorProps) {
   useEffect(() => {
     if (editor === null) return;
     if (!isActive) return;
+    // Becoming the active composer is not a user gesture. On the installed
+    // mobile app that alone must not raise the software keyboard; the explicit
+    // focus paths (tapping the composer, restoring a draft, editing a message)
+    // still do.
+    if (isMobileApp()) return;
     if (editor.isFocused) return;
     if (paneActivationFocusIntent.shouldYieldAutoFocus()) return;
     focusActiveComposer();

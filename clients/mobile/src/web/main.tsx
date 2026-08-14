@@ -58,9 +58,11 @@ const config = __TRAYCER_MOBILE_CONFIG__;
 // BROWSER-TESTING SCAFFOLDING (dev entry only): a shipped build carries no
 // `devHost` and uses real remote-host discovery instead (see below).
 function buildDevHostFetcher(devHost: TraycerMobileDevHost): RemoteHostFetcher {
+  // The baked config predates the directory's dialability field; the dev
+  // host is a loopback WebSocket, which is the definition of dialable.
   const bakedHost: RemoteHostFetchOutcome = {
     kind: "hosts",
-    entries: [devHost.host],
+    entries: [{ ...devHost.host, transportDialability: "dialable" }],
   };
   return async () => {
     try {
@@ -79,7 +81,15 @@ function buildDevHostFetcher(devHost: TraycerMobileDevHost): RemoteHostFetcher {
       }
       return {
         kind: "hosts",
-        entries: [{ ...devHost.host, hostId, version, websocketUrl }],
+        entries: [
+          {
+            ...devHost.host,
+            hostId,
+            version,
+            websocketUrl,
+            transportDialability: "dialable",
+          },
+        ],
       };
     } catch {
       // The baked entry, not `failed`: this scaffolding's whole point is that

@@ -221,7 +221,7 @@ export function SplitSlotChooserContent(
               onOpenItem={openHistoryItem}
               routeSearch={null}
               historyNowMs={null}
-              autoFocusSearch={sideFocused && !isMobileApp()}
+              autoFocusSearch={sideFocused === true && !isMobileApp()}
             />
           ) : (
             <p className="px-1 py-2 text-ui-sm text-muted-foreground">

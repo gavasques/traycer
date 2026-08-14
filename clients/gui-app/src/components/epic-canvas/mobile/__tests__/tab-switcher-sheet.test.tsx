@@ -63,9 +63,9 @@ vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
 // sheet's "presence AND not known-unsupported" rule is testable without a
 // transport. Only this one export is displaced - `StreamRuntimeContext` itself
 // stays real for anything else in the tree that reads it.
-const streamState = vi.hoisted(() => ({
-  prSupport: "supported" as string | null,
-}));
+const streamState = vi.hoisted(
+  (): { prSupport: string | null } => ({ prSupport: "supported" }),
+);
 vi.mock("@/lib/host/stream-runtime-context", async (importOriginal) => ({
   ...(await importOriginal<
     typeof import("@/lib/host/stream-runtime-context")

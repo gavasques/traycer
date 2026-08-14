@@ -243,6 +243,7 @@ describe("<SurfaceReadinessBoundary />", () => {
       ],
       hasLocalHost: true,
       hasMobileNoHost: false,
+      hostsUnknown: false,
     } as const;
     expect(
       resolveSurfaceReadiness({
@@ -311,7 +312,7 @@ describe("<SurfaceReadinessBoundary />", () => {
       kind: "remote",
       websocketUrl: `ws://${hostId}`,
       version: "1.0.0",
-      status: "available",
+      transportDialability: "dialable",
     });
     const base = {
       scope: "default-host" as const,
@@ -322,6 +323,7 @@ describe("<SurfaceReadinessBoundary />", () => {
       hasLocalHost: false,
       hasMobileNoHost: false,
       hostsUnknown: false,
+      hasReadySessionFor: () => false,
     };
     // The wall itself: two selectable hosts, nothing selected, no local host.
     expect(
@@ -344,7 +346,10 @@ describe("<SurfaceReadinessBoundary />", () => {
         ...base,
         activeHostId: "host-a",
         directoryEntries: [
-          { ...remoteEntry("host-a"), status: "unavailable" },
+          {
+            ...remoteEntry("host-a"),
+            transportDialability: "not-dialable" as const,
+          },
           remoteEntry("host-b"),
         ],
       }),
@@ -368,6 +373,7 @@ describe("<SurfaceReadinessBoundary />", () => {
       requestContextUserId: "user-a",
       directoryEntries: [],
       hasLocalHost: false,
+      hasReadySessionFor: () => false,
     };
     // The regression: an unanswered registry is not an empty one. The
     // no-host copy tells the user to go set a host up, which is the wrong

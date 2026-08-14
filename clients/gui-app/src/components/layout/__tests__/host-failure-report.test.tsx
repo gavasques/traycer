@@ -33,6 +33,7 @@ function neutralPresentation(): DefaultHostReadinessPresentation {
     reinstall: () => undefined,
     configureShell: () => undefined,
     refreshDirectory: () => undefined,
+    directoryRefreshing: false,
     openHostPicker: () => undefined,
     openSettings: () => undefined,
     anyHostDialable: false,

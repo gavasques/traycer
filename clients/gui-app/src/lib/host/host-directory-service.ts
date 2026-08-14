@@ -596,9 +596,16 @@ export class HostDirectoryService implements IHostDirectoryService {
    * so joining it hands a caller an answer the new credential never asked for
    * — and if that answer is a 401, a clear. Losing the coalescing here costs
    * one request.
+   *
+   * Emits the refresh state for the same reason the request's own `finally`
+   * does: this is the other way `isRefreshing()` goes false, and the manual
+   * Refresh affordance is driven by that subscription alone - without the
+   * emit it stays locked in its pending state until the orphaned request
+   * happens to settle.
    */
   invalidateInFlightRefresh(): void {
     this.refreshInFlight = null;
+    this.emitRefreshState();
   }
 
   /**
@@ -772,9 +779,15 @@ export class HostDirectoryService implements IHostDirectoryService {
     // is not real, so take the reachable one. With several reachable (or
     // none) there is no defensible guess - return null and let the
     // readiness surface ask the user (`choose-host`).
-    const available = entries.filter((entry) => entry.status === "available");
-    if (entries.length > 1 && available.length === 1) {
-      return available[0];
+    //
+    // Asked through `isEntryDialable`, the same POSITIVE dialability the
+    // failover machinery uses, never the coarse field directly: this promotes
+    // a host on the user's behalf, so an entry the cloud merely failed to read
+    // (`indeterminate`) must not count as the one live machine and silently
+    // bind a directory the user should have been asked about.
+    const dialable = entries.filter(isEntryDialable);
+    if (entries.length > 1 && dialable.length === 1) {
+      return dialable[0];
     }
     return null;
   }
@@ -954,19 +967,46 @@ export class HostDirectoryService implements IHostDirectoryService {
       // session until some later read succeeds. Dropping is not a genuine
       // outcome - it clears the foreign list without claiming the registry
       // said "empty".
+      //
+      // A previous account leaves behind TWO pieces of state, and the rows are
+      // only one of them: it also leaves the record that the registry has been
+      // read (`hasObservedRemoteListing`), which is what makes an empty merged
+      // directory mean "you own no hosts" rather than "nobody has managed to
+      // ask" (see `getCardinality`). Keying this branch on the rows alone
+      // misses the account that legitimately owned NO hosts - it committed an
+      // empty listing, so there is nothing to drop and the branch never ran,
+      // and its observation went on answering `zero` for the next account. The
+      // condition is therefore identity plus EITHER residue.
+      const foreignIdentity = this.lastCommitIdentity !== era.identity;
+      const foreignObservedListing =
+        foreignIdentity && this.hasObservedRemoteListing;
       if (
-        this.remoteEntries.length > 0 &&
-        this.lastCommitIdentity !== era.identity
+        foreignIdentity &&
+        (this.remoteEntries.length > 0 || foreignObservedListing)
       ) {
         appLogger.debug(
-          "[host-directory] dropping remote entries committed under a previous identity after a failed refresh",
-          { remoteCount: this.remoteEntries.length },
+          "[host-directory] dropping directory state committed under a previous identity after a failed refresh",
+          {
+            remoteCount: this.remoteEntries.length,
+            observedListing: this.hasObservedRemoteListing,
+          },
         );
         this.remoteEntries = [];
         this.lastCommitIdentity = null;
+        this.hasObservedRemoteListing = false;
         this.retireFailoverStateOnAuthoritativeClear(outcome.kind);
         this.reconcileSelection();
-        this.emitIfSnapshotChanged();
+        // Un-observing moves the readiness gate between its searching and
+        // no-host surfaces over a directory that is empty EITHER WAY, so the
+        // snapshot compare would swallow the one emit that redraws it - the
+        // same reason the commit path emits unconditionally when the flag
+        // flips. Dropping rows always changes the snapshot, so that half can
+        // still take the compared emit.
+        if (foreignObservedListing) {
+          this.emit();
+        } else {
+          this.emitIfSnapshotChanged();
+        }
         return this.snapshot();
       }
       appLogger.debug(

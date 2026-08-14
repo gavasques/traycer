@@ -32,7 +32,7 @@ const hostA: HostDirectoryEntry = {
   kind: "remote",
   websocketUrl: "wss://host-a.traycer.invalid/rpc",
   version: "0.0.0-mock",
-  status: "available",
+  transportDialability: "dialable",
 };
 
 const hostB: HostDirectoryEntry = {
@@ -41,7 +41,7 @@ const hostB: HostDirectoryEntry = {
   kind: "remote",
   websocketUrl: "wss://host-b.traycer.invalid/rpc",
   version: "0.0.0-mock",
-  status: "available",
+  transportDialability: "dialable",
 };
 
 const hostC: HostDirectoryEntry = {
@@ -50,7 +50,7 @@ const hostC: HostDirectoryEntry = {
   kind: "remote",
   websocketUrl: null,
   version: "0.0.0-mock",
-  status: "unavailable",
+  transportDialability: "not-dialable",
 };
 
 function makeHost(): MockRunnerHost {

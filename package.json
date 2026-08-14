@@ -217,5 +217,8 @@
     "jsdom": "^29.1.1",
     "typescript": "^6.0.3",
     "vaul": "^1.1.2"
+  },
+  "patchedDependencies": {
+    "@legendapp/list@3.2.0": "patches/@legendapp%2Flist@3.2.0.patch"
   }
 }

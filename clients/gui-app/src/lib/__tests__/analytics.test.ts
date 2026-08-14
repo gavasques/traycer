@@ -1051,3 +1051,41 @@ describe("analytics", () => {
     });
   });
 });
+
+describe("app surface and platform globals", () => {
+  afterEach(async () => {
+    const { setMobileApp } = await import("@/lib/mobile-app");
+    setMobileApp(false);
+  });
+
+  it("reports desktop off the mobile app and mobile on it", async () => {
+    const { analyticsAppSurface } = await import("@/lib/analytics");
+    const { setMobileApp } = await import("@/lib/mobile-app");
+    expect(analyticsAppSurface()).toBe("desktop");
+    setMobileApp(true);
+    expect(analyticsAppSurface()).toBe("mobile");
+  });
+
+  it("names the mobile OS from the user agent on the mobile app", async () => {
+    const { analyticsPlatform } = await import("@/lib/analytics");
+    const { setMobileApp } = await import("@/lib/mobile-app");
+    setMobileApp(true);
+    try {
+      Object.defineProperty(navigator, "userAgent", {
+        configurable: true,
+        value:
+          "Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15",
+      });
+      expect(analyticsPlatform()).toBe("ios");
+      Object.defineProperty(navigator, "userAgent", {
+        configurable: true,
+        value: "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36",
+      });
+      expect(analyticsPlatform()).toBe("android");
+    } finally {
+      // The stub is an OWN property shadowing the prototype accessor, so
+      // deleting it restores the real user agent.
+      Reflect.deleteProperty(navigator, "userAgent");
+    }
+  });
+});

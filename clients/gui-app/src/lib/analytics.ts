@@ -1,4 +1,5 @@
 import posthog, { type CaptureResult, type PostHogConfig } from "posthog-js";
+import { isMobileApp } from "@/lib/mobile-app";
 
 export type AnalyticsSource =
   | "direct_ui"
@@ -2243,7 +2244,29 @@ export function trackedSettingSetter<Value>(
   };
 }
 
-function analyticsPlatform(): "linux" | "macos" | "other" | "windows" {
+/**
+ * Which product shell is emitting events. A phone-narrow desktop window is
+ * still `desktop`: this is the install target, not the viewport.
+ */
+export function analyticsAppSurface(): "desktop" | "mobile" {
+  return isMobileApp() ? "mobile" : "desktop";
+}
+
+export function analyticsPlatform():
+  | "android"
+  | "ios"
+  | "linux"
+  | "macos"
+  | "other"
+  | "windows" {
+  if (isMobileApp()) {
+    // `navigator.platform` reads "iPhone"/"Linux armv8l" inside the mobile
+    // WebViews, which the desktop branches below would misfile as other or
+    // linux; the user agent names the OS directly.
+    if (/iphone|ipad|ipod/i.test(navigator.userAgent)) return "ios";
+    if (/android/i.test(navigator.userAgent)) return "android";
+    return "other";
+  }
   const platform = navigator.platform.toLowerCase();
   if (platform.includes("mac")) return "macos";
   if (platform.includes("win")) return "windows";
@@ -2296,6 +2319,7 @@ export class Analytics {
     this.guarded(() =>
       posthog.register({
         app: "gui-app",
+        app_surface: analyticsAppSurface(),
         app_version: import.meta.env.VITE_APP_VERSION ?? null,
         platform: analyticsPlatform(),
         release_channel: analyticsReleaseChannel(),

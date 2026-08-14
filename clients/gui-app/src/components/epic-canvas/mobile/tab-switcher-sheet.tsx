@@ -9,9 +9,9 @@ import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
 import { SwitcherCategoryTabs } from "@/components/epic-canvas/mobile/switcher-category-tabs";
 import {
-  MOBILE_SWITCHER_CATEGORY_DEFS,
   clampToSwitcherCategory,
   isSwitcherCategory,
+  visibleSwitcherCategoryDefs,
 } from "@/components/epic-canvas/mobile/switcher-categories";
 import { SwitcherAgentsList } from "@/components/epic-canvas/mobile/switcher-agents-list";
 import { SwitcherTerminalsList } from "@/components/epic-canvas/mobile/switcher-terminals-list";
@@ -20,11 +20,17 @@ import { selectMobileTile } from "@/components/epic-canvas/mobile/mobile-tile-se
 import { useEpicCanvas } from "@/stores/epics/canvas/store";
 import {
   isGitDiffTileRef,
+  isPrDetailTileRef,
   isSnapshotDiffTileRef,
   isWorkspaceFileRef,
   type EpicCanvasTileRef,
 } from "@/stores/epics/canvas/types";
 import { useIsMobileViewport } from "@/hooks/ui/use-mobile-viewport";
+import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
+import {
+  selectPrScopeHasItems,
+  usePrPresenceStore,
+} from "@/stores/epics/pr-presence-store";
 import { useResolvedTheme } from "@/providers/use-resolved-theme";
 import {
   useActiveLeftPanelId,
@@ -34,9 +40,9 @@ import {
 import { cn } from "@/lib/utils";
 import "@/components/layout/shell/mobile-shell-touch-targets.css";
 
-// Lazy so the desktop File-tree / Git-diff bodies - and the heavy epic-sidebar
-// module they pull in - load only when a phone user opens those categories, and
-// never sit in the mobile tile view's eager module graph.
+// Lazy so the desktop File-tree / Git-diff / Pull-requests bodies - and the
+// heavy epic-sidebar module they pull in - load only when a phone user opens
+// those categories, and never sit in the mobile tile view's eager module graph.
 const SwitcherPanelEmbed = lazy(() =>
   import("@/components/epic-canvas/mobile/switcher-panel-embed").then((m) => ({
     default: m.SwitcherPanelEmbed,
@@ -50,12 +56,13 @@ interface TabSwitcherSheetProps {
   readonly onOpenChange: (open: boolean) => void;
 }
 
-/** Tile kinds only the embedded File-tree / Git-diff bodies open. */
+/** Tile kinds only the embedded File-tree / Git-diff / Pull-requests bodies open. */
 function isEmbedOriginatedTileRef(ref: EpicCanvasTileRef): boolean {
   return (
     isWorkspaceFileRef(ref) ||
     isGitDiffTileRef(ref) ||
-    isSnapshotDiffTileRef(ref)
+    isSnapshotDiffTileRef(ref) ||
+    isPrDetailTileRef(ref)
   );
 }
 
@@ -63,8 +70,9 @@ function isEmbedOriginatedTileRef(ref: EpicCanvasTileRef): boolean {
  * The mobile tab switcher: a drag-dismissable `vaul` bottom sheet whose
  * category bar mirrors the desktop left-panel registry and whose content region
  * shows the active category - flat lists for Agents/Terminals/Artifacts, the
- * embedded desktop File-tree / Git-diff panel bodies for the rest. Creating is
- * a row inside the category that owns the kind, not a sheet-level control.
+ * embedded desktop File-tree / Git-diff / Pull-requests panel bodies for the
+ * rest. Creating is a row inside the category that owns the kind, not a
+ * sheet-level control.
  *
  * Opened from the mobile header's switcher trigger. Only meaningful on phones -
  * it is mounted from `MobileEpicTileView`, which itself renders only under the
@@ -79,7 +87,19 @@ export function TabSwitcherSheet(props: TabSwitcherSheetProps) {
   const { resolvedTheme, themePreset } = useResolvedTheme();
   const persistedCategory = useActiveLeftPanelId(tabId);
   const setActivePanelId = useLeftPanelStore((s) => s.setActivePanelId);
-  const activeCategory = clampToSwitcherCategory(persistedCategory);
+  // The Pull requests category is presence-gated exactly as the desktop rail
+  // icon is. Read through the app-active host rather than the tab's bound one:
+  // the PR panel body is the only writer of this store and records under that
+  // same host, so reader and writer must agree on the scope key or the
+  // category could never appear.
+  const activeHostId = useReactiveActiveHostId();
+  const hasPullRequests = usePrPresenceStore(
+    selectPrScopeHasItems(activeHostId, epicId),
+  );
+  const activeCategory = clampToSwitcherCategory(
+    persistedCategory,
+    hasPullRequests,
+  );
 
   const handleCategoryChange = useCallback(
     (value: string) => {
@@ -143,10 +163,10 @@ export function TabSwitcherSheet(props: TabSwitcherSheetProps) {
           className="min-h-0 flex-1 gap-0"
         >
           <div className="shrink-0 border-b border-canvas-border/70">
-            <SwitcherCategoryTabs />
+            <SwitcherCategoryTabs hasPullRequests={hasPullRequests} />
           </div>
           <div className="flex min-h-0 flex-1 flex-col">
-            {MOBILE_SWITCHER_CATEGORY_DEFS.map((definition) => (
+            {visibleSwitcherCategoryDefs(hasPullRequests).map((definition) => (
               <TabsContent
                 key={definition.id}
                 value={definition.id}
@@ -175,9 +195,9 @@ interface SwitcherCategoryBodyProps {
 }
 
 /**
- * Content-region registry: flat lists (P2.2) for the row-per-item categories;
- * embedded desktop panel bodies (P2.3) for File tree + Git diff. The flat lists
- * call `onClose` on selection; the embeds rely on the sheet's active-tile
+ * Content-region registry: flat lists for the row-per-item categories; embedded
+ * desktop panel bodies for File tree, Git diff and Pull requests. The flat
+ * lists call `onClose` on selection; the embeds rely on the sheet's active-tile
  * watcher.
  */
 function SwitcherCategoryBody(props: SwitcherCategoryBodyProps) {
@@ -218,6 +238,16 @@ function SwitcherCategoryBody(props: SwitcherCategoryBodyProps) {
         <Suspense fallback={<SwitcherEmbedFallback />}>
           <SwitcherPanelEmbed
             category="git-diff"
+            epicId={epicId}
+            tabId={tabId}
+          />
+        </Suspense>
+      );
+    case "pull-requests":
+      return (
+        <Suspense fallback={<SwitcherEmbedFallback />}>
+          <SwitcherPanelEmbed
+            category="pull-requests"
             epicId={epicId}
             tabId={tabId}
           />

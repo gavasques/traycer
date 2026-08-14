@@ -6,9 +6,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TabSwitcherSheet } from "@/components/epic-canvas/mobile/tab-switcher-sheet";
 import { useLeftPanelStore } from "@/stores/epics/left-panel-store";
 import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
+import {
+  prPresenceScopeKey,
+  usePrPresenceStore,
+} from "@/stores/epics/pr-presence-store";
 import type {
   EpicArtifactRef,
   EpicCanvasTileRef,
+  PrDetailTileRef,
   TilePane,
   WorkspaceFileRef,
 } from "@/stores/epics/canvas/types";
@@ -46,10 +51,17 @@ vi.mock("@/components/epic-canvas/mobile/switcher-artifacts-list", () => ({
   SwitcherArtifactsList: () => <div data-testid="mock-artifacts-list" />,
 }));
 vi.mock("@/components/epic-canvas/mobile/switcher-panel-embed", () => ({
-  SwitcherPanelEmbed: () => <div data-testid="mock-panel-embed" />,
+  SwitcherPanelEmbed: (props: { readonly category: string }) => (
+    <div data-testid="mock-panel-embed" data-category={props.category} />
+  ),
+}));
+vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
+  useReactiveActiveHostId: () => HOST_ID,
 }));
 
 const TAB_ID = "tab-switcher-test";
+const EPIC_ID = "epic-1";
+const HOST_ID = "host-A";
 const CATEGORY_NAMES = [
   "Chats",
   "Artifacts",
@@ -58,10 +70,22 @@ const CATEGORY_NAMES = [
   "Terminals",
 ];
 
+/**
+ * The Pull requests category is presence-gated exactly as the desktop rail
+ * icon is, and the presence store is the only signal for it.
+ */
+function setPullRequestPresence(hasPullRequests: boolean): void {
+  usePrPresenceStore.setState({
+    hasItemsByScopeKey: hasPullRequests
+      ? { [prPresenceScopeKey(HOST_ID, EPIC_ID)]: true }
+      : {},
+  });
+}
+
 function renderSheet(open: boolean, onOpenChange: (open: boolean) => void) {
   return render(
     <TabSwitcherSheet
-      epicId="epic-1"
+      epicId={EPIC_ID}
       tabId={TAB_ID}
       open={open}
       onOpenChange={onOpenChange}
@@ -74,10 +98,11 @@ describe("<TabSwitcherSheet />", () => {
     mobileState.value = true;
     // Reset the shared left-panel store so category selection never leaks.
     useLeftPanelStore.setState({ activePanelIdByTabId: {} });
+    setPullRequestPresence(false);
   });
   afterEach(cleanup);
 
-  it("renders exactly the five curated category tabs when open on mobile", () => {
+  it("renders exactly the five always-on category tabs when open on mobile", () => {
     renderSheet(true, () => {});
     for (const name of CATEGORY_NAMES) {
       expect(screen.getByRole("tab", { name })).toBeTruthy();
@@ -134,6 +159,68 @@ describe("<TabSwitcherSheet />", () => {
     expect(screen.getByTestId("mock-artifacts-list")).toBeTruthy();
   });
 
+  it("omits the Pull Requests tab while the epic has no PRs", () => {
+    renderSheet(true, () => {});
+    expect(screen.queryByRole("tab", { name: "Pull Requests" })).toBeNull();
+    expect(
+      screen.queryByTestId("mobile-switcher-tab-pull-requests"),
+    ).toBeNull();
+  });
+
+  it("adds the Pull Requests tab once the epic has PRs, right after Git Diff", () => {
+    setPullRequestPresence(true);
+    renderSheet(true, () => {});
+    const tabs = screen.getAllByRole("tab");
+    expect(tabs).toHaveLength(6);
+    expect(tabs.map((tab) => tab.getAttribute("data-testid"))).toEqual([
+      "mobile-switcher-tab-chats",
+      "mobile-switcher-tab-artifacts",
+      "mobile-switcher-tab-file-tree",
+      "mobile-switcher-tab-git-diff",
+      "mobile-switcher-tab-pull-requests",
+      "mobile-switcher-tab-terminals",
+    ]);
+  });
+
+  it("shows the embedded desktop PR panel body when the category is selected", async () => {
+    setPullRequestPresence(true);
+    const user = userEvent.setup();
+    renderSheet(true, () => {});
+    await user.click(screen.getByRole("tab", { name: "Pull Requests" }));
+    expect(useLeftPanelStore.getState().getActivePanelId(TAB_ID)).toBe(
+      "pull-requests",
+    );
+    // The embed is lazy-mounted behind Suspense, so wait for the chunk.
+    const embed = await screen.findByTestId("mock-panel-embed");
+    expect(embed.dataset.category).toBe("pull-requests");
+  });
+
+  it("keeps a persisted pull-requests selection while the epic still has PRs", () => {
+    setPullRequestPresence(true);
+    useLeftPanelStore.setState({
+      activePanelIdByTabId: { [TAB_ID]: "pull-requests" },
+    });
+    renderSheet(true, () => {});
+    expect(
+      screen
+        .getByRole("tab", { name: "Pull Requests" })
+        .getAttribute("data-state"),
+    ).toBe("active");
+  });
+
+  it("clamps a persisted pull-requests selection to Chats when the epic has no PRs", () => {
+    useLeftPanelStore.setState({
+      activePanelIdByTabId: { [TAB_ID]: "pull-requests" },
+    });
+    renderSheet(true, () => {});
+    // The tab is gone, so the sheet must fall back rather than strand itself
+    // on a category with no trigger and no body.
+    expect(
+      screen.getByRole("tab", { name: "Chats" }).getAttribute("data-state"),
+    ).toBe("active");
+    expect(screen.getByTestId("mock-agents-list")).toBeTruthy();
+  });
+
   it("renders nothing when closed (controlled open prop)", () => {
     renderSheet(false, () => {});
     expect(screen.queryByTestId("mobile-tab-switcher-sheet")).toBeNull();
@@ -159,6 +246,20 @@ function workspaceFileRef(id: string, instanceId: string): WorkspaceFileRef {
     hostId: "host-A",
     workspacePath: "/ws",
     filePath: id,
+  };
+}
+
+function prDetailRef(id: string, instanceId: string): PrDetailTileRef {
+  return {
+    id,
+    instanceId,
+    type: "pr-detail",
+    name: "acme/widgets#7",
+    hostId: HOST_ID,
+    githubHost: "github.com",
+    owner: "acme",
+    repo: "widgets",
+    prNumber: 7,
   };
 }
 
@@ -191,6 +292,7 @@ describe("<TabSwitcherSheet /> close-on-open", () => {
   beforeEach(() => {
     mobileState.value = true;
     useLeftPanelStore.setState({ activePanelIdByTabId: {} });
+    setPullRequestPresence(false);
   });
   afterEach(() => {
     cleanup();
@@ -207,6 +309,20 @@ describe("<TabSwitcherSheet /> close-on-open", () => {
     renderSheet(true, onOpenChange);
     expect(onOpenChange).not.toHaveBeenCalled();
     act(() => seedCanvas(tiles, "inst-2")); // shown tile -> workspace-file
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("closes when a PR row tap lands its detail tile", () => {
+    setPullRequestPresence(true);
+    const tiles = {
+      "inst-1": artifactRef("a1", "inst-1"),
+      "inst-2": prDetailRef("pr-7", "inst-2"),
+    };
+    seedCanvas(tiles, "inst-1");
+    const onOpenChange = vi.fn();
+    renderSheet(true, onOpenChange);
+    expect(onOpenChange).not.toHaveBeenCalled();
+    act(() => seedCanvas(tiles, "inst-2")); // shown tile -> pr-detail
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 

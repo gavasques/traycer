@@ -11,6 +11,9 @@ vi.mock("@/components/epic-canvas/sidebar/epic-sidebar", () => ({
 vi.mock("@/components/epic-canvas/git-diff/git-diff-panel-body-live", () => ({
   GitDiffPanelBodyLive: () => <div data-testid="git-diff-body" />,
 }));
+vi.mock("@/components/epic-canvas/pr/pr-panel-body", () => ({
+  PrPanelBody: () => <div data-testid="pr-panel-body" />,
+}));
 
 describe("<SwitcherPanelEmbed />", () => {
   afterEach(cleanup);
@@ -25,5 +28,12 @@ describe("<SwitcherPanelEmbed />", () => {
     render(<SwitcherPanelEmbed category="git-diff" epicId="e" tabId="t" />);
     expect(screen.getByTestId("git-diff-body")).toBeTruthy();
     expect(screen.queryByTestId("file-tree-body")).toBeNull();
+  });
+
+  it("embeds the desktop PR panel body for the pull-requests category", () => {
+    render(<SwitcherPanelEmbed category="pull-requests" epicId="e" tabId="t" />);
+    expect(screen.getByTestId("pr-panel-body")).toBeTruthy();
+    expect(screen.queryByTestId("file-tree-body")).toBeNull();
+    expect(screen.queryByTestId("git-diff-body")).toBeNull();
   });
 });

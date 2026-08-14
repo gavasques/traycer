@@ -10,17 +10,19 @@ import {
 
 /**
  * The mobile "Switch tab" sheet exposes the desktop left-panel categories as a
- * horizontally-scrollable tab bar. Curated to the five settled for v1 (decision
- * table): Agents (`chats`), Artifacts, File tree, Git diff, Terminals. Sharing
- * is deferred and Comments live inside the artifact tile, so both are excluded.
- * Identity (title + icon) is reused verbatim from `LEFT_PANEL_DEFINITIONS` so
- * mobile never forks the category copy.
+ * horizontally-scrollable tab bar. Curated to Agents (`chats`), Artifacts, File
+ * tree, Git diff, Pull requests and Terminals; Sharing is excluded and Comments
+ * live inside the artifact tile. `pull-requests` sits directly after `git-diff`
+ * exactly as it does in the desktop rail, so the two surfaces read in the same
+ * order. Identity (title + icon) is reused verbatim from
+ * `LEFT_PANEL_DEFINITIONS` so mobile never forks the category copy.
  */
 const CURATED_ORDER: readonly LeftPanelId[] = [
   "chats",
   "artifacts",
   "file-tree",
   "git-diff",
+  "pull-requests",
   "terminals",
 ];
 
@@ -28,33 +30,46 @@ const DEFINITION_BY_ID = new Map<LeftPanelId, LeftPanelMetadataDefinition>(
   LEFT_PANEL_DEFINITIONS.map((definition) => [definition.id, definition]),
 );
 
-export const MOBILE_SWITCHER_CATEGORY_DEFS: ReadonlyArray<LeftPanelMetadataDefinition> =
+const CURATED_CATEGORY_DEFS: ReadonlyArray<LeftPanelMetadataDefinition> =
   CURATED_ORDER.flatMap((id) => {
     const definition = DEFINITION_BY_ID.get(id);
     return definition === undefined ? [] : [definition];
   });
 
-const MOBILE_SWITCHER_CATEGORY_IDS: ReadonlyArray<LeftPanelId> =
-  MOBILE_SWITCHER_CATEGORY_DEFS.map((definition) => definition.id);
+const CURATED_CATEGORY_IDS: ReadonlyArray<LeftPanelId> =
+  CURATED_CATEGORY_DEFS.map((definition) => definition.id);
 
 /**
- * Every curated category is unconditionally visible in the registry, so this
- * benign context only exists to honour each definition's `isAutoVisible()`
- * contract (Comments/Sharing/Pull requests - the context-dependent panels - are
- * not in the set). The empty override map keeps the switcher on each panel's
- * own rule: the rail's show/hide context menu is a desktop affordance, and the
- * phone switcher's category set is curated here rather than by that menu.
+ * The context each curated definition's `isAutoVisible()` is judged against.
+ * Only PR presence varies: every other curated category is unconditionally
+ * visible in the registry, and Comments - the one remaining context-dependent
+ * panel - is not in the set. The empty override map keeps the switcher on each
+ * panel's own rule: the rail's show/hide context menu is a desktop affordance,
+ * and the phone switcher's category set is curated here rather than by it.
  */
-const SWITCHER_AVAILABILITY: LeftPanelAvailabilityContext = {
-  commentsPanelRevealed: false,
-  hasActiveCommentableArtifact: false,
-  hasPullRequests: false,
-  visibilityOverrideById: {},
-};
+function switcherAvailability(
+  hasPullRequests: boolean,
+): LeftPanelAvailabilityContext {
+  return {
+    commentsPanelRevealed: false,
+    hasActiveCommentableArtifact: false,
+    hasPullRequests,
+    visibilityOverrideById: {},
+  };
+}
 
-export function visibleSwitcherCategoryDefs(): ReadonlyArray<LeftPanelMetadataDefinition> {
-  return MOBILE_SWITCHER_CATEGORY_DEFS.filter((definition) =>
-    definition.isAutoVisible(SWITCHER_AVAILABILITY),
+/**
+ * The categories the sheet shows right now. `hasPullRequests` is the same
+ * presence signal the desktop rail gates its Pull Requests icon on, so an epic
+ * with no PRs gets no PR tab - identical to desktop, where the panel earns no
+ * rail slot.
+ */
+export function visibleSwitcherCategoryDefs(
+  hasPullRequests: boolean,
+): ReadonlyArray<LeftPanelMetadataDefinition> {
+  const availability = switcherAvailability(hasPullRequests);
+  return CURATED_CATEGORY_DEFS.filter((definition) =>
+    definition.isAutoVisible(availability),
   );
 }
 
@@ -75,14 +90,23 @@ export function switcherCategoryTitle(
 }
 
 /**
- * Clamp a persisted active left-panel id to the mobile-curated set so a desktop
- * selection outside the five (e.g. Sharing) falls back to Agents rather than
- * leaving the sheet with no matching tab.
+ * Clamp a persisted active left-panel id to the categories currently on the
+ * bar, so a selection with no tab behind it falls back to Agents rather than
+ * leaving the sheet with no matching tab. Two ways that happens: a category
+ * mobile never curates (e.g. Sharing, selected on desktop), and `pull-requests`
+ * persisted from an epic that has since stopped reporting any PR.
  */
-export function clampToSwitcherCategory(id: LeftPanelId): LeftPanelId {
-  return MOBILE_SWITCHER_CATEGORY_IDS.includes(id) ? id : DEFAULT_LEFT_PANEL_ID;
+export function clampToSwitcherCategory(
+  id: LeftPanelId,
+  hasPullRequests: boolean,
+): LeftPanelId {
+  const visible = visibleSwitcherCategoryDefs(hasPullRequests);
+  return visible.some((definition) => definition.id === id)
+    ? id
+    : DEFAULT_LEFT_PANEL_ID;
 }
 
+/** Membership in the curated set, independent of present-moment visibility. */
 export function isSwitcherCategory(value: string): value is LeftPanelId {
-  return MOBILE_SWITCHER_CATEGORY_IDS.some((id) => id === value);
+  return CURATED_CATEGORY_IDS.some((id) => id === value);
 }

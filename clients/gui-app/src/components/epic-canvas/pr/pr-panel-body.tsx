@@ -22,6 +22,7 @@ import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
 import { usePrListSubscription } from "@/hooks/pr/use-pr-list-subscription";
 import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
 import { useEpicTileNavigation } from "@/hooks/epic/use-epic-tile-navigation";
+import { useIsMobileViewport } from "@/hooks/ui/use-mobile-viewport";
 import { useStreamMethodSupport } from "@/lib/host/stream-runtime-context";
 import { usePrPresenceStore } from "@/stores/epics/pr-presence-store";
 import { makePrDetailTile, prDetailTileId } from "@/lib/pr/pr-detail-tile";
@@ -42,12 +43,19 @@ import {
 /**
  * Pull Requests panel body. Subscribes in foreground mode on the default-host
  * stream client with an explicit visibility gate:
- *   enabled = sidebar expanded ∧ section expanded ∧ method supported
+ *   enabled = surface showing this body ∧ method supported
  *
+ * On the sidebar, "showing" means sidebar expanded ∧ section expanded.
  * Whole-sidebar collapse is CSS-only (`hidden` on the column) and would leave
  * the body mounted without this gate. Per-section collapse already unmounts
  * the body; the section check is still included so the gate is complete and
  * testable if mount semantics change.
+ *
+ * Below the mobile breakpoint the sidebar column is not rendered at all, so
+ * both collapse flags are stale desktop chrome there and answer nothing about
+ * whether this body is on screen. Its host is then the mobile switcher sheet,
+ * which mounts the body only while the Pull requests category is showing -
+ * mounted IS visible - so the collapse half of the gate is skipped.
  *
  * Layout mirrors the Settings > Worktrees repo listing: a collapsible repo
  * header (chevron + icon + owner/repo + count) over full-bleed rows separated
@@ -64,8 +72,12 @@ export function PrPanelBody(props: LeftPanelSlotProps): ReactNode {
   const sectionCollapsed = useLeftPanelSectionCollapsed("pull-requests");
   const methodSupport = useStreamMethodSupport("pr.subscribeListForEpic");
   const methodSupported = methodSupport !== "unsupported";
+  const isMobileViewport = useIsMobileViewport();
 
-  const enabled = !mainCollapsed && !sectionCollapsed && methodSupported;
+  const surfaceHidden = isMobileViewport
+    ? false
+    : mainCollapsed || sectionCollapsed;
+  const enabled = !surfaceHidden && methodSupported;
 
   const subscription = usePrListSubscription({
     hostId,

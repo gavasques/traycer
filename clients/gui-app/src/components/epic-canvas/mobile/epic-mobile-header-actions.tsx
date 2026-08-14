@@ -1,20 +1,21 @@
-import { useCallback, useEffect, type ReactNode } from "react";
+import { useCallback, type ReactNode } from "react";
 import { SquareStack } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { InlineTitleField } from "@/components/epic-canvas/mobile/inline-title-field";
-import { useIsMobileViewport } from "@/hooks/ui/use-mobile-viewport";
-import { useMobileHeaderStore } from "@/stores/layout/mobile-header-store";
 import { useMobileSwitcherStore } from "@/stores/epics/mobile-switcher-store";
 import { useRegisteredEpicPermissionRole } from "@/lib/epic-selectors";
 import { isEditableRole } from "@/lib/epic-permissions";
 import { useEpicUpdateTitle } from "@/hooks/epic/use-epic-title-mutation";
 
 /**
- * Fills the mobile-header right-actions slot on the epic route with the tab
- * switcher trigger. Tapping it opens the switcher sheet, which the epic tile
- * view mounts - the two halves talk through `useMobileSwitcherStore` because
- * this trigger renders from the app provider stack, OUTSIDE the epic session
- * tree.
+ * The tab switcher trigger in the mobile header's right cluster. Tapping it
+ * opens the switcher sheet, which the epic tile view mounts - the two halves
+ * talk through `useMobileSwitcherStore` because this trigger renders from the
+ * app provider stack, OUTSIDE the epic session tree.
+ *
+ * The header renders it straight from the epic route's `tabId`, so it needs no
+ * state of its own beyond that route parameter and appears on every path into
+ * an epic, including a cold restore whose session is still coming up.
  *
  * Ungated by permission: switching tabs reads, it does not mutate, so a viewer
  * gets the same trigger. The create actions inside the sheet carry their own
@@ -41,8 +42,9 @@ export function EpicMobileSwitcherTrigger(props: { readonly tabId: string }) {
 /**
  * The epic's name in the mobile header, renamed in place: tapping it turns the
  * title into its own field, and the committed value goes through the canonical
- * epic-rename mutation. The active epic route's title sync mirrors the epic
- * title back into the header, so no separate tab-name write is needed.
+ * epic-rename mutation. The committed name reaches this control back through
+ * the same live session the header resolved it from, so no separate tab-name
+ * write is needed.
  *
  * Renaming is editor-only (the same role predicate the sidebar uses, read
  * through the header-safe registry accessor because this renders outside the
@@ -73,31 +75,4 @@ export function MobileEpicHeaderTitle(props: {
       className="min-w-0 flex-1 truncate font-medium text-foreground"
     />
   );
-}
-
-/**
- * Fills / clears the mobile-header right-actions slot for the ACTIVE epic
- * route. Mounted once (from the active epic's route effects), self-gated on
- * `useIsMobileViewport()`. The slot stores a `ReactNode` element: this is safe
- * because the element is a self-contained component keyed only on the stable
- * route ids - it re-reads volatile state from its own hooks each header render,
- * so nothing goes stale. A render-fn slot would be isomorphic (a fn returning
- * the same element) but a larger store change; a baked-in control that closed
- * over epic-session handlers WOULD go stale, which is exactly what this shape
- * avoids.
- */
-export function MobileEpicHeaderActionsBinder(props: {
-  readonly tabId: string;
-}) {
-  const { tabId } = props;
-  const isMobile = useIsMobileViewport();
-  const setRightActions = useMobileHeaderStore((s) => s.setRightActions);
-
-  useEffect(() => {
-    if (!isMobile) return;
-    setRightActions(<EpicMobileSwitcherTrigger tabId={tabId} />);
-    return () => setRightActions(null);
-  }, [isMobile, tabId, setRightActions]);
-
-  return null;
 }

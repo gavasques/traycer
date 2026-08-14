@@ -6,8 +6,12 @@ import { SETTINGS_SECTIONS } from "@/lib/settings-sections";
 import { RateLimitIconButton } from "@/components/layout/header/rate-limit-icon";
 import { ResourceMonitorPopover } from "@/components/resources/resource-monitor-popover";
 import { MobileNotificationsButton } from "@/components/notifications/mobile-notifications-button";
-import { MobileEpicHeaderTitle } from "@/components/epic-canvas/mobile/epic-mobile-header-actions";
+import {
+  EpicMobileSwitcherTrigger,
+  MobileEpicHeaderTitle,
+} from "@/components/epic-canvas/mobile/epic-mobile-header-actions";
 import "@/components/layout/shell/mobile-shell-touch-targets.css";
+import { useRegisteredEpicTitle } from "@/lib/epic-selectors";
 import { useMobileNavStore } from "@/stores/layout/mobile-nav-store";
 import { useMobileHeaderStore } from "@/stores/layout/mobile-header-store";
 import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
@@ -18,8 +22,9 @@ import { isSettingsPath } from "@/stores/tabs/kinds/settings";
 /**
  * The phone app header. Replaces the desktop tab strip + control cluster with a
  * hamburger (opens the navigation drawer), the current surface title, and a
- * right slot the active route fills with its own actions. Rendered only below
- * md (see `AppHeader`), so desktop is untouched.
+ * right cluster carrying the global status controls plus the current surface's
+ * own action. Rendered only below md (see `AppHeader`), so desktop is
+ * untouched.
  */
 export function MobileAppHeader(): ReactNode {
   const setNavOpen = useMobileNavStore((state) => state.setOpen);
@@ -28,7 +33,8 @@ export function MobileAppHeader(): ReactNode {
     (state) => state.showGlobalResourceMonitor,
   );
   const epicId = useMobileHeaderEpicId();
-  const title = useMobileHeaderTitle();
+  const epicTabId = useMobileHeaderEpicTabId();
+  const title = useMobileHeaderTitle(epicId, epicTabId);
   const settingsSection = useSettingsSectionLabel();
   return (
     <header
@@ -75,7 +81,23 @@ export function MobileAppHeader(): ReactNode {
         {/* Last of the global controls, matching the desktop header's order
             (rate limit -> resource monitor -> bell). */}
         <MobileNotificationsButton />
-        {rightActions}
+        {/* The epic route's control is DERIVED from the route, not published
+            into the slot below. The slot is one last-writer-wins cell: a
+            surface fills it from an effect and clears it on unmount, so any
+            other mounted surface that owns actions (the landing terminal
+            panel) can overwrite or blank the epic's trigger purely by the
+            order its effects run in - and nothing re-runs the epic's write
+            afterwards. The trigger needs only the route's `tabId`, so reading
+            it here makes it a function of the route and removes both the
+            ordering and the mount-gating (a trigger published from inside the
+            epic session tree cannot appear until that session is live).
+            Surfaces whose actions genuinely depend on their own state keep
+            using the slot. */}
+        {epicTabId === null ? (
+          rightActions
+        ) : (
+          <EpicMobileSwitcherTrigger tabId={epicTabId} />
+        )}
       </div>
     </header>
   );
@@ -163,6 +185,18 @@ function useMobileHeaderEpicId(): string | null {
 }
 
 /**
+ * The open epic's tab id on the epic route, null everywhere else.
+ */
+function useMobileHeaderEpicTabId(): string | null {
+  const tabId = useMatch({
+    from: "/epics/$epicId/$tabId",
+    shouldThrow: false,
+    select: (match) => match.params.tabId,
+  });
+  return tabId ?? null;
+}
+
+/**
  * The active settings section's label when the route is a settings section
  * (drill-down depth 1), null on the settings index and everywhere else.
  */
@@ -179,23 +213,32 @@ function useSettingsSectionLabel(): string | null {
 /**
  * Derives the header title from the active route: the open epic's name on the
  * epic route, otherwise a per-surface label.
+ *
+ * An epic's name has two live sources and the header takes whichever has
+ * resolved, live session first. The tab record's name is a cache of that same
+ * title, written by the epic route's active-session effects - so it is the
+ * faster of the two (it survives a restart in the persisted canvas) but also
+ * the one that can be absent or stale, because a route restored straight into
+ * an epic reaches this header before anything has written it. The registered
+ * session is the authority whenever it is up, which is the same reason the
+ * title control reads its permission role from that registry too.
  */
-function useMobileHeaderTitle(): string | null {
+function useMobileHeaderTitle(
+  epicId: string | null,
+  epicTabId: string | null,
+): string | null {
   const pathname = useRouterState({
     select: (state) => state.location.pathname,
   });
-  const epicTabId = useMatch({
-    from: "/epics/$epicId/$tabId",
-    shouldThrow: false,
-    select: (match) => match.params.tabId,
-  });
-  const epicName = useEpicCanvasStore((state) =>
-    epicTabId === undefined ? null : (state.tabsById[epicTabId]?.name ?? null),
+  const tabName = useEpicCanvasStore((state) =>
+    epicTabId === null ? null : (state.tabsById[epicTabId]?.name ?? null),
   );
+  const liveTitle = useRegisteredEpicTitle(epicId);
+  const epicName = firstResolvedTitle(liveTitle, tabName);
   // An epic whose name has not resolved yet falls through to no title rather
   // than to a placeholder, so the header never flashes a stand-in and then
   // swaps it for the real name.
-  if (epicTabId !== undefined && epicName !== null) return epicName;
+  if (epicTabId !== null && epicName !== null) return epicName;
   if (isSettingsPath(pathname)) return "Settings";
   if (isHistoryPath(pathname)) return "History";
   // Titles name a place you navigated TO. The composer surfaces - landing and
@@ -203,4 +246,19 @@ function useMobileHeaderTitle(): string | null {
   // that carries the page, so "Traycer" and "New task" were both labelling the
   // obvious. History, Settings and an epic's name are the ones that earn a row.
   return null;
+}
+
+/**
+ * The first candidate that carries an actual name. Blank is "not resolved
+ * yet", not a title: a tab record can hold an empty name, and rendering it
+ * would present an empty rename field as though the epic were untitled.
+ */
+function firstResolvedTitle(
+  preferred: string | null,
+  fallback: string | null,
+): string | null {
+  const fromPreferred = preferred === null ? "" : preferred.trim();
+  if (fromPreferred.length > 0) return fromPreferred;
+  const fromFallback = fallback === null ? "" : fallback.trim();
+  return fromFallback.length > 0 ? fromFallback : null;
 }

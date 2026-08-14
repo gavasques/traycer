@@ -36,9 +36,11 @@ vi.mock("@/components/notifications/mobile-notifications-button", () => ({
 // On the epic route the title slot renders `MobileEpicHeaderTitle`, which
 // pulls a host mutation (`useEpicUpdateTitle`) and the registered-epic
 // permission role. Neither host runtime nor a registered epic exist in this
-// bare harness, so stub both.
+// bare harness, so stub both. `mobile-app-header-cold-restore.test.tsx` drives
+// the registry accessors for real.
 const headerTitleState = vi.hoisted(() => ({
   role: "owner",
+  liveTitle: null as string | null,
 }));
 const updateTitleMutateSpy = vi.hoisted(() => vi.fn());
 vi.mock("@/hooks/epic/use-epic-title-mutation", () => ({
@@ -49,6 +51,7 @@ vi.mock("@/hooks/epic/use-epic-title-mutation", () => ({
 }));
 vi.mock("@/lib/epic-selectors", () => ({
   useRegisteredEpicPermissionRole: () => headerTitleState.role,
+  useRegisteredEpicTitle: () => headerTitleState.liveTitle,
 }));
 
 function renderAt(path: string) {
@@ -102,6 +105,7 @@ describe("MobileAppHeader", () => {
     useEpicCanvasStore.setState({ tabsById: {} });
     useSettingsStore.setState({ showGlobalResourceMonitor: false });
     headerTitleState.role = "owner";
+    headerTitleState.liveTitle = null;
     updateTitleMutateSpy.mockClear();
   });
   afterEach(() => {
@@ -215,13 +219,26 @@ describe("MobileAppHeader", () => {
     ).toBeNull();
   });
 
-  it("renders route-contributed right actions from the slot store", async () => {
+  it("renders surface-contributed right actions from the slot store", async () => {
     useMobileHeaderStore.setState({
-      rightActions: <button type="button">epic action</button>,
+      rightActions: <button type="button">landing action</button>,
+    });
+    renderAt("/");
+    expect(
+      await screen.findByRole("button", { name: "landing action" }),
+    ).not.toBeNull();
+  });
+
+  // The epic route's own control is derived from the route, so a slot value a
+  // surface left behind cannot take the switcher's place in the cluster.
+  it("renders the tab switcher on the epic route in place of the slot", async () => {
+    useMobileHeaderStore.setState({
+      rightActions: <button type="button">landing action</button>,
     });
     renderAt("/epics/e1/t1");
     expect(
-      await screen.findByRole("button", { name: "epic action" }),
+      await screen.findByTestId("mobile-epic-switcher-trigger"),
     ).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "landing action" })).toBeNull();
   });
 });

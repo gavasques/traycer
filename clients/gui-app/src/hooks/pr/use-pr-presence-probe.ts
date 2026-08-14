@@ -50,6 +50,13 @@ export function usePrPresenceProbe(args: {
   readonly epicId: string;
   readonly enabled: boolean;
 }): void {
+  // Only a definite `unsupported` blocks the dial - `unknown` (and the `null` of
+  // a client not yet built) still subscribes, exactly as the panel body and its
+  // actions do. That is deliberate: support is client-wide evidence taken from
+  // any session's handshake manifest and is cleared on every reconnect, so
+  // waiting for certainty would skip the probe through a window that recurs
+  // routinely. The cost of being wrong is one subscribe message that the host
+  // rejects, and the manifest that rejects it is what corrects the state.
   const methodSupport = useStreamMethodSupport("pr.subscribeListForEpic");
   const subscription = usePrListSubscription({
     hostId: args.hostId,

@@ -28,6 +28,7 @@ import {
 } from "@/stores/epics/canvas/types";
 import { useIsMobileViewport } from "@/hooks/ui/use-mobile-viewport";
 import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
+import { useStreamMethodSupport } from "@/lib/host/stream-runtime-context";
 import {
   selectPrScopeHasItems,
   usePrPresenceStore,
@@ -114,12 +115,28 @@ export function TabSwitcherSheet(props: TabSwitcherSheetProps) {
   // panel body and the probe both record under this same host, and a reader on
   // a different scope key could never see what they wrote.
   const activeHostId = useReactiveActiveHostId();
-  const hasPullRequests = usePrPresenceStore(
+  const hasRecordedPullRequests = usePrPresenceStore(
     selectPrScopeHasItems(activeHostId, epicId),
   );
+  // Presence is not sufficient on its own: it is persisted per (host, epic) and
+  // outlives the host it was recorded against, so a host that rolls back to a
+  // build without the PR stream would still show the tab - and tapping it would
+  // land the panel's visible "Update required" surface. On a phone the category
+  // simply not being there is the honest answer, matching an epic with no PRs.
+  //
+  // Only a DEFINITE `unsupported` hides it. Support is client-wide evidence
+  // refreshed from any session's handshake manifest and is cleared on every
+  // reconnect, so `unknown` (and the `null` of a client that has not been built
+  // yet) is a routine transient - treating it as unsupported would blink the tab
+  // out and back on each reconnect, which reads as a glitch rather than as a
+  // capability. Holding the last good answer through that window is the stable
+  // choice, and a wrong hold self-corrects the moment the manifest lands.
+  const prStreamSupport = useStreamMethodSupport("pr.subscribeListForEpic");
+  const pullRequestsAvailable =
+    hasRecordedPullRequests && prStreamSupport !== "unsupported";
   const activeCategory = clampToSwitcherCategory(
     persistedCategory,
-    hasPullRequests,
+    pullRequestsAvailable,
   );
 
   const handleCategoryChange = useCallback(
@@ -191,23 +208,25 @@ export function TabSwitcherSheet(props: TabSwitcherSheetProps) {
           className="min-h-0 flex-1 gap-0"
         >
           <div className="shrink-0 border-b border-canvas-border/70">
-            <SwitcherCategoryTabs hasPullRequests={hasPullRequests} />
+            <SwitcherCategoryTabs hasPullRequests={pullRequestsAvailable} />
           </div>
           <div className="flex min-h-0 flex-1 flex-col">
-            {visibleSwitcherCategoryDefs(hasPullRequests).map((definition) => (
-              <TabsContent
-                key={definition.id}
-                value={definition.id}
-                className="flex min-h-0 flex-1 flex-col overflow-hidden"
-              >
-                <SwitcherCategoryBody
-                  categoryId={definition.id}
-                  epicId={epicId}
-                  tabId={tabId}
-                  onClose={handleClose}
-                />
-              </TabsContent>
-            ))}
+            {visibleSwitcherCategoryDefs(pullRequestsAvailable).map(
+              (definition) => (
+                <TabsContent
+                  key={definition.id}
+                  value={definition.id}
+                  className="flex min-h-0 flex-1 flex-col overflow-hidden"
+                >
+                  <SwitcherCategoryBody
+                    categoryId={definition.id}
+                    epicId={epicId}
+                    tabId={tabId}
+                    onClose={handleClose}
+                  />
+                </TabsContent>
+              ),
+            )}
           </div>
         </Tabs>
       </DrawerContent>

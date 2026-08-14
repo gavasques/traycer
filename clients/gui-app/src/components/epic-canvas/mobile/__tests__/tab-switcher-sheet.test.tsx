@@ -59,6 +59,20 @@ vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
   useReactiveActiveHostId: () => HOST_ID,
 }));
 
+// Method support is client-wide handshake evidence; drive it directly so the
+// sheet's "presence AND not known-unsupported" rule is testable without a
+// transport. Only this one export is displaced - `StreamRuntimeContext` itself
+// stays real for anything else in the tree that reads it.
+const streamState = vi.hoisted(() => ({
+  prSupport: "supported" as string | null,
+}));
+vi.mock("@/lib/host/stream-runtime-context", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("@/lib/host/stream-runtime-context")
+  >()),
+  useStreamMethodSupport: () => streamState.prSupport,
+}));
+
 // The presence probe is a live PR subscription; stand in for it with a fake
 // that reports whatever this test wants the host to have answered, so the
 // bootstrap path (probe -> presence -> tab) stays observable without a
@@ -118,6 +132,7 @@ function setPullRequestPresence(hasPullRequests: boolean): void {
 function resetProbe(): void {
   probeState.mounts = 0;
   probeState.reports = null;
+  streamState.prSupport = "supported";
 }
 
 function renderSheet(open: boolean, onOpenChange: (open: boolean) => void) {
@@ -258,6 +273,46 @@ describe("<TabSwitcherSheet />", () => {
       screen.getByRole("tab", { name: "Chats" }).getAttribute("data-state"),
     ).toBe("active");
     expect(screen.getByTestId("mock-agents-list")).toBeTruthy();
+  });
+
+  it("omits the tab against a host that does not advertise the PR stream, however stale the recorded presence", () => {
+    // Presence is persisted per (host, epic) and outlives the host build that
+    // recorded it. Showing the tab here would land the panel's visible "Update
+    // required" surface; on a phone the category is simply absent instead.
+    setPullRequestPresence(true);
+    streamState.prSupport = "unsupported";
+    renderSheet(true, () => {});
+    expect(screen.queryByRole("tab", { name: "Pull Requests" })).toBeNull();
+    expect(screen.getAllByRole("tab")).toHaveLength(5);
+  });
+
+  it("clamps a persisted pull-requests selection when the host lost stream support", () => {
+    setPullRequestPresence(true);
+    streamState.prSupport = "unsupported";
+    useLeftPanelStore.setState({
+      activePanelIdByTabId: { [TAB_ID]: "pull-requests" },
+    });
+    renderSheet(true, () => {});
+    expect(
+      screen.getByRole("tab", { name: "Chats" }).getAttribute("data-state"),
+    ).toBe("active");
+    expect(screen.getByTestId("mock-agents-list")).toBeTruthy();
+  });
+
+  it("holds the tab while support is merely unknown, so a reconnect can't blink it out", () => {
+    // Support is cleared on every reconnect and re-learned from the next
+    // handshake manifest. Only a definite `unsupported` hides the category.
+    setPullRequestPresence(true);
+    streamState.prSupport = "unknown";
+    renderSheet(true, () => {});
+    expect(screen.getByRole("tab", { name: "Pull Requests" })).toBeTruthy();
+  });
+
+  it("holds the tab while no stream client exists yet", () => {
+    setPullRequestPresence(true);
+    streamState.prSupport = null;
+    renderSheet(true, () => {});
+    expect(screen.getByRole("tab", { name: "Pull Requests" })).toBeTruthy();
   });
 
   it("reveals the tab on a device with no recorded presence once the probe reports PRs", () => {

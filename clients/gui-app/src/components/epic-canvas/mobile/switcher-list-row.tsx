@@ -19,14 +19,18 @@ export function SwitcherListRow(props: {
 }) {
   const { icon, label, active, onSelect, actions, selectTestId } = props;
   return (
-    <div className="flex items-center gap-1">
+    // `min-w-0` at both this wrapper and the button: the label's truncate
+    // only engages while every flex level above it may shrink below its
+    // content. One level with an auto min-width re-inflates the row to the
+    // full label width, and the list scrolls sideways instead of ellipsizing.
+    <div className="flex min-w-0 items-center gap-1">
       <Button
         type="button"
         variant="ghost"
         onClick={onSelect}
         data-testid={selectTestId}
         aria-current={active ? "true" : undefined}
-        className="flex min-h-11 flex-1 items-center justify-start gap-2 rounded-md px-2 text-left font-normal"
+        className="flex min-h-11 min-w-0 flex-1 items-center justify-start gap-2 rounded-md px-2 text-left font-normal"
       >
         <span className="flex size-4 shrink-0 items-center justify-center">
           {icon}

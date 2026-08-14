@@ -317,7 +317,7 @@ describe("analytics", () => {
       });
       sdk.register({
         app: "gui-app",
-      app_surface: "desktop",
+        app_surface: "desktop",
         app_version: "1.2.3",
         platform: "macos",
         release_channel: "production",

@@ -69,6 +69,23 @@ export const RECONNECT_INITIAL_BACKOFF_MS = 1_000;
 export const RECONNECT_MAX_BACKOFF_MS = 30_000;
 
 /**
+ * How long a session must hold its ready boundary before its failure streak is
+ * forgiven - the attempt counter zeroed and the dial-failure log's recovery
+ * line written.
+ *
+ * Forgiving at the boundary itself is too cheap: a socket that reaches ready
+ * and dies seconds later looks like a FIRST failure every time, so a flapping
+ * connection is pinned at the fastest tier forever and never escalates at all.
+ * Thirty seconds is chosen to contain the first `RELAY_PING_INTERVAL_MS` round
+ * trip, so the streak survives until at least one keepalive has proven the
+ * connection independently of the handshake that opened it.
+ *
+ * This delays FORGIVENESS only. Availability-recovered still fires the instant
+ * the boundary is reached, so UI and data recovery are never held behind it.
+ */
+export const SUSTAINED_READY_RESET_MS = 30_000;
+
+/**
  * How often the session's `DialFailureLog` re-states an UNCHANGED failure
  * cause. At the 30s backoff cap this suppresses ~9 of every 10 attempts while
  * keeping the cause present in any 5-minute log tail (mirrors the host

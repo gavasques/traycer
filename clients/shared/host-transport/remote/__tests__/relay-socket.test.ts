@@ -9,10 +9,7 @@ import type {
   WebSocketErrorEvent,
   WebSocketOpenEvent,
 } from "../../ws-factory";
-import {
-  RELAY_PONG_TIMEOUT_MS,
-  RELAY_WAKE_PROBE_TIMEOUT_MS,
-} from "../config";
+import { RELAY_PONG_TIMEOUT_MS, RELAY_WAKE_PROBE_TIMEOUT_MS } from "../config";
 import { RelaySocket, type RelaySocketHandlers } from "../relay-socket";
 
 // `RelaySocket.pokeKeepalive` runs the keepalive's staleness check off the
@@ -190,37 +187,34 @@ describe("RelaySocket.pokeKeepalive", () => {
     }
   });
 
-  it(
-    "does not close immediately when the wake-time probe goes unanswered, only once its own deadline elapses",
-    () => {
-      vi.useFakeTimers();
-      try {
-        vi.setSystemTime(0);
-        const handlers = buildHandlers();
-        const relaySocket = new RelaySocket({
-          attachBaseUrl: "wss://relay.test/attach",
-          grantJws: "grant-jws",
-          webSocketFactory: factory,
-          handlers,
-        });
-        socket.onopen?.({ type: "open" });
+  it("does not close immediately when the wake-time probe goes unanswered, only once its own deadline elapses", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(0);
+      const handlers = buildHandlers();
+      const relaySocket = new RelaySocket({
+        attachBaseUrl: "wss://relay.test/attach",
+        grantJws: "grant-jws",
+        webSocketFactory: factory,
+        handlers,
+      });
+      socket.onopen?.({ type: "open" });
 
-        // The far end has gone silent - no pong ever arrives.
-        relaySocket.pokeKeepalive();
-        expect(handlers.closeEvents).toEqual([]);
+      // The far end has gone silent - no pong ever arrives.
+      relaySocket.pokeKeepalive();
+      expect(handlers.closeEvents).toEqual([]);
 
-        vi.advanceTimersByTime(RELAY_WAKE_PROBE_TIMEOUT_MS - 1);
-        expect(handlers.closeEvents).toEqual([]);
+      vi.advanceTimersByTime(RELAY_WAKE_PROBE_TIMEOUT_MS - 1);
+      expect(handlers.closeEvents).toEqual([]);
 
-        vi.advanceTimersByTime(2);
-        expect(handlers.closeEvents).toEqual([
-          { code: 4006, reason: "relay-wake-probe-timeout" },
-        ]);
-      } finally {
-        vi.useRealTimers();
-      }
-    },
-  );
+      vi.advanceTimersByTime(2);
+      expect(handlers.closeEvents).toEqual([
+        { code: 4006, reason: "relay-wake-probe-timeout" },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   it("arms a fresh probe after an earlier one was answered", () => {
     vi.useFakeTimers();
@@ -258,68 +252,63 @@ describe("RelaySocket.pokeKeepalive", () => {
     }
   });
 
-  it(
-    "arms a single wake-time probe across repeated pokeKeepalive calls, not one per call",
-    () => {
-      vi.useFakeTimers();
-      try {
-        vi.setSystemTime(0);
-        const handlers = buildHandlers();
-        const relaySocket = new RelaySocket({
-          attachBaseUrl: "wss://relay.test/attach",
-          grantJws: "grant-jws",
-          webSocketFactory: factory,
-          handlers,
-        });
-        socket.onopen?.({ type: "open" });
+  it("arms a single wake-time probe across repeated pokeKeepalive calls, not one per call", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(0);
+      const handlers = buildHandlers();
+      const relaySocket = new RelaySocket({
+        attachBaseUrl: "wss://relay.test/attach",
+        grantJws: "grant-jws",
+        webSocketFactory: factory,
+        handlers,
+      });
+      socket.onopen?.({ type: "open" });
 
-        // A burst of pokes (the app-switch-flapping case) - each still sends
-        // its own ping, but only the first has a probe deadline to arm.
-        relaySocket.pokeKeepalive();
-        relaySocket.pokeKeepalive();
-        relaySocket.pokeKeepalive();
-        expect(socket.sent).toEqual(["relay-ping", "relay-ping", "relay-ping"]);
+      // A burst of pokes - one per subscriber on a single visibility edge.
+      // The outstanding probe is already asking this question, so the later
+      // pokes send nothing at all: one ping on the wire, not one per caller.
+      relaySocket.pokeKeepalive();
+      relaySocket.pokeKeepalive();
+      relaySocket.pokeKeepalive();
+      expect(socket.sent).toEqual(["relay-ping"]);
 
-        vi.advanceTimersByTime(RELAY_WAKE_PROBE_TIMEOUT_MS + 1);
+      vi.advanceTimersByTime(RELAY_WAKE_PROBE_TIMEOUT_MS + 1);
 
-        // One close, not three - a second and third armed probe would each
-        // fire their own.
-        expect(handlers.closeEvents).toHaveLength(1);
-      } finally {
-        vi.useRealTimers();
-      }
-    },
-  );
+      // One close, not three - a second and third armed probe would each
+      // fire their own.
+      expect(handlers.closeEvents).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
-  it(
-    "still fails immediately on an already-60s-stale socket - the wake probe does not replace that verdict",
-    () => {
-      vi.useFakeTimers();
-      try {
-        vi.setSystemTime(0);
-        const handlers = buildHandlers();
-        const relaySocket = new RelaySocket({
-          attachBaseUrl: "wss://relay.test/attach",
-          grantJws: "grant-jws",
-          webSocketFactory: factory,
-          handlers,
-        });
-        socket.onopen?.({ type: "open" });
+  it("still fails immediately on an already-60s-stale socket - the wake probe does not replace that verdict", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(0);
+      const handlers = buildHandlers();
+      const relaySocket = new RelaySocket({
+        attachBaseUrl: "wss://relay.test/attach",
+        grantJws: "grant-jws",
+        webSocketFactory: factory,
+        handlers,
+      });
+      socket.onopen?.({ type: "open" });
 
-        vi.setSystemTime(RELAY_PONG_TIMEOUT_MS + 1);
-        relaySocket.pokeKeepalive();
+      vi.setSystemTime(RELAY_PONG_TIMEOUT_MS + 1);
+      relaySocket.pokeKeepalive();
 
-        // The scheduled-check verdict, not the shorter wake-probe one - the
-        // socket never got as far as sending a fresh probe ping.
-        expect(handlers.closeEvents).toEqual([
-          { code: 4004, reason: "relay-missed-pongs" },
-        ]);
-        expect(
-          handlers.closeEvents.some((event) => event.code === 4006),
-        ).toBe(false);
-      } finally {
-        vi.useRealTimers();
-      }
-    },
-  );
+      // The scheduled-check verdict, not the shorter wake-probe one - the
+      // socket never got as far as sending a fresh probe ping.
+      expect(handlers.closeEvents).toEqual([
+        { code: 4004, reason: "relay-missed-pongs" },
+      ]);
+      expect(handlers.closeEvents.some((event) => event.code === 4006)).toBe(
+        false,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

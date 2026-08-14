@@ -2,8 +2,9 @@ import { useEffect } from "react";
 import type { IHostStreamClient } from "@traycer-clients/shared/host-transport/host-stream-client";
 import type { HostStreamRpcRegistry } from "@traycer/protocol/host/registry";
 import type { IRunnerHost } from "@traycer-clients/shared/platform/runner-host";
+import { wakeHeldRemoteSessions } from "@traycer-clients/shared/host-transport/remote/index";
 import { onWakeReconnect } from "@/lib/host/wake-reconnect";
-import { appLogger } from "@/lib/logger";
+import { appLogger, describeLogError } from "@/lib/logger";
 import { useRunnerHost } from "@/providers/use-runner-host";
 
 /** The two OS-wake triggers a wake subscriber can fire on. */
@@ -44,21 +45,92 @@ export function subscribeWakeSignals(
 }
 
 /**
+ * Whether the process-wide remote-session resume sweep is installed. Module
+ * scope because the thing it answers for is module scope: one runtime, one
+ * remote-session cache.
+ */
+let remoteResumeSweepInstalled = false;
+
+/**
+ * Test-only: forgets that the sweep was installed, so the next subscription
+ * installs it again.
+ *
+ * A module-level singleton outlives the test that created it. Without this, the
+ * first test to subscribe installs the sweep for the whole FILE, every later
+ * test sees one fewer registration than production would have, and an
+ * assertion on registration counts silently depends on test order. Tests that
+ * fake the runner host's subscriber set must reset both together.
+ */
+export function resetRemoteResumeSweepForTest(): void {
+  remoteResumeSweepInstalled = false;
+}
+
+/**
+ * Installs the ONE resume subscription that wakes every held remote session,
+ * on first use and never again.
+ *
+ * Runtime resume and a per-client reconnect are different questions. A client's
+ * `reconnectAll` speaks for the connection that client is bound to; a resume
+ * says the whole JavaScript context was frozen, which is a fact about every
+ * session at once - including the ones no stream client speaks for at all (a
+ * messenger-only binding, a pinned non-active asset client). Answering that
+ * process-wide question from a per-client subscription would both miss those
+ * and repeat itself once per client, so it is answered once, here, from the
+ * cache's own ownership seam.
+ *
+ * Deliberately never disposed: it outlives every individual client, holds no
+ * per-client state, and the sweep it runs skips entries no consumer holds.
+ */
+function ensureRemoteResumeSweep(runnerHost: IRunnerHost): void {
+  if (remoteResumeSweepInstalled) {
+    return;
+  }
+  remoteResumeSweepInstalled = true;
+  try {
+    subscribeWakeSignals(runnerHost, (reason) => {
+      appLogger.debug("[stream] remote session resume sweep", { reason });
+      wakeHeldRemoteSessions(reason);
+    });
+  } catch (error) {
+    // Best-effort, and deliberately not fatal to the caller's own
+    // subscription: a shell whose resume wiring cannot be installed must still
+    // get per-client wake reconnect. Un-marking lets the next client retry
+    // rather than leaving the sweep permanently believed-installed.
+    remoteResumeSweepInstalled = false;
+    appLogger.warn("[stream] remote session resume sweep unavailable", {
+      error: describeLogError(error),
+    });
+  }
+}
+
+/**
  * Non-hook core of the wake-reconnect wiring. Subscribes a stream client to the
  * two OS-wake triggers and returns a disposer. Used directly (not via React) by
  * the chat session store, which OWNS its transport for the session's warm
  * lifetime and ties the wake subscriptions to that same lifetime - so they are
  * created with the transport and torn down when it closes, not on tile unmount.
+ *
+ * Also brings up the process-wide remote resume sweep on first use. The two
+ * cover different things and neither subsumes the other: this subscription
+ * re-dials the LOCAL client that owns it (a remote one only wakes its own
+ * session, idempotently), while the sweep reaches every held remote session
+ * whether or not a stream client speaks for it.
  */
 export function subscribeStreamWakeReconnect(
   client: IHostStreamClient<HostStreamRpcRegistry>,
   runnerHost: IRunnerHost,
 ): () => void {
   try {
-    return subscribeWakeSignals(runnerHost, (reason) => {
+    const dispose = subscribeWakeSignals(runnerHost, (reason) => {
       appLogger.debug("[stream] wake reconnect requested", { reason });
       client.reconnectAll(reason);
     });
+    // After the caller's own subscription, never before: a shell whose resume
+    // wiring throws should fail this call once, cleanly, rather than have a
+    // process-wide singleton attempt the same doomed subscription first and
+    // double the rollback.
+    ensureRemoteResumeSweep(runnerHost);
+    return dispose;
   } catch (cause) {
     appLogger.error("[stream] wake reconnect subscription failed", {}, cause);
     throw cause;

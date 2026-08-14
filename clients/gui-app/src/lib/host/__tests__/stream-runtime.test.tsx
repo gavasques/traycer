@@ -105,6 +105,7 @@ vi.mock("@/hooks/host/use-host-stream-client-for", async (importActual) => {
 
 import { HostStreamProvider } from "@/lib/host/stream-runtime";
 import { useWsStreamClient } from "@/lib/host/stream-runtime-context";
+import { resetRemoteResumeSweepForTest } from "@/lib/host/stream-wake-reconnect";
 import {
   HostReadinessControllerContext,
   type DefaultHostReadinessPresentation,
@@ -267,6 +268,10 @@ describe("HostStreamProvider", () => {
     cleanup();
     bindingRef.value = null;
     runnerHostRef.handlers.clear();
+    // Paired with the line above: the sweep's install flag is module-level, so
+    // clearing the fake's subscribers without clearing the flag would leave
+    // every later test one registration short of what production has.
+    resetRemoteResumeSweepForTest();
     mocks.createRemoteHostTransport.mockReset();
     streamFactorySpy.build.mockReset();
     vi.restoreAllMocks();
@@ -285,7 +290,13 @@ describe("HostStreamProvider", () => {
 
     const { result } = renderHook(() => useWsStreamClient(), { wrapper });
     expect(result.current).toBeInstanceOf(WsStreamClient);
-    expect(runnerHostRef.handlers.size).toBe(1);
+    // TWO registrants, and they answer different questions. One is this
+    // client's own wake subscription, which re-dials the client that owns it.
+    // The other is the process-wide remote-session resume sweep, installed
+    // once on the first subscription, which reaches every held remote session
+    // - including ones no stream client speaks for. Neither subsumes the
+    // other, so this is 2, not 1.
+    expect(runnerHostRef.handlers.size).toBe(2);
 
     act(() => {
       for (const handler of runnerHostRef.handlers) {

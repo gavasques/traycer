@@ -152,11 +152,16 @@ export class RelaySocket {
    * that has not opened, or is closed, has nothing to probe and is a no-op.
    */
   pokeKeepalive(): void {
-    if (this.closed || !this.opened) {
+    // The outstanding-probe check comes FIRST, before anything is sent. A probe
+    // already in flight is already asking this exact question, so a second poke
+    // has nothing to learn and every extra ping is pure wire traffic - and
+    // pokes do arrive in bursts, one per subscriber on a single visibility
+    // edge.
+    if (this.closed || !this.opened || this.probeTimer !== null) {
       return;
     }
     this.runKeepaliveTick();
-    if (this.closed || this.probeTimer !== null) {
+    if (this.closed) {
       return;
     }
     this.probeTimer = setTimeout(() => {

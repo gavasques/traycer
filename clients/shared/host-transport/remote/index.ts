@@ -25,6 +25,7 @@ export {
   hasReadyRemoteSession,
   remoteSessionCacheKey,
   retireAllRemoteSessions,
+  wakeHeldRemoteSessions,
 } from "./active-remote-sessions";
 export {
   mintAttachGrantViaHttp,

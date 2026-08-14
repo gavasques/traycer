@@ -256,7 +256,12 @@ export function ProviderProfileScopedSection(
         />
         <div
           data-slot="profile-summary-actions"
-          className="flex min-w-0 items-center justify-end gap-2"
+          // Wraps because every item except the email is a fixed-width chip:
+          // in a single-line row a narrow viewport collapses the email to
+          // nothing and then pushes the chips into one another, since none of
+          // them can shrink. Wrapping drops the buttons onto their own line
+          // instead, keeping every chip whole.
+          className="flex min-w-0 flex-wrap items-center justify-end gap-2"
         >
           <ProfileSummary
             key={selectedProfile.profileId}
@@ -400,7 +405,13 @@ function ProfileSummary({
     tier === null || tier === undefined || tier.length === 0 ? null : tier;
 
   return (
-    <div className="flex min-w-0 flex-1 items-center gap-2 text-ui-xs text-muted-foreground">
+    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 text-ui-xs text-muted-foreground">
+      {/* The email (and its reveal toggle) is the one shrinkable item; the
+          badges are whole-or-nothing chips. With wrapping on, a line that
+          cannot hold everything moves whole chips down instead of eating the
+          email's last pixels and overlapping the toggle; the email's own
+          basis stays its content, so it only truncates once it has a line
+          largely to itself. */}
       <div className="flex min-w-0 flex-1 items-center gap-1">
         <TooltipWrapper
           label={emailRevealed ? email : null}

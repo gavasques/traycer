@@ -1,4 +1,4 @@
-import { use, type ReactNode } from "react";
+import { use, useCallback, type ReactNode } from "react";
 import { PlugZap, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
@@ -16,11 +16,25 @@ import {
   useHostSwitchTarget,
 } from "@/components/layout/host-status-strip-state";
 import { HostCompatibilityContext } from "@/lib/host/compatibility-state";
+import {
+  isAnnouncedInterruption,
+  useHostSessionConnectivity,
+  useHostSessionWake,
+  type HostSessionConnectivity,
+} from "@/lib/host/session-connectivity";
 import { cn } from "@/lib/utils";
 
 /**
  * The ONE strip that states what the app-wide host connection is doing:
- * switching to another host, degraded, or broken.
+ * switching to another host, interrupted, degraded, or broken.
+ *
+ * It is also the single owner of the transport's own health, which is why
+ * `disconnected` is a state HERE rather than a banner of its own. A dropped
+ * session makes the compat probe fail, so a second row would paint its own
+ * explanation of the same fault beside this one - and the row directly under
+ * the app header is the only stable slot either could use. The states are
+ * fed by two independent planes (see `deriveHostStatusStripState`); the
+ * precedence between them is what keeps one fault to one line.
  *
  * It absorbs `HostConnectionDegradedBanner` (the traycer#860 held-verdict
  * strip) rather than sitting beside it - two owners of one row is how a
@@ -50,8 +64,22 @@ export function HostStatusStrip(): ReactNode {
   const presentation = useHostReadinessController().defaultHostPresentation;
   const switchTarget = useHostSwitchTarget();
   const activeLabel = useActiveHostLabel();
+  const connectivity = useHostSessionConnectivity();
+  const wakeSession = useHostSessionWake();
+  const retryCompatibility = presentation.compatibility.retry;
+  // Both halves of one recovery, and neither is redundant. The wake collapses
+  // the transport's pending backoff so the socket is re-established sooner than
+  // its schedule intended; the probe is the request that then has to succeed
+  // for every directory-plane state to settle. The probe alone would still have
+  // to wait out the backoff, and the wake alone would leave a recovered session
+  // sitting behind a stale failed verdict.
+  const retryConnection = useCallback(() => {
+    wakeSession();
+    retryCompatibility();
+  }, [wakeSession, retryCompatibility]);
   const state = deriveHostStatusStripState({
     switching: switchTarget !== null,
+    sessionInterrupted: isAnnouncedInterruption(connectivity),
     readinessKind: readiness.kind,
     compatibility: presentation.compatibility,
   });
@@ -78,14 +106,27 @@ export function HostStatusStrip(): ReactNode {
     );
   }
   const label = switchTarget?.label ?? activeLabel;
-  const waitingRetry = waitingRetryAction(readiness.kind, presentation);
+  // The session-plane recovery is not `waitingRetryAction`'s to choose. That
+  // helper picks between a local-host respawn and a probe re-run, and neither
+  // touches the socket this state is about. `retrying` is still the honest
+  // pending flag, because the probe is half of what the retry issues.
+  const waitingRetry =
+    state === "disconnected"
+      ? {
+          onClick: retryConnection,
+          pending: presentation.compatibility.retrying,
+        }
+      : waitingRetryAction(readiness.kind, presentation);
   return (
     <HostStatusStripFrame state={state}>
       <PlugZap className="size-3.5 shrink-0" aria-hidden />
       <span className="min-w-0 flex-1">
-        {state === "degraded"
-          ? "Traycer Host is not responding. Your work is still open - reconnecting."
-          : describeSwitchingMessage(switchTarget !== null, label)}
+        {describeWaitingMessage({
+          state,
+          connectivity,
+          fromSwitchGesture: switchTarget !== null,
+          label,
+        })}
       </span>
       <AgentSpinningDots
         className="size-3"
@@ -159,13 +200,14 @@ function waitingRetryAction(
 }
 
 /**
- * `directory`, `switching` and `degraded` keep the amber/`PlugZap` treatment
- * the degraded banner shipped with - none of them is a broken host. `error` is
- * the one state where the app is pointed at a host it cannot use, so it earns
- * the destructive palette.
+ * `directory`, `switching`, `disconnected` and `degraded` keep the
+ * amber/`PlugZap` treatment the degraded banner shipped with - none of them is
+ * a broken host. `error` is the one state where the app is pointed at a host it
+ * cannot use, so it earns the destructive palette.
  */
 function HostStatusStripFrame(props: {
-  readonly state: "directory" | "switching" | "degraded" | "error";
+  readonly state:
+    "directory" | "switching" | "disconnected" | "degraded" | "error";
   readonly children: ReactNode;
 }): ReactNode {
   return (
@@ -188,22 +230,54 @@ function HostStatusStripFrame(props: {
 const STRIP_ARIA_LABEL: Readonly<Record<string, string>> = {
   directory: "No Traycer Host connected",
   switching: "Switching Traycer Host",
+  disconnected: "Connection to Traycer Host interrupted",
   degraded: "Traycer Host connection degraded",
   error: "Traycer Host is unavailable",
 };
 
 /**
+ * One line for each of the amber waits.
+ *
+ * `disconnected` names the CONNECTION and never the host, because the
+ * connection is the only thing it can prove. The verdict behind it means one
+ * thing: this client's own session is not carrying frames. That is true when
+ * the phone's link died with the host perfectly healthy, and equally true when
+ * the relay reports the host's uplink gone - the session cannot tell those
+ * apart, and neither reading licenses a claim about the host. Wording that
+ * named the host would be a guess, and wrong half the time it mattered. Host
+ * presence is stated elsewhere, by the surfaces that actually know it.
+ *
+ * It has two rungs and they are not interchangeable. The first promises
+ * nothing about the tap: a retry pulls the redial forward, but a redial that
+ * fails re-arms at the escalated backoff, so re-entering this same line is a
+ * normal outcome. The second exists because a message that never changes stops
+ * being read - an outage that has run for a while must not keep describing
+ * itself in the words of one that is about to clear. Both keep the retry and
+ * the spinner: the transport genuinely is still trying in either.
+ *
  * The switch signal names the host the user picked; a readiness-driven wait
  * (a local host respawning, a request context being restored) has no such
  * gesture behind it, so it says what it is instead of claiming a switch
  * nobody asked for.
  */
-function describeSwitchingMessage(
-  fromSwitchGesture: boolean,
-  label: string | null,
-): string {
-  const host = label ?? "Traycer Host";
-  return fromSwitchGesture ? `Switching to ${host}…` : `Connecting to ${host}…`;
+function describeWaitingMessage(args: {
+  readonly state: "switching" | "disconnected" | "degraded";
+  readonly connectivity: HostSessionConnectivity;
+  readonly fromSwitchGesture: boolean;
+  readonly label: string | null;
+}): string {
+  if (args.state === "disconnected") {
+    return args.connectivity === "interrupted-prolonged"
+      ? "Still can't connect - retrying."
+      : "Connection interrupted - reconnecting…";
+  }
+  if (args.state === "degraded") {
+    return "Traycer Host is not responding. Your work is still open - reconnecting.";
+  }
+  const host = args.label ?? "Traycer Host";
+  return args.fromSwitchGesture
+    ? `Switching to ${host}…`
+    : `Connecting to ${host}…`;
 }
 
 /**

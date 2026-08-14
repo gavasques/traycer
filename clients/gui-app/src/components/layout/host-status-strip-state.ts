@@ -18,16 +18,23 @@ import {
 import { useHostBinding } from "@/lib/host/runtime";
 
 /**
- * The five states of the one host status strip (D3). `directory`, `switching`
- * and `degraded` share the amber treatment; `error` is the red variant
- * carrying the recovery action that used to live on the full-screen card.
+ * The states of the one host status strip (D3). `directory`, `switching`,
+ * `disconnected` and `degraded` share the amber treatment; `error` is the red
+ * variant carrying the recovery action that used to live on the full-screen
+ * card.
+ *
+ * Every state but `disconnected` is fed by the DIRECTORY plane - the registry's
+ * view of the host plus the compatibility probe. `disconnected` is the SESSION
+ * plane: this device's own transport. The two are independent and routinely
+ * disagree.
  */
 export type HostStatusStripState =
-  "directory" | "switching" | "degraded" | "error" | "hidden";
+  "directory" | "switching" | "disconnected" | "degraded" | "error" | "hidden";
 
 /**
- * Precedence is `directory > switching > error > degraded`, and that ordering
- * is the anti-flash rule, not a stylistic preference.
+ * Precedence is
+ * `directory > switching > disconnected > checking > error > degraded`, and
+ * that ordering is the anti-flash rule, not a stylistic preference.
  *
  * A switch to a remote host produces, in order: a `host-bound` change, a
  * still-dialing compat probe, then a verdict. If a transient dial failure
@@ -38,6 +45,18 @@ export type HostStatusStripState =
  * switch signal has cleared - i.e. the probe settled - and what it settled on
  * is bad.
  *
+ * `sessionInterrupted` sits where it does for the same anti-flash reason, from
+ * the other side. It ranks BELOW an explicit switch, which is a gesture the
+ * user just made and which owns the row while it resolves - a session dialing
+ * for a host the user picked a second ago is not an interruption. It ranks
+ * ABOVE the `checking` arm and everything below it because a dropped session
+ * is what MAKES those states: the probe is a host RPC, so a dead transport
+ * leaves it in flight, then failing, then held-degraded. Any of them reported
+ * first would name the wrong plane's fault - the host is usually fine and
+ * still heartbeating Online in the directory - and none of their recoveries
+ * touches the socket. Ranking them above would also flip the row between two
+ * explanations of one fault as the probe retried.
+ *
  * Reads the compat facts off the READINESS PRESENTATION rather than the
  * compat context, so the state and the strip's copy can never disagree: they
  * are the same projection of the same probe (the controller memoizes it from
@@ -47,6 +66,11 @@ export type HostStatusStripState =
 export function deriveHostStatusStripState(args: {
   /** A host-bound switch whose new host has not settled a verdict yet. */
   readonly switching: boolean;
+  /**
+   * This device's transport to the active host attached at least once and is
+   * not attached now. Never true outside the installed mobile app.
+   */
+  readonly sessionInterrupted: boolean;
   readonly readinessKind: SurfaceReadiness["kind"];
   readonly compatibility: DefaultHostReadinessPresentation["compatibility"];
 }): HostStatusStripState {
@@ -65,6 +89,7 @@ export function deriveHostStatusStripState(args: {
   // not a race being arbitrated.
   if (surface === "directory") return "directory";
   if (args.switching || surface === "switching") return "switching";
+  if (args.sessionInterrupted) return "disconnected";
   // No answer for this host YET (the probe is in flight, or still dialing
   // under D5.1's pending-class classification). For a remote target readiness
   // is already `ready` - the relay attach is lazy and per-request - so this is

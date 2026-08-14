@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi, type Mock } from "vitest";
 import {
   act,
   cleanup,
@@ -29,6 +29,7 @@ import {
   type HostCompatibility,
 } from "@/lib/host/compatibility-state";
 import { hostRpcRegistry, type HostRpcRegistry } from "@/lib/host";
+import type { HostSessionConnectivity } from "@/lib/host/session-connectivity";
 import { useDesktopDialogStore } from "@/stores/dialogs/desktop-dialog-store";
 
 const SETTLED_TRANSPORT_FAILURE = new HostTransportFailureError({
@@ -47,6 +48,25 @@ const bindingRef = vi.hoisted(() => ({
 
 vi.mock("@/lib/host/runtime", () => ({
   useHostBinding: () => bindingRef.value,
+}));
+
+const connectivityRef = vi.hoisted(
+  (): { connectivity: HostSessionConnectivity; wake: Mock } => ({
+    connectivity: "unknown",
+    wake: vi.fn(),
+  }),
+);
+
+// Keeps the real module - including `isAnnouncedInterruption`, which the
+// strip also imports from here - and overrides only the two hooks. Hand
+// rolling a stub predicate would let a test agree with itself while
+// disagreeing with the production mapping from connectivity to "announced".
+vi.mock("@/lib/host/session-connectivity", async () => ({
+  ...(await vi.importActual<typeof import("@/lib/host/session-connectivity")>(
+    "@/lib/host/session-connectivity",
+  )),
+  useHostSessionConnectivity: () => connectivityRef.connectivity,
+  useHostSessionWake: () => connectivityRef.wake,
 }));
 
 const BASE_PRESENTATION: DefaultHostReadinessPresentation = {
@@ -149,6 +169,8 @@ function queryStrip(): HTMLElement | null {
 afterEach(() => {
   cleanup();
   bindingRef.value = null;
+  connectivityRef.connectivity = "unknown";
+  connectivityRef.wake = vi.fn();
   useDesktopDialogStore.setState({
     activeDialog: null,
     reportIssueAvailable: false,
@@ -157,8 +179,12 @@ afterEach(() => {
 });
 
 describe("deriveHostStatusStripState", () => {
-  // Pure unit table for D3 precedence: switching > error > degraded, plus
-  // the anti-flash rule that a still-checking compat stays amber.
+  // Pure unit table for the full D3 precedence: directory > switching >
+  // sessionInterrupted (disconnected) > checking (as switching) > error >
+  // degraded > hidden. sessionInterrupted is the SESSION plane; every arm
+  // below it is fed by the DIRECTORY plane's own read of the last compat
+  // probe, which a dropped session is what produces in the first place -
+  // so sessionInterrupted outranks all of them.
   const compatibleLive = {
     status: "compatible" as const,
     errorMessage: null,
@@ -189,6 +215,7 @@ describe("deriveHostStatusStripState", () => {
     expect(
       deriveHostStatusStripState({
         switching: true,
+        sessionInterrupted: false,
         readinessKind: "ready",
         compatibility: failed,
       }),
@@ -196,6 +223,7 @@ describe("deriveHostStatusStripState", () => {
     expect(
       deriveHostStatusStripState({
         switching: true,
+        sessionInterrupted: false,
         readinessKind: "incompatible-host",
         compatibility: incompatible,
       }),
@@ -203,6 +231,7 @@ describe("deriveHostStatusStripState", () => {
     expect(
       deriveHostStatusStripState({
         switching: false,
+        sessionInterrupted: false,
         readinessKind: "ready",
         compatibility: checking,
       }),
@@ -210,6 +239,7 @@ describe("deriveHostStatusStripState", () => {
     expect(
       deriveHostStatusStripState({
         switching: false,
+        sessionInterrupted: false,
         readinessKind: "loading-host",
         compatibility: compatibleLive,
       }),
@@ -217,6 +247,7 @@ describe("deriveHostStatusStripState", () => {
     expect(
       deriveHostStatusStripState({
         switching: false,
+        sessionInterrupted: false,
         readinessKind: "compatibility-error",
         compatibility: failed,
       }),
@@ -224,6 +255,7 @@ describe("deriveHostStatusStripState", () => {
     expect(
       deriveHostStatusStripState({
         switching: false,
+        sessionInterrupted: false,
         readinessKind: "ready",
         compatibility: incompatible,
       }),
@@ -231,6 +263,7 @@ describe("deriveHostStatusStripState", () => {
     expect(
       deriveHostStatusStripState({
         switching: false,
+        sessionInterrupted: false,
         readinessKind: "ready",
         compatibility: compatibleDegraded,
       }),
@@ -238,6 +271,7 @@ describe("deriveHostStatusStripState", () => {
     expect(
       deriveHostStatusStripState({
         switching: false,
+        sessionInterrupted: false,
         readinessKind: "ready",
         compatibility: compatibleLive,
       }),
@@ -252,6 +286,7 @@ describe("deriveHostStatusStripState", () => {
     expect(
       deriveHostStatusStripState({
         switching: false,
+        sessionInterrupted: false,
         readinessKind: "searching-hosts",
         compatibility: failed,
       }),
@@ -259,6 +294,7 @@ describe("deriveHostStatusStripState", () => {
     expect(
       deriveHostStatusStripState({
         switching: false,
+        sessionInterrupted: false,
         readinessKind: "choose-host",
         compatibility: incompatible,
       }),
@@ -266,6 +302,7 @@ describe("deriveHostStatusStripState", () => {
     expect(
       deriveHostStatusStripState({
         switching: false,
+        sessionInterrupted: false,
         readinessKind: "mobile-no-host",
         compatibility: checking,
       }),
@@ -273,10 +310,88 @@ describe("deriveHostStatusStripState", () => {
     expect(
       deriveHostStatusStripState({
         switching: true,
+        sessionInterrupted: false,
         readinessKind: "searching-hosts",
         compatibility: compatibleLive,
       }),
     ).toBe("directory");
+  });
+
+  it("ranks sessionInterrupted below directory and a live switch, but above every checking/error/degraded arm underneath", () => {
+    // Every case above passes `sessionInterrupted: false`; these pass `true`
+    // to prove the SESSION plane sits exactly where the arm order says:
+    // below the two arms that describe what the app is POINTED AT (directory,
+    // switching), above everything that describes what the last compat probe
+    // ANSWERED (checking, error, degraded, or even a healthy compatible
+    // verdict) - a dropped session is what produces those answers in the
+    // first place, so none of them may explain the row instead.
+    expect(
+      deriveHostStatusStripState({
+        switching: false,
+        sessionInterrupted: true,
+        readinessKind: "searching-hosts",
+        compatibility: compatibleLive,
+      }),
+    ).toBe("directory");
+    expect(
+      deriveHostStatusStripState({
+        switching: true,
+        sessionInterrupted: true,
+        readinessKind: "ready",
+        compatibility: compatibleLive,
+      }),
+    ).toBe("switching");
+    expect(
+      deriveHostStatusStripState({
+        switching: false,
+        sessionInterrupted: true,
+        readinessKind: "loading-host",
+        compatibility: compatibleLive,
+      }),
+    ).toBe("switching");
+    expect(
+      deriveHostStatusStripState({
+        switching: false,
+        sessionInterrupted: true,
+        readinessKind: "ready",
+        compatibility: checking,
+      }),
+    ).toBe("disconnected");
+    expect(
+      deriveHostStatusStripState({
+        switching: false,
+        sessionInterrupted: true,
+        readinessKind: "compatibility-error",
+        compatibility: failed,
+      }),
+    ).toBe("disconnected");
+    expect(
+      deriveHostStatusStripState({
+        switching: false,
+        sessionInterrupted: true,
+        readinessKind: "ready",
+        compatibility: incompatible,
+      }),
+    ).toBe("disconnected");
+    expect(
+      deriveHostStatusStripState({
+        switching: false,
+        sessionInterrupted: true,
+        readinessKind: "ready",
+        compatibility: compatibleDegraded,
+      }),
+    ).toBe("disconnected");
+    // The whole point: a healthy directory plane (compatible, ready) plus a
+    // dropped session still has to say something, and it must be
+    // `disconnected` rather than `hidden`.
+    expect(
+      deriveHostStatusStripState({
+        switching: false,
+        sessionInterrupted: true,
+        readinessKind: "ready",
+        compatibility: compatibleLive,
+      }),
+    ).toBe("disconnected");
   });
 });
 
@@ -838,5 +953,156 @@ describe("<HostStatusStrip />", () => {
     expect(strip?.dataset.state).toBe("directory");
     expect(screen.queryByText("Traycer Host is not responding.")).toBeNull();
     expect(screen.queryByTestId("host-status-strip-retry")).toBeNull();
+  });
+
+  /**
+   * The healthy directory-plane fixture the `disconnected` cases below share:
+   * a compatible, non-degraded verdict under `readiness.kind: "ready"`. The
+   * host is up and heartbeating Online in the directory - the fault, if any,
+   * is this device's own session.
+   */
+  const HEALTHY_COMPATIBILITY: HostCompatibility = {
+    status: "compatible",
+    degraded: false,
+    retry: () => undefined,
+    hostStatus: { busy: false, busySessionCount: 0, hostVersion: "1.0.0" },
+  };
+
+  it("shows the connection-interrupted strip without blaming the host when the session drops under a healthy directory plane", () => {
+    connectivityRef.connectivity = "interrupted";
+    renderStrip({
+      compatibility: HEALTHY_COMPATIBILITY,
+      readiness: { kind: "ready" },
+      presentation: BASE_PRESENTATION,
+      hostClient: null,
+    });
+
+    const strip = queryStrip();
+    expect(strip).not.toBeNull();
+    expect(strip?.dataset.state).toBe("disconnected");
+    expect(strip?.textContent).toContain("Connection interrupted");
+    // This state is reached with the host itself fine - the fault is the
+    // device's own socket - so the copy must never read as the host being
+    // down, and must never name the host either.
+    expect(screen.queryByText(/Traycer Host is not responding/)).toBeNull();
+    expect(strip?.textContent).not.toContain("Traycer Host");
+    // The two rungs must not collapse into one: this is the FIRST rung, so
+    // the stronger "still can't connect" wording must not also be present.
+    expect(strip?.textContent).not.toContain("Still can't connect");
+  });
+
+  it("escalates the disconnected strip to its second rung once the outage has run long, without ever blaming the host", () => {
+    connectivityRef.connectivity = "interrupted-prolonged";
+    const retry = vi.fn();
+    renderStrip({
+      compatibility: HEALTHY_COMPATIBILITY,
+      readiness: { kind: "ready" },
+      presentation: {
+        ...BASE_PRESENTATION,
+        compatibility: {
+          ...BASE_PRESENTATION.compatibility,
+          retry,
+        },
+      },
+      hostClient: null,
+    });
+
+    const strip = queryStrip();
+    expect(strip).not.toBeNull();
+    expect(strip?.dataset.state).toBe("disconnected");
+    expect(strip?.textContent).toContain("Still can't connect");
+    // The first rung's reassuring wording must not survive the escalation -
+    // a message that never changes is what the second rung exists to avoid.
+    expect(strip?.textContent).not.toContain("Connection interrupted");
+
+    expect(connectivityRef.wake).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("host-status-strip-retry"));
+    expect(connectivityRef.wake).toHaveBeenCalledTimes(1);
+    expect(retry).toHaveBeenCalledTimes(1);
+  });
+
+  it("names the interrupted strip as a connection problem, not a host problem, in its accessible name", () => {
+    connectivityRef.connectivity = "interrupted";
+    renderStrip({
+      compatibility: HEALTHY_COMPATIBILITY,
+      readiness: { kind: "ready" },
+      presentation: BASE_PRESENTATION,
+      hostClient: null,
+    });
+
+    expect(
+      screen.getByRole("status", {
+        name: "Connection to Traycer Host interrupted",
+      }),
+    ).toBeTruthy();
+  });
+
+  it("wakes the session and retries compatibility together when Retry is clicked, and not before", () => {
+    connectivityRef.connectivity = "interrupted";
+    const retry = vi.fn();
+    renderStrip({
+      compatibility: HEALTHY_COMPATIBILITY,
+      readiness: { kind: "ready" },
+      presentation: {
+        ...BASE_PRESENTATION,
+        compatibility: {
+          ...BASE_PRESENTATION.compatibility,
+          retry,
+        },
+      },
+      hostClient: null,
+    });
+
+    expect(connectivityRef.wake).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("host-status-strip-retry"));
+    expect(connectivityRef.wake).toHaveBeenCalledTimes(1);
+    expect(retry).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables Retry on the disconnected strip while the compatibility retry it issued is still pending", () => {
+    connectivityRef.connectivity = "interrupted";
+    renderStrip({
+      compatibility: HEALTHY_COMPATIBILITY,
+      readiness: { kind: "ready" },
+      presentation: {
+        ...BASE_PRESENTATION,
+        compatibility: {
+          ...BASE_PRESENTATION.compatibility,
+          retrying: true,
+        },
+      },
+      hostClient: null,
+    });
+
+    expect(
+      screen.getByTestId("host-status-strip-retry").hasAttribute("disabled"),
+    ).toBe(true);
+  });
+
+  it.each(["dialing", "settling", "ready", "unknown"] as const)(
+    "stays hidden under a healthy directory plane while connectivity is '%s'",
+    (connectivity) => {
+      connectivityRef.connectivity = connectivity;
+      renderStrip({
+        compatibility: HEALTHY_COMPATIBILITY,
+        readiness: { kind: "ready" },
+        presentation: BASE_PRESENTATION,
+        hostClient: null,
+      });
+
+      expect(queryStrip()).toBeNull();
+    },
+  );
+
+  it("shows the directory arm, not disconnected, when the session is interrupted but no host is bound", () => {
+    connectivityRef.connectivity = "interrupted";
+    renderStrip({
+      compatibility: HEALTHY_COMPATIBILITY,
+      readiness: { kind: "mobile-no-host" },
+      presentation: BASE_PRESENTATION,
+      hostClient: null,
+    });
+
+    expect(queryStrip()?.dataset.state).toBe("directory");
   });
 });

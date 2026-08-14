@@ -125,6 +125,10 @@ describe("ComposerPromptEditor autofocus vs the mobile app", () => {
     const mounted = await mountComposer(true);
     const handle = readyHandle(mounted);
 
+    // Cleared so the assertion pins the explicit request itself - without
+    // this, a regression that re-enables mount autofocus would satisfy the
+    // final expectation before focusAtEnd ever ran.
+    mounted.viewFocus.mockClear();
     act(() => {
       handle.focusAtEnd();
     });

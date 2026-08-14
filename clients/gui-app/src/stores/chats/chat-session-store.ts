@@ -395,6 +395,19 @@ export interface ChatSessionState {
     readonly clientActionId: string;
     readonly taskIds: ReadonlySet<string>;
   } | null;
+  /**
+   * The in-flight session-scoped background stop (the escalation for commands
+   * carrying `individualStopUnavailable`), or null. Two phases:
+   * `awaitingTurnEnd` means the turn-stop frame went out first and the
+   * session-stop frame is dispatched the moment a turn-state frame reports
+   * the turn settled - the host refuses a session stop under a live turn, so
+   * the client owns this sequencing. `clientActionId` is the session-stop
+   * frame's ack handle, null until phase two dispatches it.
+   */
+  readonly pendingBackgroundSessionStop: {
+    readonly clientActionId: string | null;
+    readonly awaitingTurnEnd: boolean;
+  } | null;
   readonly restore: ChatRestoreSlot | null;
   readonly pendingActions: Readonly<Record<string, PendingChatAction>>;
   readonly acceptedActions: Readonly<Record<string, AcceptedChatAction>>;
@@ -494,6 +507,7 @@ export interface ChatSessionState {
   stopTurn: () => string | null;
   stopBackgroundItem: (taskId: string) => string | null;
   stopAllBackgroundItems: () => string | null;
+  stopBackgroundSession: () => string | null;
   pauseQueue: () => string | null;
   resumeQueue: () => string | null;
   queueEdit: (queueItemId: string, content: JsonContent) => string | null;
@@ -839,6 +853,60 @@ export function createChatSessionStoreWithNotificationDependencies(
     return input.pending.clientActionId;
   };
 
+  // Phase two of the session-scoped background stop: the actual frame. Split
+  // from the store method because it has two dispatch moments - immediately
+  // when no turn is running, or from `onTurnStateChanged` once a stopped
+  // turn's settled frame arrives.
+  const sendBackgroundSessionStopFrame = (input: {
+    readonly set: SendActionInput["set"];
+    readonly get: SendActionInput["get"];
+  }): string | null => {
+    const clientActionId = uuidv4();
+    const frame: ChatOwnerActionFrame = {
+      kind: "stopBackgroundSession",
+      hasBinaryPayload: false,
+      epicId: options.epicId,
+      chatId: options.chatId,
+      clientActionId,
+    };
+    const sent = sendAction({
+      set: input.set,
+      get: input.get,
+      frame,
+      pending: basicPending(clientActionId, "stopBackgroundSession"),
+      pendingUserMessage: null,
+    });
+    input.set(() => ({
+      pendingBackgroundSessionStop:
+        sent === null
+          ? null
+          : { clientActionId: sent, awaitingTurnEnd: false },
+    }));
+    return sent;
+  };
+
+  // Deliberately state-based rather than edge-based: called after every
+  // turn-state AND action-ack reduction, so a phase-one turn stop that races
+  // the turn's natural end (its `stop` rejected with NO_ACTIVE_TURN, no
+  // further turn frame due) still advances instead of waiting forever.
+  const maybeDispatchPendingBackgroundSessionStop = (
+    set: ChatSessionSetState,
+    get: ChatSessionGetState,
+  ): void => {
+    const state = get();
+    const pending = state.pendingBackgroundSessionStop;
+    if (pending === null || !pending.awaitingTurnEnd) return;
+    const turnActive = state.turnInProgress ?? state.activeTurn !== null;
+    if (turnActive) return;
+    if ((state.backgroundItems ?? []).length === 0) {
+      // Everything settled with the turn - the session stop has nothing left
+      // to do.
+      set(() => ({ pendingBackgroundSessionStop: null }));
+      return;
+    }
+    sendBackgroundSessionStopFrame({ set, get });
+  };
+
   const closeStreamClient = (): void => {
     if (streamClient === null) return;
     const client = streamClient;
@@ -1175,6 +1243,14 @@ export function createChatSessionStoreWithNotificationDependencies(
                   (message) => message.clientActionId !== frame.clientActionId,
                 );
           const backgroundStopAck = reconcileBackgroundStopAck(state, frame);
+          // Either verdict on the session stop ends its in-flight state: on
+          // accept the panel empties via the host's broadcast, on reject the
+          // generic errorNotice below carries the host's reason.
+          const nextSessionStop =
+            state.pendingBackgroundSessionStop?.clientActionId ===
+            frame.clientActionId
+              ? null
+              : state.pendingBackgroundSessionStop;
           if (frame.status === "accepted") {
             if (pending === null) {
               return {
@@ -1182,6 +1258,7 @@ export function createChatSessionStoreWithNotificationDependencies(
                 pendingUserMessages: nextPendingUsers,
                 pendingBackgroundStops: backgroundStopAck.pendingStops,
                 pendingBackgroundStopAll: backgroundStopAck.pendingStopAll,
+                pendingBackgroundSessionStop: nextSessionStop,
               };
             }
             return {
@@ -1194,6 +1271,7 @@ export function createChatSessionStoreWithNotificationDependencies(
               pendingUserMessages: nextPendingUsers,
               pendingBackgroundStops: backgroundStopAck.pendingStops,
               pendingBackgroundStopAll: backgroundStopAck.pendingStopAll,
+              pendingBackgroundSessionStop: nextSessionStop,
             };
           }
           return {
@@ -1201,6 +1279,7 @@ export function createChatSessionStoreWithNotificationDependencies(
             pendingUserMessages: nextPendingUsers,
             pendingBackgroundStops: backgroundStopAck.pendingStops,
             pendingBackgroundStopAll: backgroundStopAck.pendingStopAll,
+            pendingBackgroundSessionStop: nextSessionStop,
             queue: removeOptimisticQueuedItemByClientActionId(
               state.queue,
               frame.clientActionId,
@@ -1228,6 +1307,7 @@ export function createChatSessionStoreWithNotificationDependencies(
             }),
           };
         });
+        maybeDispatchPendingBackgroundSessionStop(set, get);
       },
       onMessageAccepted: (frame) => {
         if (disposed || !matchesChat(options, frame.epicId, frame.chatId)) {
@@ -1360,6 +1440,7 @@ export function createChatSessionStoreWithNotificationDependencies(
             ...(turnIdChanged ? { liveTurnUsage: null } : {}),
           };
         });
+        maybeDispatchPendingBackgroundSessionStop(set, get);
       },
       onBlockDelta: (frame) => {
         if (disposed || !matchesChat(options, frame.epicId, frame.chatId)) {
@@ -1819,6 +1900,7 @@ export function createChatSessionStoreWithNotificationDependencies(
       managedCommands: [],
       pendingBackgroundStops: {},
       pendingBackgroundStopAll: null,
+      pendingBackgroundSessionStop: null,
       restore: null,
       pendingActions: {},
       acceptedActions: {},
@@ -2264,6 +2346,43 @@ export function createChatSessionStoreWithNotificationDependencies(
           pendingBackgroundStopAll: { clientActionId: sent, taskIds },
         }));
         return sent;
+      },
+      stopBackgroundSession: () => {
+        const state = get();
+        const items = state.backgroundItems;
+        // Only meaningful when the host flagged a command as not individually
+        // stoppable - which also proves the host understands this action, so
+        // the capability field doubles as the send gate.
+        if (items === undefined || items.length === 0) return null;
+        if (state.pendingBackgroundSessionStop !== null) return null;
+        if (state.pendingBackgroundStopAll !== null) return null;
+        if (
+          !items.some(
+            (item) =>
+              item.kind === "command" &&
+              item.individualStopUnavailable !== null,
+          )
+        ) {
+          return null;
+        }
+        const turnActive =
+          state.turnInProgress ?? state.activeTurn !== null;
+        if (turnActive) {
+          // Phase one: end the turn cleanly first. The host refuses a session
+          // stop under a live turn (killing the provider mid-turn reads as a
+          // crash), so the session-stop frame waits for the turn-settled
+          // frame - see `onTurnStateChanged`.
+          const stopSent = get().stopTurn();
+          if (stopSent === null) return null;
+          set(() => ({
+            pendingBackgroundSessionStop: {
+              clientActionId: null,
+              awaitingTurnEnd: true,
+            },
+          }));
+          return stopSent;
+        }
+        return sendBackgroundSessionStopFrame({ set, get });
       },
       pauseQueue: () => {
         const clientActionId = uuidv4();

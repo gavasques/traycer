@@ -3361,6 +3361,7 @@ describe("createChatSessionStore", () => {
       blockId: "tool-1",
       parentTaskId: null,
       scheduledFor: null,
+      individualStopUnavailable: null,
     };
     emitSnapshotFrame({
       callbacks,
@@ -3418,6 +3419,7 @@ describe("createChatSessionStore", () => {
       blockId: "tool-2",
       parentTaskId: null,
       scheduledFor: null,
+      individualStopUnavailable: null,
     };
     callbacks.onTurnStateChanged({
       kind: "turnStateChanged",
@@ -3442,6 +3444,187 @@ describe("createChatSessionStore", () => {
       backgroundItems: [],
     });
     expect(harness.handle.store.getState().pendingBackgroundStops).toEqual({});
+  });
+
+  it("sends the session-scoped background stop immediately when no turn is running", () => {
+    const harness = createHarness();
+    const callbacks = harness.callbacks();
+    const gatedCommand: BackgroundItem = {
+      taskId: "task-1",
+      kind: "command",
+      title: "codex exec",
+      blockId: "tool-1",
+      parentTaskId: null,
+      scheduledFor: null,
+      individualStopUnavailable: { providerLabel: "Codex", minVersion: "0.146.0" },
+    };
+    emitSnapshotFrame({
+      callbacks,
+      access: "owner",
+      messages: [],
+      queue: { status: "idle", items: [] },
+      pendingFileEditApprovals: [],
+      backgroundItems: [gatedCommand],
+    });
+
+    const sent = harness.handle.store.getState().stopBackgroundSession();
+    expect(sent).not.toBeNull();
+    expect(harness.sent).toHaveLength(1);
+    expect(harness.sent[0].kind).toBe("stopBackgroundSession");
+    expect(
+      harness.handle.store.getState().pendingBackgroundSessionStop,
+    ).toEqual({ clientActionId: sent, awaitingTurnEnd: false });
+  });
+
+  it("stops the turn first when one is active, then sends the session stop once turnStateChanged reports it settled", () => {
+    const harness = createHarness();
+    const callbacks = harness.callbacks();
+    const gatedCommand: BackgroundItem = {
+      taskId: "task-1",
+      kind: "command",
+      title: "codex exec",
+      blockId: "tool-1",
+      parentTaskId: null,
+      scheduledFor: null,
+      individualStopUnavailable: { providerLabel: "Codex", minVersion: "0.146.0" },
+    };
+    emitSnapshotFrame({
+      callbacks,
+      access: "owner",
+      messages: [],
+      queue: { status: "idle", items: [] },
+      pendingFileEditApprovals: [],
+      backgroundItems: [gatedCommand],
+    });
+    callbacks.onTurnStateChanged({
+      kind: "turnStateChanged",
+      hasBinaryPayload: false,
+      epicId: EPIC_ID,
+      chatId: CHAT_ID,
+      runStatus: "running",
+      activeTurn: {
+        agentMode: "regular",
+        sameTurnSteeringSupported: false,
+        turnId: "turn-1",
+        status: "running",
+        harnessId: "codex",
+        model: "gpt-5-codex",
+        profileId: null,
+        userMessageId: "message-1",
+        startedAt: 3,
+        updatedAt: 3,
+        reasoningEffort: null,
+        serviceTier: null,
+      },
+      turnInProgress: true,
+      backgroundItems: [gatedCommand],
+    });
+
+    const sent = harness.handle.store.getState().stopBackgroundSession();
+    expect(sent).not.toBeNull();
+    expect(harness.sent).toHaveLength(1);
+    expect(harness.sent[0].kind).toBe("stop");
+    expect(
+      harness.handle.store.getState().pendingBackgroundSessionStop,
+    ).toEqual({ clientActionId: null, awaitingTurnEnd: true });
+
+    // The turn settles but the gated command is still running - the
+    // session-stop frame dispatches now instead of waiting forever.
+    callbacks.onTurnStateChanged({
+      kind: "turnStateChanged",
+      hasBinaryPayload: false,
+      epicId: EPIC_ID,
+      chatId: CHAT_ID,
+      runStatus: "idle",
+      activeTurn: null,
+      turnInProgress: false,
+      backgroundItems: [gatedCommand],
+    });
+
+    expect(harness.sent).toHaveLength(2);
+    const sessionFrame = harness.sent[1];
+    expect(sessionFrame.kind).toBe("stopBackgroundSession");
+    expect(
+      harness.handle.store.getState().pendingBackgroundSessionStop,
+    ).toEqual({ clientActionId: sessionFrame.clientActionId, awaitingTurnEnd: false });
+  });
+
+  it("clears the pending session stop and records an error notice when the host rejects it", () => {
+    const harness = createHarness();
+    const callbacks = harness.callbacks();
+    const gatedCommand: BackgroundItem = {
+      taskId: "task-1",
+      kind: "command",
+      title: "codex exec",
+      blockId: "tool-1",
+      parentTaskId: null,
+      scheduledFor: null,
+      individualStopUnavailable: { providerLabel: "Codex", minVersion: "0.146.0" },
+    };
+    emitSnapshotFrame({
+      callbacks,
+      access: "owner",
+      messages: [],
+      queue: { status: "idle", items: [] },
+      pendingFileEditApprovals: [],
+      backgroundItems: [gatedCommand],
+    });
+
+    const sent = harness.handle.store.getState().stopBackgroundSession();
+    expect(sent).not.toBeNull();
+    const frame = harness.sent.at(-1);
+    if (frame === undefined || frame.kind === "ping") {
+      throw new Error("Expected stopBackgroundSession frame");
+    }
+
+    callbacks.onActionAck({
+      kind: "actionAck",
+      hasBinaryPayload: false,
+      epicId: EPIC_ID,
+      chatId: CHAT_ID,
+      clientActionId: frame.clientActionId,
+      action: frame.kind,
+      status: "rejected",
+      reason: "Session already stopped.",
+      code: "NO_ACTIVE_SESSION",
+      backgroundStopTaskIds: [],
+    });
+
+    expect(
+      harness.handle.store.getState().pendingBackgroundSessionStop,
+    ).toBeNull();
+    expect(harness.handle.store.getState().errorNotices.at(-1)).toMatchObject({
+      clientActionId: frame.clientActionId,
+      message: "Session already stopped.",
+    });
+  });
+
+  it("no-ops when no command in the chat needs the session-scoped escalation", () => {
+    const harness = createHarness();
+    const callbacks = harness.callbacks();
+    const ungatedCommand: BackgroundItem = {
+      taskId: "task-1",
+      kind: "command",
+      title: "sleep 5",
+      blockId: "tool-1",
+      parentTaskId: null,
+      scheduledFor: null,
+      individualStopUnavailable: null,
+    };
+    emitSnapshotFrame({
+      callbacks,
+      access: "owner",
+      messages: [],
+      queue: { status: "idle", items: [] },
+      pendingFileEditApprovals: [],
+      backgroundItems: [ungatedCommand],
+    });
+
+    expect(harness.handle.store.getState().stopBackgroundSession()).toBeNull();
+    expect(harness.sent).toEqual([]);
+    expect(
+      harness.handle.store.getState().pendingBackgroundSessionStop,
+    ).toBeNull();
   });
 
   it("does not apply an ownerless detached background tool terminal to the active turn", () => {
@@ -5595,6 +5778,7 @@ describe("non-message pendings across a missed-ack reconnect", () => {
         blockId: "tool-1",
         parentTaskId: null,
         scheduledFor: null,
+        individualStopUnavailable: null,
       },
       {
         taskId: "task-accepted",
@@ -5603,6 +5787,7 @@ describe("non-message pendings across a missed-ack reconnect", () => {
         blockId: "tool-2",
         parentTaskId: null,
         scheduledFor: null,
+        individualStopUnavailable: null,
       },
     ];
     emitSnapshotFrame({

@@ -1103,6 +1103,9 @@ export function ChatTileSessionView(props: ChatTileSessionViewProps) {
                         backgroundStopAllPending={
                           view.lower.backgroundStopAllPending
                         }
+                        backgroundSessionStopPending={
+                          view.lower.backgroundSessionStopPending
+                        }
                         onBackgroundItemClick={scrollToBackgroundItem}
                       />
                     </SurfaceActivityProvider>
@@ -1272,6 +1275,7 @@ function useChatTileSessionViewModel(props: ChatTileSessionViewProps) {
       backgroundItems: s.backgroundItems,
       pendingBackgroundStops: s.pendingBackgroundStops,
       pendingBackgroundStopAll: s.pendingBackgroundStopAll,
+      pendingBackgroundSessionStop: s.pendingBackgroundSessionStop,
       restore: s.restore,
       pendingActions: s.pendingActions,
       acceptedActions: s.acceptedActions,
@@ -2284,6 +2288,7 @@ function useChatTileSessionViewModel(props: ChatTileSessionViewProps) {
       onCancelEdit: cancelQueueEditMode,
       onStopBackgroundItem: chatActions.stopBackgroundItem,
       onStopAllBackgroundItems: chatActions.stopAllBackgroundItems,
+      onStopBackgroundSession: chatActions.stopBackgroundSession,
       onReorder: reorderQueuedItem,
       onSteerNow: steerQueuedItemNow,
     }),
@@ -2376,6 +2381,7 @@ function useChatTileSessionViewModel(props: ChatTileSessionViewProps) {
       backgroundStopAllPending:
         state.pendingBackgroundStopAll !== null ||
         backgroundStopPendingTaskIds.size > 0,
+      backgroundSessionStopPending: state.pendingBackgroundSessionStop !== null,
     },
     todo: pinnedTodoRenderState.todo,
     revertOnEdit,

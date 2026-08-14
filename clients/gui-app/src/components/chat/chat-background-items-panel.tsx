@@ -17,6 +17,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { Button } from "@/components/ui/button";
+import { ConfirmDestructiveDialog } from "@/components/ui/confirm-destructive-dialog";
 import { LivePulse } from "@/components/ui/live-pulse";
 import { LiveElapsed } from "@/components/chat/segments/segment-elapsed";
 import { useTabHostId } from "@/components/epic-canvas/hooks/use-tab-host-id";
@@ -193,6 +194,24 @@ function backgroundItemDisplayTitle(item: BackgroundItem): string {
     return `${item.serverName} · ${item.toolName}`;
   }
   return item.title;
+}
+
+/**
+ * The disabled-stop tooltip for a command whose provider build has no
+ * per-command stop lever. Built entirely from the wire data (provider label +
+ * version floor) so this file never learns a provider version - see the
+ * `individualStopUnavailable` field's protocol doc.
+ */
+function individualStopUnavailableLabel(item: BackgroundItem): string | null {
+  if (item.kind !== "command" || item.individualStopUnavailable === null) {
+    return null;
+  }
+  const { providerLabel, minVersion } = item.individualStopUnavailable;
+  const versionClause =
+    minVersion === null
+      ? `a newer ${providerLabel}`
+      : `${providerLabel} ${minVersion} or newer`;
+  return `Stopping this command needs ${versionClause} — use Stop all to stop the ${providerLabel} session`;
 }
 
 function BackgroundStopButton(props: {
@@ -605,10 +624,15 @@ function BackgroundTreeRow(props: {
             </TooltipWrapper>
             <span className="inline-flex opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
               <BackgroundStopButton
-                label={backgroundStopLabel(item.kind)}
+                label={
+                  individualStopUnavailableLabel(item) ??
+                  backgroundStopLabel(item.kind)
+                }
                 iconOnly
                 disabled={
-                  !props.stoppable || props.pendingStopTaskIds.has(item.taskId)
+                  individualStopUnavailableLabel(item) !== null ||
+                  !props.stoppable ||
+                  props.pendingStopTaskIds.has(item.taskId)
                 }
                 testId={undefined}
                 onClick={() => props.onStopItem(item.taskId)}
@@ -644,11 +668,16 @@ export function BackgroundItemsPanel(props: {
   readonly readOnly: boolean;
   readonly pendingStopTaskIds: ReadonlySet<string>;
   readonly stopAllPending: boolean;
+  /** The in-flight session-scoped stop (both its phases) - see the store. */
+  readonly sessionStopPending: boolean;
+  /** Feeds the confirm dialog's "the active turn will also be stopped" line. */
+  readonly turnActive: boolean;
   readonly scrollRegionMaxHeightClass: string;
   readonly separated: boolean;
   readonly onItemClick: (item: BackgroundItem) => void;
   readonly onStopItem: (taskId: string) => string | null;
   readonly onStopAll: () => string | null;
+  readonly onStopSession: () => string | null;
 }) {
   const [open, setOpen] = useState(false);
   const [committedRememberedByTaskId, setCommittedRememberedByTaskId] =
@@ -711,15 +740,29 @@ export function BackgroundItemsPanel(props: {
   const harnessStopAllReady = stoppable && !props.stopAllPending;
   const managedStopAllReady =
     managedStoppable && managedCommands.length > 0 && !stopAllManagedPending;
+  // The version gate, read off the items themselves: any command the host
+  // flagged as not individually stoppable turns "Stop all" into the
+  // session-scoped escalation, which asks first - the click would otherwise
+  // do more than the label says (kill the provider session, and a live turn
+  // with it).
+  const sessionStopEscalation = useMemo(() => {
+    for (const item of items) {
+      if (item.kind === "command" && item.individualStopUnavailable !== null) {
+        return item.individualStopUnavailable;
+      }
+    }
+    return null;
+  }, [items]);
+  const [confirmingSessionStop, setConfirmingSessionStop] = useState(false);
   // One button, one rule: live while there is something it can do, dead while
   // anything it started is still in flight. Re-enabling as soon as one half
   // finished let a second press resubmit the finished half mid-flight.
   const stopAllDisabled =
     (!harnessStopAllReady && !managedStopAllReady) ||
     props.stopAllPending ||
-    stopAllManagedPending;
-  const stopAll = () => {
-    if (harnessStopAllReady) props.onStopAll();
+    stopAllManagedPending ||
+    props.sessionStopPending;
+  const stopAllManaged = () => {
     if (!managedStopAllReady) return;
     stopAllManagedCommands.mutate({
       hostId,
@@ -727,6 +770,23 @@ export function BackgroundItemsPanel(props: {
       commandIds: managedCommands.map((command) => command.id),
     });
   };
+  const stopAll = () => {
+    if (sessionStopEscalation !== null && stoppable) {
+      setConfirmingSessionStop(true);
+      return;
+    }
+    if (harnessStopAllReady) props.onStopAll();
+    stopAllManaged();
+  };
+  const confirmSessionStop = () => {
+    setConfirmingSessionStop(false);
+    // The session kill covers every harness item (they share the provider
+    // process); the managed shells ride their own host RPC, exactly as a
+    // plain Stop all would send it.
+    props.onStopSession();
+    stopAllManaged();
+  };
+  const panelItemCount = runningGroupCount + managedCommands.length;
 
   return (
     <Collapsible
@@ -808,6 +868,45 @@ export function BackgroundItemsPanel(props: {
           </ul>
         </div>
       </CollapsibleContent>
+      {sessionStopEscalation !== null ? (
+        <ConfirmDestructiveDialog
+          open={confirmingSessionStop}
+          onOpenChange={setConfirmingSessionStop}
+          title={`Stop the ${sessionStopEscalation.providerLabel} session?`}
+          description={sessionStopDialogDescription({
+            providerLabel: sessionStopEscalation.providerLabel,
+            itemCount: panelItemCount,
+            turnActive: props.turnActive,
+          })}
+          cascadeSummary={null}
+          actionLabel="Stop session"
+          isPending={props.sessionStopPending}
+          onConfirm={confirmSessionStop}
+        />
+      ) : null}
     </Collapsible>
   );
+}
+
+/**
+ * The escalation dialog's body, assembled from wire data so the panel never
+ * hardcodes a provider or version. Sentence order is the agreed copy: the
+ * limitation, the blast radius, the turn (only when one is live), the
+ * reassurance.
+ */
+function sessionStopDialogDescription(input: {
+  readonly providerLabel: string;
+  readonly itemCount: number;
+  readonly turnActive: boolean;
+}): string {
+  const blastRadius =
+    input.itemCount === 1
+      ? "Stopping the session ends its background item."
+      : `Stopping the session ends all ${input.itemCount} background items.`;
+  return [
+    `This ${input.providerLabel} version can't stop background commands individually.`,
+    blastRadius,
+    ...(input.turnActive ? ["The active turn will also be stopped."] : []),
+    "The chat resumes normally on your next message.",
+  ].join(" ");
 }

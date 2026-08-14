@@ -158,6 +158,7 @@ function surfacesProps(): ChatLowerInteractionSurfacesProps {
       onCancelEdit: () => undefined,
       onStopBackgroundItem: () => null,
       onStopAllBackgroundItems: () => null,
+      onStopBackgroundSession: () => null,
       onReorder: () => undefined,
       onSteerNow: () => undefined,
     },
@@ -181,6 +182,7 @@ function surfacesProps(): ChatLowerInteractionSurfacesProps {
     backgroundItems: [],
     backgroundStopPendingTaskIds: new Set(),
     backgroundStopAllPending: false,
+    backgroundSessionStopPending: false,
     onBackgroundItemClick: () => undefined,
   };
 }

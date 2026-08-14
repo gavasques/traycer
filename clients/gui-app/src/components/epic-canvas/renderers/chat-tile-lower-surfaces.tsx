@@ -74,6 +74,7 @@ export interface ChatLowerInteractionSurfacesProps {
   readonly backgroundItems: ReadonlyArray<BackgroundItem> | undefined;
   readonly backgroundStopPendingTaskIds: ReadonlySet<string>;
   readonly backgroundStopAllPending: boolean;
+  readonly backgroundSessionStopPending: boolean;
   readonly onBackgroundItemClick: (item: BackgroundItem) => void;
 }
 
@@ -170,6 +171,7 @@ export interface ChatLowerQueueState {
   readonly onCancelEdit: () => void;
   readonly onStopBackgroundItem: (taskId: string) => string | null;
   readonly onStopAllBackgroundItems: () => string | null;
+  readonly onStopBackgroundSession: () => string | null;
   readonly onReorder: (
     item: ChatQueuedItem,
     beforeQueueItemId: string | null,
@@ -398,6 +400,7 @@ export function ChatLowerInteractionSurfaces(
         runningManagedCommandCount={runningManagedCommandCount}
         backgroundStopPendingTaskIds={props.backgroundStopPendingTaskIds}
         backgroundStopAllPending={props.backgroundStopAllPending}
+        backgroundSessionStopPending={props.backgroundSessionStopPending}
         activeTurnStatus={props.turn.activeTurnStatus}
         canAct={props.access.canAct}
         queueResumeRequested={props.queue.resumeRequested}
@@ -416,6 +419,7 @@ export function ChatLowerInteractionSurfaces(
         onBackgroundItemClick={props.onBackgroundItemClick}
         onBackgroundItemStop={props.queue.onStopBackgroundItem}
         onBackgroundItemsStopAll={props.queue.onStopAllBackgroundItems}
+        onBackgroundSessionStop={props.queue.onStopBackgroundSession}
       />
       <ChatComposerRegion model={composerModel} layout={composerLayout} />
       <StopChildrenDialog

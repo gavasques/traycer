@@ -37,6 +37,7 @@ export interface ChatLowerDockProps {
   readonly runningManagedCommandCount: number;
   readonly backgroundStopPendingTaskIds: ReadonlySet<string>;
   readonly backgroundStopAllPending: boolean;
+  readonly backgroundSessionStopPending: boolean;
   readonly activeTurnStatus: ChatActiveTurn["status"] | null;
   readonly canAct: boolean;
   readonly queueResumeRequested: boolean;
@@ -58,6 +59,7 @@ export interface ChatLowerDockProps {
   readonly onBackgroundItemClick: (item: BackgroundItem) => void;
   readonly onBackgroundItemStop: (taskId: string) => string | null;
   readonly onBackgroundItemsStopAll: () => string | null;
+  readonly onBackgroundSessionStop: () => string | null;
 }
 
 export function ChatLowerDock(props: ChatLowerDockProps) {
@@ -198,11 +200,14 @@ function BackgroundSection(props: {
       readOnly={dock.readOnly}
       pendingStopTaskIds={dock.backgroundStopPendingTaskIds}
       stopAllPending={dock.backgroundStopAllPending}
+      sessionStopPending={dock.backgroundSessionStopPending}
+      turnActive={dock.activeTurnStatus !== null}
       scrollRegionMaxHeightClass={dock.scrollRegionMaxHeightClass}
       separated={props.separated}
       onItemClick={dock.onBackgroundItemClick}
       onStopItem={dock.onBackgroundItemStop}
       onStopAll={dock.onBackgroundItemsStopAll}
+      onStopSession={dock.onBackgroundSessionStop}
     />
   );
 }

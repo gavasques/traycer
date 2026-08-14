@@ -1,6 +1,6 @@
 import { type ReactNode, useState } from "react";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
-import { LogOut, Plus, Settings, SquareArrowOutUpRight } from "lucide-react";
+import { LogOut, Settings, SquareArrowOutUpRight } from "lucide-react";
 import { SignOutConfirmDialog } from "@/components/auth/sign-out-confirm-dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -154,16 +154,19 @@ export function MobileNavDrawer(): ReactNode {
       <nav className="flex min-h-0 flex-1 flex-col p-2">
         <Button
           type="button"
-          variant="ghost"
-          // Weight alone separates the primary action from the history rows
-          // below (which are explicitly `font-normal`). A resting fill would
-          // read as a heavy grey slab against an otherwise flat panel.
-          className={cn(ROW_CLASS, "shrink-0 font-medium text-foreground")}
+          variant="default"
+          // The drawer's ONE filled element: a compact accent pill separates
+          // the create action from the flat history rows without spanning a
+          // heavy full-height slab. Nothing else in this panel may take a
+          // resting fill, or the distinction dies.
+          // Visually a compact h-9 pill, but the tap target must still meet
+          // the 44px touch floor: the ::after overlay extends the hit area
+          // invisibly without growing the rendered button.
+          className="relative h-9 w-full shrink-0 justify-center gap-2 rounded-md px-4 font-semibold after:absolute after:inset-x-0 after:-inset-y-1.5 after:content-['']"
           data-testid="mobile-nav-new-task"
           onClick={handleNewTask}
         >
-          <Plus className="size-4" />
-          <span className="flex-1 text-left">New task</span>
+          <span>New task</span>
         </Button>
         <div
           className={cn("mt-1 min-h-0 flex-1 overflow-y-auto", LIST_FADE_CLASS)}

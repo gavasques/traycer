@@ -405,14 +405,17 @@ function ProfileSummary({
     tier === null || tier === undefined || tier.length === 0 ? null : tier;
 
   return (
-    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 text-ui-xs text-muted-foreground">
+    <div className="flex min-w-0 flex-auto flex-wrap items-center gap-x-2 gap-y-1 text-ui-xs text-muted-foreground">
       {/* The email (and its reveal toggle) is the one shrinkable item; the
-          badges are whole-or-nothing chips. With wrapping on, a line that
-          cannot hold everything moves whole chips down instead of eating the
-          email's last pixels and overlapping the toggle; the email's own
-          basis stays its content, so it only truncates once it has a line
+          badges are whole-or-nothing chips. `flex-auto`, not `flex-1`: the
+          wrap threshold is computed from each unit's flex BASIS, and `flex-1`
+          zeroes it - a zero-basis email reserves no width during line
+          collection, so the fixed chips would stay on the line and still
+          paint over the toggle. With its content as its basis the email
+          claims its width first, whole chips move down when the line cannot
+          hold everything, and the email truncates only once it has a line
           largely to itself. */}
-      <div className="flex min-w-0 flex-1 items-center gap-1">
+      <div className="flex min-w-0 flex-auto items-center gap-1">
         <TooltipWrapper
           label={emailRevealed ? email : null}
           side="top"

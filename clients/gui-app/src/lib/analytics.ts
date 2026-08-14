@@ -1912,8 +1912,12 @@ function safeAppGlobals(
     (appVersion !== null &&
       (typeof appVersion !== "string" ||
         !/^[a-zA-Z0-9][a-zA-Z0-9.+_-]{0,63}$/.test(appVersion))) ||
+    typeof properties.app_surface !== "string" ||
+    !new Set(["desktop", "mobile"]).has(properties.app_surface) ||
     typeof properties.platform !== "string" ||
-    !new Set(["linux", "macos", "other", "windows"]).has(properties.platform) ||
+    !new Set(["android", "ios", "linux", "macos", "other", "windows"]).has(
+      properties.platform,
+    ) ||
     typeof properties.release_channel !== "string" ||
     !new Set(["development", "other", "production"]).has(
       properties.release_channel,
@@ -1923,6 +1927,7 @@ function safeAppGlobals(
   }
   return {
     app: "gui-app",
+    app_surface: String(properties.app_surface),
     app_version: appVersion,
     platform: String(properties.platform),
     release_channel: String(properties.release_channel),

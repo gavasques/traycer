@@ -225,6 +225,7 @@ describe("analytics", () => {
     });
     sdk.register({
       app: "gui-app",
+      app_surface: "desktop",
       app_version: "1.2.3",
       platform: "macos",
       release_channel: "production",
@@ -245,6 +246,7 @@ describe("analytics", () => {
     expect(custom?.properties).toMatchObject({
       token: "phc_test_project_key",
       app: "gui-app",
+      app_surface: "desktop",
       app_version: "1.2.3",
       platform: "macos",
       release_channel: "production",
@@ -254,6 +256,7 @@ describe("analytics", () => {
     // opaque SDK-generated UUIDs that keep session analyses working.
     const allowedKeys = new Set([
       "app",
+      "app_surface",
       "app_version",
       "distinct_id",
       "harness",
@@ -314,6 +317,7 @@ describe("analytics", () => {
       });
       sdk.register({
         app: "gui-app",
+      app_surface: "desktop",
         app_version: "1.2.3",
         platform: "macos",
         release_channel: "production",
@@ -345,6 +349,7 @@ describe("analytics", () => {
     });
     sdk.register({
       app: "gui-app",
+      app_surface: "desktop",
       app_version: "1.2.3",
       platform: "macos",
       release_channel: "production",
@@ -1087,5 +1092,54 @@ describe("app surface and platform globals", () => {
       // deleting it restores the real user agent.
       Reflect.deleteProperty(navigator, "userAgent");
     }
+  });
+});
+
+describe("app-surface pass-through in the outbound sanitizer", () => {
+  function capture(overrides: Record<string, unknown>): {
+    uuid: string;
+    event: string;
+    properties: Record<string, unknown>;
+  } {
+    return {
+      uuid: "5a3c2d1e-0f1b-4c2d-8e3f-9a8b7c6d5e4f",
+      event: "chat_message_sent",
+      properties: {
+        token: "phc_test_project_key",
+        distinct_id: "7b6e23f5-8a3d-4d2b-923c-8d02b8ef80d1",
+        app: "gui-app",
+        app_surface: "desktop",
+        app_version: "1.2.3",
+        platform: "macos",
+        release_channel: "production",
+        harness: "codex",
+        ...overrides,
+      },
+    };
+  }
+
+  it("passes mobile surface and OS through instead of dropping the event", async () => {
+    // The regression this pins: the globals allowlist rebuilds outbound
+    // properties and returns null - dropping the WHOLE event - on any value
+    // outside its sets. Before app_surface/ios/android were admitted, every
+    // event from the installed mobile app would have vanished silently.
+    const { sanitizePostHogCaptureResult } = await import("@/lib/analytics");
+    const sanitized = sanitizePostHogCaptureResult(
+      capture({ app_surface: "mobile", platform: "ios" }),
+    );
+    expect(sanitized?.properties).toMatchObject({
+      app_surface: "mobile",
+      platform: "ios",
+    });
+  });
+
+  it("drops an event whose surface global is missing or out of vocabulary", async () => {
+    const { sanitizePostHogCaptureResult } = await import("@/lib/analytics");
+    expect(
+      sanitizePostHogCaptureResult(capture({ app_surface: undefined })),
+    ).toBeNull();
+    expect(
+      sanitizePostHogCaptureResult(capture({ app_surface: "toaster" })),
+    ).toBeNull();
   });
 });

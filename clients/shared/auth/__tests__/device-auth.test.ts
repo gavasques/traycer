@@ -462,9 +462,9 @@ describe("backoff helper", () => {
 
 describe("withReturnScheme", () => {
   it("appends return_scheme to a URL with no existing query", () => {
-    expect(
-      withReturnScheme("https://app.traycer.test/device", "traycer"),
-    ).toBe("https://app.traycer.test/device?return_scheme=traycer");
+    expect(withReturnScheme("https://app.traycer.test/device", "traycer")).toBe(
+      "https://app.traycer.test/device?return_scheme=traycer",
+    );
   });
 
   it("preserves existing query params alongside the new one", () => {
@@ -492,4 +492,3 @@ describe("withReturnScheme", () => {
     expect(withReturnScheme("", "traycer")).toBe("");
   });
 });
-

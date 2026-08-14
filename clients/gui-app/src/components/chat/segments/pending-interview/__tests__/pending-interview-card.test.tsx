@@ -450,9 +450,8 @@ describe("PendingInterviewCard keyboard navigation", () => {
         vi.runAllTimers();
       });
 
-      const field = screen.getByLabelText<HTMLTextAreaElement>(
-        "Interview answer",
-      );
+      const field =
+        screen.getByLabelText<HTMLTextAreaElement>("Interview answer");
       expect(document.activeElement).not.toBe(field);
       // Tapping it is still the ordinary way in.
       act(() => {

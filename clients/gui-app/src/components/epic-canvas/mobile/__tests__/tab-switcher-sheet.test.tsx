@@ -63,9 +63,9 @@ vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
 // sheet's "presence AND not known-unsupported" rule is testable without a
 // transport. Only this one export is displaced - `StreamRuntimeContext` itself
 // stays real for anything else in the tree that reads it.
-const streamState = vi.hoisted(
-  (): { prSupport: string | null } => ({ prSupport: "supported" }),
-);
+const streamState = vi.hoisted((): { prSupport: string | null } => ({
+  prSupport: "supported",
+}));
 vi.mock("@/lib/host/stream-runtime-context", async (importOriginal) => ({
   ...(await importOriginal<
     typeof import("@/lib/host/stream-runtime-context")
@@ -85,9 +85,8 @@ vi.mock(
   "@/components/epic-canvas/mobile/switcher-pr-presence-probe",
   async () => {
     const { useEffect } = await import("react");
-    const { usePrPresenceStore } = await import(
-      "@/stores/epics/pr-presence-store"
-    );
+    const { usePrPresenceStore } =
+      await import("@/stores/epics/pr-presence-store");
     return {
       SwitcherPrPresenceProbe: (props: {
         readonly epicId: string;
@@ -464,7 +463,9 @@ describe("<TabSwitcherSheet /> close-on-open", () => {
     const onOpenChange = vi.fn();
     renderSheet(true, onOpenChange);
     expect(onOpenChange).not.toHaveBeenCalled();
-    act(() => seedCanvas({ "inst-1": prDetailRef("pr-7", "inst-1") }, "inst-1"));
+    act(() =>
+      seedCanvas({ "inst-1": prDetailRef("pr-7", "inst-1") }, "inst-1"),
+    );
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 

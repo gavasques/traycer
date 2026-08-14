@@ -85,16 +85,13 @@ vi.mock("@/hooks/chats/use-cloud-chat-queries", () => ({
   }),
 }));
 
-vi.mock(
-  "@/lib/registries/chat-session-registry",
-  async (importOriginal) => ({
-    ...(await importOriginal<
-      typeof import("@/lib/registries/chat-session-registry")
-    >()),
-    useExistingChatSessionHandle: () => null,
-    useExistingChatSessionFatalClose: () => null,
-  }),
-);
+vi.mock("@/lib/registries/chat-session-registry", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("@/lib/registries/chat-session-registry")
+  >()),
+  useExistingChatSessionHandle: () => null,
+  useExistingChatSessionFatalClose: () => null,
+}));
 
 function spec(n: number): EpicCanvasTileRef {
   return {

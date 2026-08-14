@@ -83,7 +83,8 @@ function ChooseHostRow(props: {
   // stop agreeing - and the disagreement lands the user on the dead end this
   // wall exists to prevent.
   const selectable = isHostDialable(props.entry, hasReadySession);
-  const badge = CHOOSE_HOST_BADGE[hostUnavailability(props.entry) ?? "dialable"];
+  const badge =
+    CHOOSE_HOST_BADGE[hostUnavailability(props.entry) ?? "dialable"];
   return (
     <Button
       type="button"

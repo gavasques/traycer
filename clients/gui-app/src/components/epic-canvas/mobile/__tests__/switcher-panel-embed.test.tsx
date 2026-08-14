@@ -31,7 +31,9 @@ describe("<SwitcherPanelEmbed />", () => {
   });
 
   it("embeds the desktop PR panel body for the pull-requests category", () => {
-    render(<SwitcherPanelEmbed category="pull-requests" epicId="e" tabId="t" />);
+    render(
+      <SwitcherPanelEmbed category="pull-requests" epicId="e" tabId="t" />,
+    );
     expect(screen.getByTestId("pr-panel-body")).toBeTruthy();
     expect(screen.queryByTestId("file-tree-body")).toBeNull();
     expect(screen.queryByTestId("git-diff-body")).toBeNull();

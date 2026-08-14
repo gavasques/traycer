@@ -2253,12 +2253,7 @@ export function analyticsAppSurface(): "desktop" | "mobile" {
 }
 
 export function analyticsPlatform():
-  | "android"
-  | "ios"
-  | "linux"
-  | "macos"
-  | "other"
-  | "windows" {
+  "android" | "ios" | "linux" | "macos" | "other" | "windows" {
   if (isMobileApp()) {
     // `navigator.platform` reads "iPhone"/"Linux armv8l" inside the mobile
     // WebViews, which the desktop branches below would misfile as other or

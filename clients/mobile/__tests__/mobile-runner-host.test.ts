@@ -432,9 +432,7 @@ describe("MobileRunnerHost", () => {
       const host = runner(null);
       const authCallbacks: number[] = [];
       const systemResumes: number[] = [];
-      const authSubscription = host.onAuthCallback(() =>
-        authCallbacks.push(1),
-      );
+      const authSubscription = host.onAuthCallback(() => authCallbacks.push(1));
       const resumeSubscription = host.onSystemResumed(() =>
         systemResumes.push(1),
       );

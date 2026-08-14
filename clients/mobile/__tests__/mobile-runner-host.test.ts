@@ -26,7 +26,7 @@ vi.mock("capacitor-secure-storage-plugin", () => ({
   },
 }));
 
-function runner(): MobileRunnerHost {
+function runner(returnScheme: string | null): MobileRunnerHost {
   return new MobileRunnerHost({
     signInUrl: "http://localhost:32352/sign-in",
     authnBaseUrl: "http://localhost:32350",
@@ -35,6 +35,7 @@ function runner(): MobileRunnerHost {
     // Push lifecycle is exercised in push-registration.test.ts; the host's
     // click sink with `null` is the dev-web no-op these tests always had.
     pushRegistration: null,
+    returnScheme,
   });
 }
 
@@ -74,14 +75,14 @@ describe("MobileRunnerHost", () => {
   });
 
   it("treats an absent secure-storage key as a signed-out session", async () => {
-    const host = runner();
+    const host = runner(null);
 
     await expect(host.tokenStore.get()).resolves.toBeNull();
     expect(nativeMocks.storageGet).not.toHaveBeenCalled();
   });
 
   it("persists and rotates the full credential record", async () => {
-    const host = runner();
+    const host = runner(null);
     const changes: unknown[] = [];
     host.tokenStore.subscribe((change) => changes.push(change));
 
@@ -128,12 +129,12 @@ describe("MobileRunnerHost", () => {
   it("publishes a null local-host snapshot synchronously", () => {
     const snapshots: unknown[] = [];
 
-    runner().onLocalHostChange((snapshot) => snapshots.push(snapshot));
+    runner(null).onLocalHostChange((snapshot) => snapshots.push(snapshot));
 
     expect(snapshots).toEqual([null]);
   });
 
-  it("completes poll-only device authorization", async () => {
+  it("completes poll-only device authorization and appends return_scheme to the complete URL only", async () => {
     const fetchMock = vi.fn<typeof fetch>();
     fetchMock
       .mockResolvedValueOnce(
@@ -153,9 +154,19 @@ describe("MobileRunnerHost", () => {
       );
     vi.stubGlobal("fetch", fetchMock);
 
-    const session = await runner().deviceFlow.start();
+    const session = await runner("traycer").deviceFlow.start();
     expect(session).not.toBeNull();
     if (session === null) return;
+
+    // Desktop parity: only the pre-filled URL the shell opens carries the
+    // return scheme - the short display URI stays clean for manual entry.
+    expect(session.authorization.verificationUriComplete).toBe(
+      "https://app.traycer.test/device?user_code=ABCDE-FGHIJ&return_scheme=traycer",
+    );
+    expect(session.authorization.verificationUri).toBe(
+      "https://app.traycer.test/device",
+    );
+
     const result = new Promise<DeviceFlowResult>((resolve) => {
       session.onResult(resolve);
     });
@@ -167,6 +178,41 @@ describe("MobileRunnerHost", () => {
       token: "access-token",
       refreshToken: "refresh-token",
     });
+  });
+
+  it("leaves both verification URLs verbatim when no return scheme is registered", async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    fetchMock
+      .mockResolvedValueOnce(
+        Response.json({
+          device_code: "device-code",
+          user_code: "ABCDE-FGHIJ",
+          verification_uri: "https://app.traycer.test/device",
+          verification_uri_complete:
+            "https://app.traycer.test/device?user_code=ABCDE-FGHIJ",
+          expires_in: 600,
+          interval: 1,
+        }),
+      )
+      // The session polls immediately on start; keep it parked on a
+      // non-terminal response so nothing else fires before we cancel it.
+      .mockResolvedValueOnce(new Response(null, { status: 428 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const session = await runner(null).deviceFlow.start();
+    expect(session).not.toBeNull();
+    if (session === null) return;
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+    expect(session.authorization.verificationUriComplete).toBe(
+      "https://app.traycer.test/device?user_code=ABCDE-FGHIJ",
+    );
+    expect(session.authorization.verificationUri).toBe(
+      "https://app.traycer.test/device",
+    );
+
+    session.cancel();
   });
 
   describe("onSystemResumed", () => {
@@ -193,7 +239,7 @@ describe("MobileRunnerHost", () => {
     }
 
     it("does not fire on subscribe - a cold app start is not a resume", () => {
-      const host = runner();
+      const host = runner(null);
       const resumes: number[] = [];
       const subscription = host.onSystemResumed(() => resumes.push(1));
 
@@ -203,7 +249,7 @@ describe("MobileRunnerHost", () => {
 
     it("does not fire on subscribe when the document is already visible", () => {
       state = "visible";
-      const host = runner();
+      const host = runner(null);
       const resumes: number[] = [];
       const subscription = host.onSystemResumed(() => resumes.push(1));
 
@@ -212,7 +258,7 @@ describe("MobileRunnerHost", () => {
     });
 
     it("fires exactly once on the hidden -> visible edge", () => {
-      const host = runner();
+      const host = runner(null);
       const resumes: number[] = [];
       const subscription = host.onSystemResumed(() => resumes.push(1));
 
@@ -225,7 +271,7 @@ describe("MobileRunnerHost", () => {
     });
 
     it("does not fire on the visible -> hidden edge", () => {
-      const host = runner();
+      const host = runner(null);
       const resumes: number[] = [];
       const subscription = host.onSystemResumed(() => resumes.push(1));
 
@@ -236,7 +282,7 @@ describe("MobileRunnerHost", () => {
     });
 
     it("does not fire when a visibilitychange arrives with the state unchanged", () => {
-      const host = runner();
+      const host = runner(null);
       const resumes: number[] = [];
       const subscription = host.onSystemResumed(() => resumes.push(1));
 
@@ -248,7 +294,7 @@ describe("MobileRunnerHost", () => {
     });
 
     it("fires twice across two suspend/resume cycles", () => {
-      const host = runner();
+      const host = runner(null);
       const resumes: number[] = [];
       const subscription = host.onSystemResumed(() => resumes.push(1));
 
@@ -262,7 +308,7 @@ describe("MobileRunnerHost", () => {
     });
 
     it("delivers the same resume to every subscriber", () => {
-      const host = runner();
+      const host = runner(null);
       const firstResumes: number[] = [];
       const secondResumes: number[] = [];
       const first = host.onSystemResumed(() => firstResumes.push(1));
@@ -279,7 +325,7 @@ describe("MobileRunnerHost", () => {
     });
 
     it("stops notifying a disposed subscriber while a still-live one keeps receiving", () => {
-      const host = runner();
+      const host = runner(null);
       const disposedResumes: number[] = [];
       const liveResumes: number[] = [];
       const disposedSubscription = host.onSystemResumed(() =>
@@ -302,7 +348,7 @@ describe("MobileRunnerHost", () => {
 
     it("keeps notifying the other subscribers when one throws", () => {
       const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-      const host = runner();
+      const host = runner(null);
       const liveResumes: number[] = [];
       const throwing = host.onSystemResumed(() => {
         throw new Error("subscriber failure");
@@ -318,6 +364,89 @@ describe("MobileRunnerHost", () => {
       throwing.dispose();
       live.dispose();
       errorSpy.mockRestore();
+    });
+  });
+
+  describe("onAuthCallback", () => {
+    // Same resume source as `onSystemResumed` (see mobile-runner-host.ts):
+    // the deep link that fires this carries no payload, so the app-foreground
+    // edge IS the callback signal. Mirrors the fixture above exactly.
+    let state: DocumentVisibilityState = "visible";
+
+    beforeEach(() => {
+      state = "visible";
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        get: () => state,
+      });
+    });
+
+    afterEach(() => {
+      Reflect.deleteProperty(document, "visibilityState");
+    });
+
+    function setVisibility(next: DocumentVisibilityState): void {
+      state = next;
+      document.dispatchEvent(new Event("visibilitychange"));
+    }
+
+    it("does not fire on subscribe - a cold app start is not a callback", () => {
+      const host = runner(null);
+      const callbacks: number[] = [];
+      const subscription = host.onAuthCallback(() => callbacks.push(1));
+
+      expect(callbacks).toEqual([]);
+      subscription.dispose();
+    });
+
+    it("fires exactly once on the hidden -> visible edge", () => {
+      const host = runner(null);
+      const callbacks: number[] = [];
+      const subscription = host.onAuthCallback(() => callbacks.push(1));
+
+      setVisibility("hidden");
+      expect(callbacks).toEqual([]);
+      setVisibility("visible");
+      expect(callbacks).toEqual([1]);
+
+      subscription.dispose();
+    });
+
+    it("stops delivering once disposed", () => {
+      const host = runner(null);
+      const callbacks: number[] = [];
+      const subscription = host.onAuthCallback(() => callbacks.push(1));
+
+      setVisibility("hidden");
+      setVisibility("visible");
+      expect(callbacks).toEqual([1]);
+
+      subscription.dispose();
+
+      setVisibility("hidden");
+      setVisibility("visible");
+      expect(callbacks).toEqual([1]);
+    });
+
+    it("shares the same resume source as onSystemResumed - both fire on one edge", () => {
+      const host = runner(null);
+      const authCallbacks: number[] = [];
+      const systemResumes: number[] = [];
+      const authSubscription = host.onAuthCallback(() =>
+        authCallbacks.push(1),
+      );
+      const resumeSubscription = host.onSystemResumed(() =>
+        systemResumes.push(1),
+      );
+
+      setVisibility("hidden");
+      setVisibility("visible");
+
+      expect(authCallbacks).toEqual([1]);
+      expect(systemResumes).toEqual([1]);
+
+      authSubscription.dispose();
+      resumeSubscription.dispose();
     });
   });
 });

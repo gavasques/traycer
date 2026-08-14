@@ -20,7 +20,7 @@ This workspace may:
 
 It must not change or duplicate the RPC protocol, host lifecycle, authn
 service, cloud UI, remote-host service, or root `dev-desktop` allocator.
-Sentry and deep-link auth callbacks are outside the current milestone. iOS
+Sentry is outside the current milestone. iOS
 store signing and TestFlight release automation now exist — cloud-managed
 signing driven by the internal repo's `release-mobile-ios.yaml` (tag-triggered,
 staging and production lanes); the shared `App` Xcode scheme is committed for
@@ -41,11 +41,19 @@ only decides the `(platform, environment)` pair (`pushRegistrationTarget`).
   derive the root allocator's port algorithm here.
 - Interactive sign-in is current OAuth device flow. The callback signal is
   payload-free and sign-in must complete by polling even if no return signal is
-  delivered.
+  delivered. Native builds thread `return_scheme=traycer` into the verification
+  URL so the cloud `/device` page can deep-link the OS back to the app after
+  approval; the return signal itself is the WebView's `visibilitychange` resume
+  edge (no `@capacitor/app` plugin), wired through
+  `IRunnerHost.onAuthCallback`. The scheme is registered in both native
+  projects (`CFBundleURLTypes` / a `BROWSABLE` intent-filter).
 - Capacitor's native HTTP patch keeps auth requests out of WKWebView CORS.
 - The shared device-auth client supports `"cli"`, `"desktop"`, and `"mobile"`;
-  this shell signs in as `"mobile"` (authn shows mobile-specific approval copy
-  and the session lists as a mobile device).
+  this shell is MEANT to sign in as `"mobile"` (authn shows mobile-specific
+  approval copy and the session lists as a mobile device), but temporarily
+  signs in as `"desktop"` because the deployed authn (staging AND production,
+  verified 2026-08-14) still rejects the `"mobile"` client kind — see
+  `DEVICE_FLOW_CLIENT_ID` in `src/mobile-runner-host.ts`.
 - Push tokens register against authn's `/api/v3/user/push-tokens` bound to the
   login session. Sign-out unregisters via `POST .../remove` and that call is
   the primary cleanup — plain sign-out is local-only and revokes nothing, so a
@@ -74,10 +82,11 @@ only decides the `(platform, environment)` pair (`pushRegistrationTarget`).
 
 For both native projects: keep the generated structure authoritative and
 reapply only small reviewed native deltas. The current Android deltas are
-exactly four — `POST_NOTIFICATIONS` and the activity's
-`windowSoftInputMode="adjustResize"` in `app/src/main/AndroidManifest.xml`, the
-debug-only cleartext overlay under `app/src/debug/`, and the tracked
-`app/google-services.json.example`.
+exactly five — `POST_NOTIFICATIONS`, the activity's
+`windowSoftInputMode="adjustResize"`, and the `traycer://` `BROWSABLE`
+intent-filter (return-to-app after device approval) in
+`app/src/main/AndroidManifest.xml`, the debug-only cleartext overlay under
+`app/src/debug/`, and the tracked `app/google-services.json.example`.
 
 Run `bun run --cwd clients/mobile sync:android` before invoking `./gradlew`
 directly. `capacitor.settings.gradle` is tracked but embeds bun install-layout

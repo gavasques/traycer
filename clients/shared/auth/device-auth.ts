@@ -225,6 +225,30 @@ export async function pollDeviceToken(
   return { kind: "network-error" };
 }
 
+/**
+ * Appends this build's registered deep-link scheme to the browser verification
+ * URL as `return_scheme`, so the cloud's /device approval page can deep-link
+ * back to THE APP THAT ASKED - per-environment (`traycer` / `traycer-dev`) and
+ * slot-suffixed under multi-run dev - instead of a hardcoded production scheme
+ * (which launches an installed prod Traycer when a dev build signs in). The
+ * page validates the value against a strict allowlist and fires nothing when
+ * it is absent or malformed, so a manually typed verification URL simply gets
+ * no return deep link. Defensive: an unparseable URL passes through untouched.
+ *
+ * Shared by the desktop and mobile shells; both apply it to
+ * `verificationUriComplete` only - the short display URI stays clean for
+ * manual entry.
+ */
+export function withReturnScheme(uri: string, scheme: string): string {
+  try {
+    const url = new URL(uri);
+    url.searchParams.set("return_scheme", scheme);
+    return url.toString();
+  } catch {
+    return uri;
+  }
+}
+
 // --- Backoff helper --------------------------------------------------------
 
 /** RFC 8628 §3.5: a `slow_down` increases the poll interval by 5 seconds. */

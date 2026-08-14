@@ -116,6 +116,12 @@ function bootstrap(): void {
     hostLabel: config.hostLabel,
     relayBaseUrl: config.relayBaseUrl,
     pushRegistration,
+    // The scheme registration ships with the NATIVE shell (Info.plist /
+    // AndroidManifest), so platform - not Vite environment - decides: any
+    // native install of this app answers `traycer://`, while the dev web
+    // entry registers nothing and must not name a scheme some other installed
+    // app would answer.
+    returnScheme: Capacitor.isNativePlatform() ? "traycer" : null,
   });
   // After the host exists: registration follows the token store (sign-in,
   // app start while signed in, sign-out), and the plugin listeners attach

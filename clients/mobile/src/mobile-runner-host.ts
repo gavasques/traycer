@@ -6,7 +6,9 @@ import {
   DEFAULT_DEVICE_REQUEST_TIMEOUT_MS,
   isDeviceExpired,
   pollDeviceToken,
+  resetPollInterval,
   startDeviceAuthorization,
+  withReturnScheme,
   type DeviceAuthorizationResult,
   type DeviceClientId,
   type DevicePollSchedule,
@@ -86,6 +88,15 @@ export interface MobileRunnerHostOptions {
    * follows the token store on its own once `start()` runs in bootstrap.
    */
   readonly pushRegistration: MobilePushRegistration | null;
+  /**
+   * The deep-link scheme this build's NATIVE shell registered (`traycer` from
+   * Info.plist / AndroidManifest), threaded into the verification URL as
+   * `return_scheme` so the cloud's /device approval page can bounce the OS
+   * back to this app after approval. `null` where no scheme is registered
+   * (the dev web entry, tests) - firing `traycer://` from a plain browser tab
+   * would launch an installed production app instead.
+   */
+  readonly returnScheme: string | null;
 }
 
 const STEP_UP_EXPIRY_SKEW_MS = 5_000;
@@ -154,6 +165,7 @@ export class MobileRunnerHost implements IRunnerHost {
     this.deviceFlow = new MobileDeviceFlowHost(
       options.authnBaseUrl,
       options.hostLabel,
+      options.returnScheme,
     );
   }
 
@@ -331,8 +343,18 @@ export class MobileRunnerHost implements IRunnerHost {
   }
 
   onAuthCallback(handler: () => void): Disposable {
-    void handler;
-    return disposable();
+    // The browser-return signal is the app coming back to the FOREGROUND, not
+    // a parsed callback URL. The `traycer://auth/callback` deep link the
+    // approval page fires exists only to make the OS switch back to this app -
+    // it carries no payload (see `IRunnerHost.onAuthCallback`), and once the
+    // WebView resumes, its `visibilitychange` edge is the same "the browser
+    // returned" fact. Subscribing to the resume source instead of a native
+    // App-plugin `appUrlOpen` listener keeps the shell on its deliberate
+    // four-plugin footprint, and also nudges the poll when the user returns
+    // MANUALLY (no deep link at all - e.g. after using the manual-code page).
+    // A resume with no in-flight attempt is a no-op in the consumer
+    // (`AuthService.handleReturnSignal` only collapses an active poll wait).
+    return this.systemResume.subscribe(handler);
   }
 
   onLocalHostChange(
@@ -357,17 +379,22 @@ export class MobileRunnerHost implements IRunnerHost {
   }
 }
 
-// TEMPORARY (staging testing): the deployed staging authn predates the
-// "mobile" device client kind and rejects it at /device/authorize, so sign in
-// as "desktop" until the authn-v3 mobile client-kind work reaches staging.
-// Flip back to "mobile" then - the approval-page copy and push-token
-// registration are keyed off it.
+// TEMPORARY: the DEPLOYED authn (verified 2026-08-14 against BOTH
+// authn.dev.traycer.ai and authn.traycer.ai: `/device/authorize` returns 400
+// "client_id must be 'cli' or 'desktop'") predates the "mobile" device client
+// kind, so sign in as "desktop" until the authn-v3 mobile client-kind work is
+// deployed. Flip back to "mobile" then - the approval-page copy and push-token
+// registration are keyed off it. The repo's authn-v3 already accepts "mobile";
+// only the deployment lags. NOTE the cloud /device page fires the
+// return-to-app deep link for both "desktop" and "mobile", so this override
+// does not affect the `return_scheme` behavior below.
 const DEVICE_FLOW_CLIENT_ID: DeviceClientId = "desktop";
 
 class MobileDeviceFlowHost implements IDeviceFlowHost {
   constructor(
     private readonly authnBaseUrl: string,
     private readonly hostLabel: string,
+    private readonly returnScheme: string | null,
   ) {}
 
   async start(): Promise<DeviceFlowSession | null> {
@@ -379,7 +406,11 @@ class MobileDeviceFlowHost implements IDeviceFlowHost {
     if (authorization.kind !== "started") {
       return null;
     }
-    return new MobileDeviceFlowSession(this.authnBaseUrl, authorization);
+    return new MobileDeviceFlowSession(
+      this.authnBaseUrl,
+      authorization,
+      this.returnScheme,
+    );
   }
 }
 
@@ -396,11 +427,17 @@ class MobileDeviceFlowSession implements DeviceFlowSession {
       DeviceAuthorizationResult,
       { kind: "started" }
     >,
+    returnScheme: string | null,
   ) {
     this.authorization = {
       userCode: started.userCode,
+      // Desktop parity: the short display URI stays clean for manual entry;
+      // only the pre-filled URL the shell opens carries the return scheme.
       verificationUri: started.verificationUri,
-      verificationUriComplete: started.verificationUriComplete,
+      verificationUriComplete:
+        returnScheme === null
+          ? started.verificationUriComplete
+          : withReturnScheme(started.verificationUriComplete, returnScheme),
       expiresInSeconds: started.expiresInSeconds,
       intervalSeconds: started.intervalSeconds,
     };
@@ -474,6 +511,12 @@ class MobileDeviceFlowSession implements DeviceFlowSession {
           schedule = applySlowDown(schedule, poll.retryAfterSeconds);
           break;
         case "authorization-pending":
+          // Desktop parity: an accepted poll means the pacing is compliant
+          // again, so any earlier slow_down widening must not outlive the
+          // violation (see `resetPollInterval` - especially costly here, where
+          // the foreground-resume nudge may poll one interval early).
+          schedule = resetPollInterval(schedule);
+          break;
         case "network-error":
           break;
       }

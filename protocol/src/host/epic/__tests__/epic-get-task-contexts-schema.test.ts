@@ -1,31 +1,41 @@
 import { describe, expect, it } from "vitest";
 import { hostRpcRegistry } from "@traycer/protocol/host/registry";
 import {
+  epicGetTaskContextsUpgradeV10ToV11,
+} from "@traycer/protocol/host/epic/contracts";
+import {
   GET_TASK_CONTEXTS_MAX_IDS,
   getTaskContextsRequestSchema,
   getTaskContextsResponseSchema,
+  getTaskContextsResponseSchemaV10,
   listTaskLightSchema,
 } from "@traycer/protocol/host/epic/unary-schemas";
 
 /**
- * Contract + schema coverage for the optional `epic.getTaskContexts@1.0`
- * unary method (batch task-context resolution for title/owner naming).
+ * Contract + schema coverage for the optional `epic.getTaskContexts` unary
+ * method (batch task-context resolution for title/owner naming).
  */
-describe("epic.getTaskContexts@1.0", () => {
-  const contract =
+describe("epic.getTaskContexts", () => {
+  const v10Contract =
     hostRpcRegistry["epic.getTaskContexts"][1].versions[0].contract;
+  const v11Contract =
+    hostRpcRegistry["epic.getTaskContexts"][1].versions[1].contract;
 
-  it("registers at major 1, minor 0 with optional unsupported degrade", () => {
-    expect(contract.method).toBe("epic.getTaskContexts");
-    expect(contract.schemaVersion).toEqual({ major: 1, minor: 0 });
+  it("keeps v1.0 frozen and registers the v1.1 explicit-resolution minor", () => {
+    expect(v10Contract.schemaVersion).toEqual({ major: 1, minor: 0 });
+    expect(v11Contract.method).toBe("epic.getTaskContexts");
+    expect(v11Contract.schemaVersion).toEqual({ major: 1, minor: 1 });
+    expect(hostRpcRegistry["epic.getTaskContexts"][1].latestMinor).toBe(1);
     expect(hostRpcRegistry["epic.getTaskContexts"].degrade).toEqual({
       kind: "unsupported",
     });
   });
 
-  it("wires the canonical request/response schema instances", () => {
-    expect(contract.requestSchema).toBe(getTaskContextsRequestSchema);
-    expect(contract.responseSchema).toBe(getTaskContextsResponseSchema);
+  it("wires version-specific response schema instances", () => {
+    expect(v10Contract.requestSchema).toBe(getTaskContextsRequestSchema);
+    expect(v10Contract.responseSchema).toBe(getTaskContextsResponseSchemaV10);
+    expect(v11Contract.requestSchema).toBe(getTaskContextsRequestSchema);
+    expect(v11Contract.responseSchema).toBe(getTaskContextsResponseSchema);
   });
 
   it("round-trips a request within the id cap", () => {
@@ -47,7 +57,7 @@ describe("epic.getTaskContexts@1.0", () => {
     expect(result.success).toBe(false);
   });
 
-  it("round-trips a response with ListTaskLight rows and null entries", () => {
+  it("round-trips all explicit v1.1 resolution arms", () => {
     const listRow = listTaskLightSchema.parse({
       epic: {
         light: {
@@ -74,13 +84,33 @@ describe("epic.getTaskContexts@1.0", () => {
 
     const parsed = getTaskContextsResponseSchema.parse({
       tasks: {
-        "epic-1": listRow,
-        // null = deleted or not permitted (indistinguishable by design)
-        "epic-missing": null,
+        "epic-1": { status: "found", task: listRow },
+        "epic-deleted": { status: "confirmed-absent" },
+        "epic-unknown": { status: "unknown", reason: "transport" },
       },
     });
 
-    expect(parsed.tasks["epic-1"]).toEqual(listRow);
-    expect(parsed.tasks["epic-missing"]).toBeNull();
+    expect(parsed.tasks["epic-1"]).toEqual({ status: "found", task: listRow });
+    expect(parsed.tasks["epic-deleted"]).toEqual({
+      status: "confirmed-absent",
+    });
+    expect(parsed.tasks["epic-unknown"]).toEqual({
+      status: "unknown",
+      reason: "transport",
+    });
+  });
+
+  it("upgrades an old host's nullable rows to safe unknown outcomes", () => {
+    const upgraded = epicGetTaskContextsUpgradeV10ToV11.upgradeResponse({
+      tasks: {
+        "epic-found": listTaskLightSchema.parse({}),
+        "epic-legacy-null": null,
+      },
+    });
+
+    expect(upgraded.tasks).toEqual({
+      "epic-found": { status: "found", task: {} },
+      "epic-legacy-null": { status: "unknown", reason: "legacy" },
+    });
   });
 });

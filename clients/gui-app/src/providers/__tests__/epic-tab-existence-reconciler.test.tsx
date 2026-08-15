@@ -67,6 +67,28 @@ type GetTaskContextsRequest = RequestOfMethod<
   "epic.getTaskContexts"
 >;
 
+const UNKNOWN_TASK_CONTEXTS: GetTaskContextsResponse = {
+  tasks: {
+    [OPEN_EPIC_ID]: { status: "unknown", reason: "transport" },
+  },
+};
+
+/**
+ * The mock messenger intentionally does not validate handler results. Build a
+ * statically valid v1.1 response, then replace its row with the literal null
+ * that a legacy v1.0 host still sends. This keeps the old-host compatibility
+ * evidence at the wire boundary without weakening the latest response type.
+ */
+function legacyNullTaskContexts(): GetTaskContextsResponse {
+  const response: GetTaskContextsResponse = {
+    tasks: {
+      [OPEN_EPIC_ID]: { status: "unknown", reason: "legacy" },
+    },
+  };
+  Object.assign(response.tasks, { [OPEN_EPIC_ID]: null });
+  return response;
+}
+
 const compatibleHostStatus: HostStatusResponse = {
   ready: true,
   hostVersion: "1.2.3",
@@ -338,7 +360,7 @@ describe("EpicTabExistenceReconciler fail-closed paths", () => {
     queryClient.clear();
   });
 
-  it("closes no tabs while the lookup is still in flight", async () => {
+  it("closes only after the lookup confirms the epic is absent", async () => {
     recordNegotiatedHostMethods(localSnapshot.hostId, [
       "host.status",
       "epic.getTaskContexts",
@@ -358,15 +380,52 @@ describe("EpicTabExistenceReconciler fail-closed paths", () => {
     });
     expect(collectOpenEpicIds()).toContain(OPEN_EPIC_ID);
 
-    // Resolving with the id unconfirmed prunes it - the same fixture that had
-    // to leave the tab open while pending. Without this the test would pass
-    // even if the reconciler never concluded anything at all.
+    // A successful batch with an explicit confirmed-absent row is the only
+    // result that may prune the tab. Without this assertion the test could
+    // pass even if the reconciler never concluded anything at all.
     act(() => {
-      resolveLookup({ tasks: { [OPEN_EPIC_ID]: null } });
+      resolveLookup({
+        tasks: { [OPEN_EPIC_ID]: { status: "confirmed-absent" } },
+      });
     });
     await waitFor(() => {
       expect(collectOpenEpicIds()).not.toContain(OPEN_EPIC_ID);
     });
+    queryClient.clear();
+  });
+
+  it.each([
+    {
+      label: "an explicit unknown row",
+      response: UNKNOWN_TASK_CONTEXTS,
+    },
+    {
+      label: "a legacy host's literal null row",
+      response: legacyNullTaskContexts(),
+    },
+  ])("closes no tabs for $label", async ({ response }) => {
+    recordNegotiatedHostMethods(localSnapshot.hostId, [
+      "host.status",
+      "epic.getTaskContexts",
+    ]);
+    const getTaskContexts = vi.fn(
+      (_params: GetTaskContextsRequest): GetTaskContextsResponse => response,
+    );
+
+    const queryClient = mountReconciler({ getTaskContexts });
+
+    await waitFor(() => {
+      expect(getTaskContexts).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(
+        queryClient
+          .getQueryCache()
+          .getAll()
+          .some((query) => query.state.status === "success"),
+      ).toBe(true);
+    });
+    expect(collectOpenEpicIds()).toContain(OPEN_EPIC_ID);
     queryClient.clear();
   });
 });

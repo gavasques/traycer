@@ -1,4 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  expectTypeOf,
+  it,
+  vi,
+} from "vitest";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
@@ -46,6 +54,10 @@ import {
 } from "@/lib/epics/session-created-epics";
 import type { JsonContent } from "@traycer/protocol/common/registry";
 import type { ChatRunSettings } from "@traycer/protocol/host/agent/gui/subscribe";
+import type {
+  GetTaskContextsResponse,
+  ListTaskLight,
+} from "@traycer/protocol/host/epic/unary-schemas";
 
 const STARTUP_EPIC_ID = "epic-startup-compat";
 const STALE_EPIC_ID = "epic-stale-persisted";
@@ -90,10 +102,6 @@ const localSnapshot: LocalHostSnapshot = {
 };
 
 type HostStatusResponse = ResponseOfMethod<HostRpcRegistry, "host.status">;
-type GetTaskContextsResponse = ResponseOfMethod<
-  HostRpcRegistry,
-  "epic.getTaskContexts"
->;
 type GetTaskContextsRequest = RequestOfMethod<
   HostRpcRegistry,
   "epic.getTaskContexts"
@@ -289,7 +297,7 @@ function getHostStatusSnapshotText(): string | null {
   }).textContent;
 }
 
-function epicTask(epicId: string): TaskContextRow {
+function epicTask(epicId: string): ListTaskLight {
   return {
     epic: {
       light: {
@@ -314,10 +322,10 @@ function epicTask(epicId: string): TaskContextRow {
   };
 }
 
-// Resolves every requested id, confirming only `confirmedEpicIds` and
-// returning `null` (deleted / not permitted - indistinguishable by design) for
-// the rest. Mirrors the host contract: the response is keyed by the requested
-// task ids, so a caller learns nothing about ids it did not ask about.
+// Resolves every requested id, returning a `found` row for confirmed ids and a
+// positive absence confirmation for the rest. Mirrors the host contract: the
+// response is keyed by the requested task ids, so a caller learns nothing
+// about ids it did not ask about.
 function taskContextsFor(
   confirmedEpicIds: ReadonlyArray<string>,
 ): (params: GetTaskContextsRequest) => GetTaskContextsResponse {
@@ -326,16 +334,17 @@ function taskContextsFor(
     tasks: Object.fromEntries(
       params.taskIds.map((taskId): readonly [string, TaskContextRow] => [
         taskId,
-        confirmed.has(taskId) ? epicTask(taskId) : null,
+        confirmed.has(taskId)
+          ? { status: "found", task: epicTask(taskId) }
+          : { status: "confirmed-absent" },
       ]),
     ),
   });
 }
 
 // Shared harness for the "freshly-created epic survives reconciliation" tests.
-// The host confirms only the pre-existing startup tab, so a just-created epic
-// (absent from cloud reads while they lag epic.create) is pruned unless a
-// protection guard exempts it.
+// The host confirms only the pre-existing startup tab, so every other id is
+// positively absent and would be pruned unless a protection guard exempts it.
 function mountReconcilerHarness(): { readonly queryClient: QueryClient } {
   const getTaskContexts = vi.fn(taskContextsFor([STARTUP_EPIC_ID]));
   const listHarnesses = vi.fn((): ListHarnessesResponse => ({
@@ -413,6 +422,12 @@ function installAuthFetch(): () => void {
 }
 
 describe("HostCompatibilityProvider startup consumers", () => {
+  it("exposes the latest task-context response through the host registry", () => {
+    expectTypeOf<
+      ResponseOfMethod<HostRpcRegistry, "epic.getTaskContexts">
+    >().toEqualTypeOf<GetTaskContextsResponse>();
+  });
+
   beforeEach(() => {
     restoreFetch = installAuthFetch();
     useTabsStore.setState(useTabsStore.getInitialState(), true);
@@ -1090,7 +1105,12 @@ describe("HostCompatibilityProvider startup consumers", () => {
 
     act(() => {
       taskContextsDeferred.resolve({
-        tasks: { [STARTUP_EPIC_ID]: epicTask(STARTUP_EPIC_ID) },
+        tasks: {
+          [STARTUP_EPIC_ID]: {
+            status: "found",
+            task: epicTask(STARTUP_EPIC_ID),
+          },
+        },
       });
     });
     expect(methods[0]).toBe("host.status");

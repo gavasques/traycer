@@ -301,6 +301,8 @@ import {
   epicEditCommentV10,
   epicFinishArtifactImageV10,
   epicGetTaskContextsV10,
+  epicGetTaskContextsV11,
+  epicGetTaskContextsUpgradeV10ToV11,
   epicGrantAccessV10,
   epicChatBackupStatusV10,
   epicChatReplicaReadV10,
@@ -5197,11 +5199,18 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   // E_HOST_UNSUPPORTED for this call only and degrade to cache-only titles.
   "epic.getTaskContexts": {
     1: {
-      latestMinor: 0,
+      // @1.1's new row-union values are projection-gated in host dispatch:
+      // a v1.0 caller receives its released nullable rows, never a union arm.
+      latestMinor: 1,
       versions: {
         0: {
           contract: epicGetTaskContextsV10,
           upgradeFromPreviousVersion: null,
+        },
+        1: {
+          contract: epicGetTaskContextsV11,
+          upgradeFromPreviousVersion: epicGetTaskContextsUpgradeV10ToV11,
+          responseGrowthProjectionGated: true,
         },
       },
       downgradePathsFromLatest: {},

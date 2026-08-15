@@ -584,14 +584,15 @@ export type RecordEpicViewedResponse = z.infer<
   typeof recordEpicViewedResponseSchema
 >;
 
-// ─── Batch task context (epic.getTaskContexts@1.0) ───────────────────────────
+// ─── Batch task context (epic.getTaskContexts@1.0+) ──────────────────────────
 // Optional (non-floor) capability: resolve a small set of task ids to list-row
 // shapes for title/context (e.g. worktree owner titles). Old hosts fail only
 // this call with E_HOST_UNSUPPORTED; callers degrade to cache-only resolution.
 //
-// `null` in the response map means deleted OR not permitted to the requester —
-// indistinguishable by design. Clients render both the same way (e.g. muted
-// "Owner unresolved").
+// v1.0's `null` response row was ambiguous: a deleted task, an inaccessible
+// task, and a failed cloud lookup all looked identical. v1.1 makes that
+// distinction explicit. Its `unknown` arm deliberately preserves uncertainty
+// rather than licensing destructive client reconciliation.
 
 export const GET_TASK_CONTEXTS_MAX_IDS = 50;
 
@@ -602,10 +603,75 @@ export type GetTaskContextsRequest = z.infer<
   typeof getTaskContextsRequestSchema
 >;
 
-export const getTaskContextsResponseSchema = z.object({
-  // Per-id: ListTaskLight when readable, null when deleted or not permitted
-  // (indistinguishable by design).
+export const getTaskContextsResponseSchemaV10 = z.object({
   tasks: z.record(z.string(), listTaskLightSchema.nullable()),
+});
+export type GetTaskContextsResponseV10 = z.infer<
+  typeof getTaskContextsResponseSchemaV10
+>;
+
+export const taskContextUnknownReasonSchema = z.enum([
+  "legacy",
+  "not-found-or-not-permitted",
+  "transport",
+  "server",
+  "auth",
+  "unexpected-response",
+]);
+export type TaskContextUnknownReason = z.infer<
+  typeof taskContextUnknownReasonSchema
+>;
+
+export const taskContextResolutionSchema = z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("found"),
+    task: listTaskLightSchema,
+  }),
+  z.object({
+    status: z.literal("confirmed-absent"),
+  }),
+  z.object({
+    status: z.literal("unknown"),
+    reason: taskContextUnknownReasonSchema,
+  }),
+]);
+export type TaskContextResolution = z.infer<
+  typeof taskContextResolutionSchema
+>;
+
+export const taskContextResultSchema = z.union([
+  taskContextResolutionSchema,
+  // The frozen v1.0 values remain accepted by the additive v1.1 schema. A
+  // current host emits only `taskContextResolutionSchema`; these alternatives
+  // are the legacy-host compatibility input that callers must treat as
+  // unknown rather than absence.
+  listTaskLightSchema,
+  z.null(),
+]);
+export type TaskContextResult = z.infer<typeof taskContextResultSchema>;
+
+export function isTaskContextResolution(
+  result: TaskContextResult | undefined,
+): result is TaskContextResolution {
+  return result !== null && result !== undefined && "status" in result;
+}
+
+export function isFoundTaskContext(
+  result: TaskContextResult | undefined,
+): result is Extract<TaskContextResolution, { status: "found" }> {
+  return isTaskContextResolution(result) && result.status === "found";
+}
+
+export function isConfirmedAbsentTaskContext(
+  result: TaskContextResult | undefined,
+): result is Extract<TaskContextResolution, { status: "confirmed-absent" }> {
+  return (
+    isTaskContextResolution(result) && result.status === "confirmed-absent"
+  );
+}
+
+export const getTaskContextsResponseSchema = z.object({
+  tasks: z.record(z.string(), taskContextResultSchema),
 });
 export type GetTaskContextsResponse = z.infer<
   typeof getTaskContextsResponseSchema

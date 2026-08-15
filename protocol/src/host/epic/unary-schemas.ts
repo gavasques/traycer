@@ -616,6 +616,7 @@ export const taskContextUnknownReasonSchema = z.enum([
   "transport",
   "server",
   "auth",
+  "denied",
   "unexpected-response",
 ]);
 export type TaskContextUnknownReason = z.infer<
@@ -639,35 +640,23 @@ export type TaskContextResolution = z.infer<
   typeof taskContextResolutionSchema
 >;
 
-export const taskContextResultSchema = z.union([
-  taskContextResolutionSchema,
-  // The frozen v1.0 values remain accepted by the additive v1.1 schema. A
-  // current host emits only `taskContextResolutionSchema`; these alternatives
-  // are the legacy-host compatibility input that callers must treat as
-  // unknown rather than absence.
-  listTaskLightSchema,
-  z.null(),
-]);
-export type TaskContextResult = z.infer<typeof taskContextResultSchema>;
-
-export function isTaskContextResolution(
-  result: TaskContextResult | undefined,
-): result is TaskContextResolution {
-  return result !== null && result !== undefined && "status" in result;
-}
+// Older-host values are parsed by their v1.0 schema and upgraded at the
+// transport boundary. Canonical v1.1 data therefore stays exhaustive here:
+// accepting the all-optional legacy list shape would let malformed v1.1 arms
+// parse as an empty task.
+export const taskContextResultSchema = taskContextResolutionSchema;
+export type TaskContextResult = TaskContextResolution;
 
 export function isFoundTaskContext(
   result: TaskContextResult | undefined,
 ): result is Extract<TaskContextResolution, { status: "found" }> {
-  return isTaskContextResolution(result) && result.status === "found";
+  return result?.status === "found";
 }
 
 export function isConfirmedAbsentTaskContext(
   result: TaskContextResult | undefined,
 ): result is Extract<TaskContextResolution, { status: "confirmed-absent" }> {
-  return (
-    isTaskContextResolution(result) && result.status === "confirmed-absent"
-  );
+  return result?.status === "confirmed-absent";
 }
 
 export const getTaskContextsResponseSchema = z.object({

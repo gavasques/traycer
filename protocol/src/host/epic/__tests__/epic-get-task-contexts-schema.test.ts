@@ -8,8 +8,35 @@ import {
   getTaskContextsRequestSchema,
   getTaskContextsResponseSchema,
   getTaskContextsResponseSchemaV10,
+  type ListTaskLight,
   listTaskLightSchema,
 } from "@traycer/protocol/host/epic/unary-schemas";
+
+function createListTaskLight(): ListTaskLight {
+  return listTaskLightSchema.parse({
+    epic: {
+      light: {
+        id: "epic-1",
+        title: "Owner title",
+        initialUserPrompt: "",
+        ticketCount: 0,
+        specCount: 0,
+        storyCount: 0,
+        reviewCount: 0,
+        status: "active",
+        createdAt: 1,
+        updatedAt: 2,
+        createdBy: "user-1",
+        version: "1",
+      },
+      permission: null,
+      repos: [],
+      workspaces: [],
+      roomInfo: null,
+    },
+    pinned: false,
+  });
+}
 
 /**
  * Contract + schema coverage for the optional `epic.getTaskContexts` unary
@@ -58,29 +85,7 @@ describe("epic.getTaskContexts", () => {
   });
 
   it("round-trips all explicit v1.1 resolution arms", () => {
-    const listRow = listTaskLightSchema.parse({
-      epic: {
-        light: {
-          id: "epic-1",
-          title: "Owner title",
-          initialUserPrompt: "",
-          ticketCount: 0,
-          specCount: 0,
-          storyCount: 0,
-          reviewCount: 0,
-          status: "active",
-          createdAt: 1,
-          updatedAt: 2,
-          createdBy: "user-1",
-          version: "1",
-        },
-        permission: null,
-        repos: [],
-        workspaces: [],
-        roomInfo: null,
-      },
-      pinned: false,
-    });
+    const listRow = createListTaskLight();
 
     const parsed = getTaskContextsResponseSchema.parse({
       tasks: {
@@ -90,7 +95,10 @@ describe("epic.getTaskContexts", () => {
       },
     });
 
-    expect(parsed.tasks["epic-1"]).toEqual({ status: "found", task: listRow });
+    expect(parsed.tasks["epic-1"]).toEqual({
+      status: "found",
+      task: listRow,
+    });
     expect(parsed.tasks["epic-deleted"]).toEqual({
       status: "confirmed-absent",
     });
@@ -100,16 +108,30 @@ describe("epic.getTaskContexts", () => {
     });
   });
 
+  it("rejects raw v1.0 rows from the canonical v1.1 schema", () => {
+    expect(
+      getTaskContextsResponseSchema.safeParse({
+        tasks: { "epic-legacy-null": null },
+      }).success,
+    ).toBe(false);
+    expect(
+      getTaskContextsResponseSchema.safeParse({
+        tasks: { "epic-legacy-found": createListTaskLight() },
+      }).success,
+    ).toBe(false);
+  });
+
   it("upgrades an old host's nullable rows to safe unknown outcomes", () => {
+    const legacyFound = createListTaskLight();
     const upgraded = epicGetTaskContextsUpgradeV10ToV11.upgradeResponse({
       tasks: {
-        "epic-found": listTaskLightSchema.parse({}),
+        "epic-found": legacyFound,
         "epic-legacy-null": null,
       },
     });
 
     expect(upgraded.tasks).toEqual({
-      "epic-found": { status: "found", task: {} },
+      "epic-found": { status: "found", task: legacyFound },
       "epic-legacy-null": { status: "unknown", reason: "legacy" },
     });
   });

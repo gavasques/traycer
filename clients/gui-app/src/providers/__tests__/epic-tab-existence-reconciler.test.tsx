@@ -73,21 +73,13 @@ const UNKNOWN_TASK_CONTEXTS: GetTaskContextsResponse = {
   },
 };
 
-/**
- * The mock messenger intentionally does not validate handler results. Build a
- * statically valid v1.1 response, then replace its row with the literal null
- * that a legacy v1.0 host still sends. This keeps the old-host compatibility
- * evidence at the wire boundary without weakening the latest response type.
- */
-function legacyNullTaskContexts(): GetTaskContextsResponse {
-  const response: GetTaskContextsResponse = {
-    tasks: {
-      [OPEN_EPIC_ID]: { status: "unknown", reason: "legacy" },
-    },
-  };
-  Object.assign(response.tasks, { [OPEN_EPIC_ID]: null });
-  return response;
-}
+// A v1.0 host's nullable row is upgraded at the transport boundary before the
+// reconciler sees it. The protocol schema suite covers that upgrade itself.
+const LEGACY_TASK_CONTEXTS: GetTaskContextsResponse = {
+  tasks: {
+    [OPEN_EPIC_ID]: { status: "unknown", reason: "legacy" },
+  },
+};
 
 const compatibleHostStatus: HostStatusResponse = {
   ready: true,
@@ -400,8 +392,8 @@ describe("EpicTabExistenceReconciler fail-closed paths", () => {
       response: UNKNOWN_TASK_CONTEXTS,
     },
     {
-      label: "a legacy host's literal null row",
-      response: legacyNullTaskContexts(),
+      label: "a legacy host row upgraded to unknown",
+      response: LEGACY_TASK_CONTEXTS,
     },
   ])("closes no tabs for $label", async ({ response }) => {
     recordNegotiatedHostMethods(localSnapshot.hostId, [

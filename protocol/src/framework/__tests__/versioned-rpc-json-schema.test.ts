@@ -824,6 +824,60 @@ describe("response-lane value-growth strictness", () => {
     expect(() => validateVersionedRpcRegistry(registry)).not.toThrow();
   });
 
+  it("accepts a projection-gated response union replacement", () => {
+    const replaceV10 = defineRpcContract({
+      method: "replace",
+      schemaVersion: { major: 1, minor: 0 } as const,
+      requestSchema: z.object({ id: z.string() }),
+      responseSchema: z.object({
+        row: z.union([z.object({ legacy: z.string() }), z.null()]),
+      }),
+    });
+    const replaceV11 = defineRpcContract({
+      method: "replace",
+      schemaVersion: { major: 1, minor: 1 } as const,
+      requestSchema: z.object({ id: z.string() }),
+      responseSchema: z.object({
+        row: z.discriminatedUnion("status", [
+          z.object({ status: z.literal("found"), value: z.string() }),
+          z.object({ status: z.literal("absent") }),
+        ]),
+      }),
+    });
+    const replaceUpgrade = defineUpgradePath<
+      typeof replaceV10,
+      typeof replaceV11
+    >({
+      from: replaceV10.schemaVersion,
+      to: replaceV11.schemaVersion,
+      upgradeRequest: (request) => ({ id: request.id }),
+      upgradeResponse: (response) => ({
+        row:
+          response.row === null
+            ? { status: "absent" as const }
+            : { status: "found" as const, value: response.row.legacy },
+      }),
+    });
+    const registry = {
+      replace: {
+        1: {
+          latestMinor: 1,
+          versions: {
+            0: { contract: replaceV10, upgradeFromPreviousVersion: null },
+            1: {
+              contract: replaceV11,
+              upgradeFromPreviousVersion: replaceUpgrade,
+              responseGrowthProjectionGated: true,
+            },
+          },
+          downgradePathsFromLatest: {},
+        },
+      },
+    } as const;
+
+    expect(() => validateVersionedRpcRegistry(registry)).not.toThrow();
+  });
+
   it("keeps REQUEST enum growth legal on minors without annotation", () => {
     const optInV10 = defineRpcContract({
       method: "optIn",

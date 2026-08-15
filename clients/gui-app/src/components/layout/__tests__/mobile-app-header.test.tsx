@@ -14,8 +14,10 @@ import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
 import { useMobileHeaderStore } from "@/stores/layout/mobile-header-store";
 import { useMobileNavStore } from "@/stores/layout/mobile-nav-store";
 import { useSettingsStore } from "@/stores/settings/settings-store";
-import { tabItemId } from "@/stores/tabs/layout";
+import { emptySystemTabs, tabItemId } from "@/stores/tabs/layout";
+import type { SystemTabs } from "@/stores/tabs/layout";
 import { useTabsStore } from "@/stores/tabs/store";
+import type { TabRef } from "@/stores/tabs/types";
 
 // The real rate-limit / resource-monitor controls pull host + stream
 // providers; stub them to their accessible trigger so the header renders in
@@ -98,27 +100,65 @@ function renderAt(path: string) {
 }
 
 /**
- * The tab layout an epic tab is presented through, plus its canvas record.
+ * Focuses one tab in the layout the header reads.
  *
- * The layout is what the header reads, and it is what a restored session
- * actually restores - so every epic case here seeds it, INCLUDING the ones that
- * also put the router on the epic route. A case that only set the route would
- * be testing a state the phone never reaches.
+ * The layout is what a restored session actually restores - so every titled
+ * case here seeds it, INCLUDING the ones that also put the router on the
+ * matching route. A case that only set the route would be testing a state the
+ * phone never reaches.
  */
-function presentEpicTab(tabId: string, epicId: string, name: string): void {
-  const ref = { kind: "epic", id: tabId } as const;
+function focusTab(ref: TabRef, systemTabs: SystemTabs): void {
   const itemId = tabItemId(ref);
   useTabsStore.setState({
     items: [{ kind: "tab", id: itemId, ref }],
     activeItemId: itemId,
+    systemTabs,
   });
+}
+
+function presentEpicTab(tabId: string, epicId: string, name: string): void {
+  focusTab({ kind: "epic", id: tabId }, emptySystemTabs());
   useEpicCanvasStore.setState({
     tabsById: { [tabId]: { tabId, epicId, name } },
   });
 }
 
+function presentHistoryTab(): void {
+  focusTab(
+    { kind: "history", id: "history" },
+    {
+      ...emptySystemTabs(),
+      history: {
+        id: "history",
+        kind: "history",
+        name: "History",
+        lastPath: "/epics",
+      },
+    },
+  );
+}
+
+function presentSettingsTab(lastPath: string): void {
+  focusTab(
+    { kind: "settings", id: "settings" },
+    {
+      ...emptySystemTabs(),
+      settings: {
+        id: "settings",
+        kind: "settings",
+        name: "Settings",
+        lastPath,
+      },
+    },
+  );
+}
+
 function presentNoTab(): void {
-  useTabsStore.setState({ items: [], activeItemId: null });
+  useTabsStore.setState({
+    items: [],
+    activeItemId: null,
+    systemTabs: emptySystemTabs(),
+  });
   useEpicCanvasStore.setState({ tabsById: {} });
 }
 
@@ -151,16 +191,44 @@ describe("MobileAppHeader", () => {
     expect(useMobileNavStore.getState().open).toBe(true);
   });
 
-  it("titles the History and Settings surfaces from the route", async () => {
+  it("titles the History and Settings surfaces", async () => {
+    presentHistoryTab();
     renderAt("/epics");
     expect((await screen.findByTestId("mobile-header-title")).textContent).toBe(
       "History",
     );
     cleanup();
+    presentSettingsTab("/settings");
     renderAt("/settings");
     expect((await screen.findByTestId("mobile-header-title")).textContent).toBe(
       "Settings",
     );
+  });
+
+  // Same cold-restore path as the epic case below: the system tabs are restored
+  // into the layout while the router is still on the landing route it booted
+  // at, so neither surface has a route to be titled from.
+  it("titles the History and Settings surfaces restored under the landing route", async () => {
+    presentHistoryTab();
+    renderAt("/");
+    expect((await screen.findByTestId("mobile-header-title")).textContent).toBe(
+      "History",
+    );
+    cleanup();
+    presentSettingsTab("/settings");
+    renderAt("/");
+    expect((await screen.findByTestId("mobile-header-title")).textContent).toBe(
+      "Settings",
+    );
+  });
+
+  it("crumbs a restored settings section under the landing route", async () => {
+    presentSettingsTab("/settings/appearance");
+    renderAt("/");
+    expect((await screen.findByTestId("mobile-header-title")).textContent).toBe(
+      "SettingsAppearance",
+    );
+    expect(screen.getByTestId("mobile-header-settings-crumb")).not.toBeNull();
   });
 
   // Composer surfaces are where you already are, and each opens with a hero

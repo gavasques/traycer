@@ -1,6 +1,7 @@
 import { type ReactNode } from "react";
 import { ChevronRight, Menu } from "lucide-react";
-import { Link, useRouterState } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
+import { useShallow } from "zustand/react/shallow";
 import { Button } from "@/components/ui/button";
 import { SETTINGS_SECTIONS } from "@/lib/settings-sections";
 import { RateLimitIconButton } from "@/components/layout/header/rate-limit-icon";
@@ -14,8 +15,6 @@ import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
 import { useSettingsStore } from "@/stores/settings/settings-store";
 import { useTabsStore } from "@/stores/tabs/store";
 import { selectHostFocusedRef } from "@/stores/tabs/selectors";
-import { isHistoryPath } from "@/stores/tabs/kinds/history";
-import { isSettingsPath } from "@/stores/tabs/kinds/settings";
 
 /**
  * The phone app header. Replaces the desktop tab strip + control cluster with a
@@ -29,10 +28,11 @@ export function MobileAppHeader(): ReactNode {
   const showGlobalResourceMonitor = useSettingsStore(
     (state) => state.showGlobalResourceMonitor,
   );
-  const epicTabId = useMobileHeaderEpicTabId();
+  const surface = useMobileHeaderSurface();
+  const epicTabId = surface.kind === "epic" ? surface.tabId : null;
   const epicId = useMobileHeaderEpicId(epicTabId);
-  const title = useMobileHeaderTitle(epicTabId);
-  const settingsSection = useSettingsSectionLabel();
+  const title = useMobileHeaderTitle(surface, epicTabId);
+  const settingsSection = settingsSectionLabel(surface);
   return (
     <header
       data-testid="app-header"
@@ -154,24 +154,54 @@ function MobileHeaderTitleSlot(props: MobileHeaderTitleSlotProps): ReactNode {
 }
 
 /**
- * The tab id of the epic this phone is presenting, null when the focused
- * surface is not an epic.
+ * The surface this phone is presenting. `composer` covers the landing and draft
+ * surfaces plus an empty layout - everything the header does not title.
  *
- * Taken from the tab layout that renders the surface, NOT from a route match.
+ * The settings arm carries the settings tab's own remembered path, which is
+ * where its drill-down crumb comes from.
+ */
+type MobileHeaderSurface =
+  | { readonly kind: "epic"; readonly tabId: string }
+  | { readonly kind: "history" }
+  | { readonly kind: "settings"; readonly path: string | null }
+  | { readonly kind: "composer" };
+
+const COMPOSER_SURFACE: MobileHeaderSurface = { kind: "composer" };
+const HISTORY_SURFACE: MobileHeaderSurface = { kind: "history" };
+
+/**
+ * Resolves the presented surface from the tab layout that renders it, NOT from
+ * a route match.
+ *
  * The two are one activation seen twice, and only the layout survives a cold
  * start: the phone shell has no URL bar and no route persistence (that is the
  * Electron-only `createPersistentMemoryHistory`), so its WebView always boots
  * at `/`, and `TabNavigationController` deliberately leaves a landing location
  * alone rather than clobber the restored focus. A relaunch therefore paints the
- * restored epic tab under a router still matching the landing route, and a
- * header keyed on that match names nothing while the epic it belongs to fills
- * the screen.
+ * restored tab under a router still matching the landing route, and a header
+ * keyed on that match names nothing while the surface it belongs to fills the
+ * screen - for an epic, for History and for Settings alike.
  */
-function useMobileHeaderEpicTabId(): string | null {
-  return useTabsStore((state) => {
-    const focused = selectHostFocusedRef(state);
-    return focused === null || focused.kind !== "epic" ? null : focused.id;
-  });
+function useMobileHeaderSurface(): MobileHeaderSurface {
+  return useTabsStore(
+    useShallow((state): MobileHeaderSurface => {
+      const focused = selectHostFocusedRef(state);
+      if (focused === null) return COMPOSER_SURFACE;
+      switch (focused.kind) {
+        case "epic":
+          return { kind: "epic", tabId: focused.id };
+        case "history":
+          return HISTORY_SURFACE;
+        case "settings":
+          return {
+            kind: "settings",
+            path: state.systemTabs.settings?.lastPath ?? null,
+          };
+        case "draft":
+          return COMPOSER_SURFACE;
+      }
+    }),
+  );
 }
 
 /**
@@ -184,15 +214,18 @@ function useMobileHeaderEpicId(epicTabId: string | null): string | null {
 }
 
 /**
- * The active settings section's label when the route is a settings section
- * (drill-down depth 1), null on the settings index and everywhere else.
+ * The presented settings section's label when the settings tab is drilled into
+ * a section (depth 1), null on its index and on every other surface.
+ *
+ * The path is the settings tab's remembered `lastPath`, rewritten at every
+ * committed settings navigation - so it names the section on a cold restore
+ * too, where the router has not been to `/settings` at all.
  */
-function useSettingsSectionLabel(): string | null {
-  const pathname = useRouterState({
-    select: (state) => state.location.pathname,
-  });
+function settingsSectionLabel(surface: MobileHeaderSurface): string | null {
+  if (surface.kind !== "settings" || surface.path === null) return null;
+  const path = surface.path;
   const section = SETTINGS_SECTIONS.find((s) =>
-    pathname.startsWith(`/settings/${s.id}`),
+    path.startsWith(`/settings/${s.id}`),
   );
   return section === undefined ? null : section.label;
 }
@@ -201,19 +234,19 @@ function useSettingsSectionLabel(): string | null {
  * Derives the header title from the presented surface: the open epic's name on
  * an epic tab, otherwise a per-surface label.
  */
-function useMobileHeaderTitle(epicTabId: string | null): string | null {
-  const pathname = useRouterState({
-    select: (state) => state.location.pathname,
-  });
+function useMobileHeaderTitle(
+  surface: MobileHeaderSurface,
+  epicTabId: string | null,
+): string | null {
   const epicName = useEpicCanvasStore((state) =>
     epicTabId === null ? null : (state.tabsById[epicTabId]?.name ?? null),
   );
   // An epic whose name has not resolved yet falls through to no title rather
   // than to a placeholder, so the header never flashes a stand-in and then
   // swaps it for the real name.
-  if (epicTabId !== null && epicName !== null) return epicName;
-  if (isSettingsPath(pathname)) return "Settings";
-  if (isHistoryPath(pathname)) return "History";
+  if (surface.kind === "epic") return epicName;
+  if (surface.kind === "settings") return "Settings";
+  if (surface.kind === "history") return "History";
   // Titles name a place you navigated TO. The composer surfaces - landing and
   // drafts - are where you already are, and each one opens with a hero greeting
   // that carries the page, so "Traycer" and "New task" were both labelling the

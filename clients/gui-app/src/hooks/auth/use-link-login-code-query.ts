@@ -40,13 +40,19 @@ function linkLoginCodeQueryOptions(
       }
       return result.response;
     },
-    // Rotation is interval-driven; a focus or remount must not burn extra
-    // codes. `gcTime: 0` discards the code the moment the panel closes — a
-    // cached one-time code has no legitimate later reader.
+    // Rotation is interval-driven; a focus refetch must not burn extra codes,
+    // but every fresh OPEN of the panel mints anew (`refetchOnMount:
+    // "always"`) so a reopened panel never shows a code another consumer may
+    // have spent. The short non-zero `gcTime` drops a closed panel's code
+    // quickly — it must not be 0: under StrictMode's double mount a
+    // zero-gcTime query is evicted between the paired mounts while its fetch
+    // is in flight, every completion lands observer-less and is discarded,
+    // and the query spins forever.
     refetchInterval: LINK_LOGIN_REMINT_MS,
+    refetchOnMount: "always",
     refetchOnWindowFocus: false,
     staleTime: Infinity,
-    gcTime: 0,
+    gcTime: 15_000,
     retry: false,
   });
 }

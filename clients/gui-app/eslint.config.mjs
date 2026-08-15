@@ -17,6 +17,12 @@ import {
   nestedFocusBoundaryRestrictions,
   tabNavigationStoreActionRestrictions,
 } from "../../eslint/traycer-nested-focus-boundary-rules.mjs";
+import {
+  hostSelectionReadAllowlist,
+  hostSelectionReadImportRestrictions,
+  selectByIdRestrictions,
+  selectByIdWriteAllowlist,
+} from "../../eslint/traycer-host-selection-layer-rules.mjs";
 
 // Do not subscribe to the entire Zustand store - reused across the base rules
 // and the overrides that still need to ban it.
@@ -122,6 +128,7 @@ const generalCustomSyntaxRestrictions = [
   reactForwardRefCallBan,
   ...tabNavigationStoreActionBans,
   epicTabRouteConstructionBan,
+  ...selectByIdRestrictions,
 ];
 
 export default tseslint.config(
@@ -259,6 +266,52 @@ export default tseslint.config(
             },
           ],
         },
+      ],
+    },
+  },
+  {
+    // D12 read path: ban active-host / default-client hook imports outside
+    // the allowlisted layer. Allowlisted files keep the previous block
+    // (boundary + PostHog only). This block restates those plus the
+    // selection-layer paths because flat config replaces rule options.
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: [
+      "src/lib/analytics.ts",
+      "src/lib/__tests__/analytics.test.ts",
+      ...hostSelectionReadAllowlist,
+    ],
+    rules: {
+      "@typescript-eslint/no-restricted-imports": [
+        "error",
+        {
+          ...traycerClientsImportBoundaryRestrictions,
+          patterns: [
+            ...(traycerClientsImportBoundaryRestrictions.patterns ?? []),
+            {
+              group: ["posthog-js", "posthog-js/*"],
+              message:
+                "Import PostHog only through the typed adapter in @/lib/analytics.",
+            },
+            ...hostSelectionReadImportRestrictions.patterns,
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // D12 write path: Settings activate + landing composer may call
+    // selectById. Every other production file keeps the ban via
+    // generalCustomSyntaxRestrictions.
+    files: selectByIdWriteAllowlist,
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        ...traycerTypeSafetyRestrictions,
+        noFullStoreSubscription,
+        ...generalCustomSyntaxRestrictions.filter(
+          (restriction) => !selectByIdRestrictions.includes(restriction),
+        ),
+        ...nestedFocusBoundaryRestrictions([]),
       ],
     },
   },

@@ -123,6 +123,7 @@ export interface CloneChatOnHostSwitchArgs {
 export function cloneChatOnHostSwitch(
   args: CloneChatOnHostSwitchArgs,
 ): CancelFn {
+  // eslint-disable-next-line no-restricted-syntax -- expires P1.2 — clone-on-switch must not rebind the active host; selectById dies with Phase-1 callers. epics/c6042be5-cbd3-4923-8cbe-d2bc00ae7ade/artifacts/host-lifecycle-redesign
   args.directory.selectById(args.targetHostId);
   // Whatever the line above actually selected (the target normally; unchanged
   // when the target has vanished from the directory - that arm deliberately

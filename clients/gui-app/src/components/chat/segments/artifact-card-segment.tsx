@@ -6,6 +6,7 @@ import type { EpicArtifactKind } from "@traycer/protocol/common/registry";
 import type { ArtifactOperationAction } from "@traycer/protocol/persistence/epic/content-blocks";
 import { StaticEpicNodeIcon } from "@/components/epic-canvas/epic-node-tab-icon";
 import { STATUS_LABELS } from "@/components/epic-canvas/sidebar/epic-sidebar-tree-shared";
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports -- expires P2.2 — tab content must use useTabHostId; F12. epics/c6042be5-cbd3-4923-8cbe-d2bc00ae7ade/artifacts/host-lifecycle-redesign
 import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
 import { useEpicTileNavigation } from "@/hooks/epic/use-epic-tile-navigation";
 import { EPIC_NODE_LABELS } from "@/lib/artifacts/node-display";

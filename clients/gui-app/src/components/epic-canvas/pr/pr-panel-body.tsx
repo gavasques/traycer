@@ -20,6 +20,7 @@ import { SidebarPanelEmptyState } from "@/components/epic-canvas/sidebar/sidebar
 import { PrRow, type PrRowEntry } from "@/components/epic-canvas/pr/pr-row";
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
 import { usePrListSubscription } from "@/hooks/pr/use-pr-list-subscription";
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports -- expires P2.2 — PR tiles are tab-pinned; use useTabHostId. epics/c6042be5-cbd3-4923-8cbe-d2bc00ae7ade/artifacts/host-lifecycle-redesign
 import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
 import { useEpicTileNavigation } from "@/hooks/epic/use-epic-tile-navigation";
 import { useStreamMethodSupport } from "@/lib/host/stream-runtime-context";

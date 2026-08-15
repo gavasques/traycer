@@ -26,6 +26,7 @@ import {
   PR_STATE_PILL_CLASS,
   PR_STATE_TINT_CLASS,
 } from "@/components/worktree/worktree-pr-state-palette";
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports -- expires P2.2 — PR tiles are tab-pinned; use useTabHostId. epics/c6042be5-cbd3-4923-8cbe-d2bc00ae7ade/artifacts/host-lifecycle-redesign
 import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
 import { useRunnerOpenExternalLink } from "@/hooks/runner/use-open-external-link-mutation";
 import {

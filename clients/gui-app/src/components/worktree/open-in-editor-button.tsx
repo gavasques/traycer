@@ -22,6 +22,7 @@ import { useClipboardCopy } from "@/hooks/ui/use-clipboard-copy";
 import { useEditorOpen } from "@/hooks/editor/use-editor-open-mutation";
 import { useEditorOpenFeedback } from "@/hooks/editor/use-editor-open-feedback";
 import { useEditorAvailability } from "@/hooks/editor/use-editor-availability-query";
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports -- expires P1.2 — file-tree / editor opener becomes a surface pin. epics/c6042be5-cbd3-4923-8cbe-d2bc00ae7ade/artifacts/host-lifecycle-redesign
 import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
 import { useHostDirectoryEntry } from "@/hooks/host/use-host-directory-entry";
 import { useRunnerHost } from "@/providers/use-runner-host";

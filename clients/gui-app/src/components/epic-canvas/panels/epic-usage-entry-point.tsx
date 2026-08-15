@@ -2,7 +2,9 @@ import { useState, type ReactNode } from "react";
 import { LineChart } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TooltipWrapper } from "@/components/ui/tooltip-wrapper";
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports -- expires P1.2 — usage popover becomes a surface pin. epics/c6042be5-cbd3-4923-8cbe-d2bc00ae7ade/artifacts/host-lifecycle-redesign
 import { useHostClient } from "@/lib/host";
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports -- expires P1.2 — usage popover becomes a surface pin. epics/c6042be5-cbd3-4923-8cbe-d2bc00ae7ade/artifacts/host-lifecycle-redesign
 import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
 import { useUsageSummarySupported } from "@/hooks/usage-analytics/use-usage-summary-support";
 import { StatusRowChromeBoundary } from "@/components/epic-canvas/panels/status-row-chrome-boundary";

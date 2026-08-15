@@ -4,11 +4,13 @@ import type { HostClient } from "@traycer-clients/shared/host-client/host-client
 import type { HostDirectoryEntry } from "@traycer-clients/shared/host-client/host-directory";
 import { Button } from "@/components/ui/button";
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports -- expires P2.2 — tab content must use useTabHostClient; F12. epics/c6042be5-cbd3-4923-8cbe-d2bc00ae7ade/artifacts/host-lifecycle-redesign
 import { useHostClient, type HostRpcRegistry } from "@/lib/host";
 import { useHostMutation } from "@/hooks/host/use-host-query";
 import { useHostClientFor } from "@/hooks/host/use-host-client-for";
 import { useHostReachability } from "@/hooks/agent/use-host-reachability";
 import { useHostDirectoryList } from "@/hooks/host/use-host-directory-list-query";
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports -- expires P2.2 — tab content must use useTabHostId; F12. epics/c6042be5-cbd3-4923-8cbe-d2bc00ae7ade/artifacts/host-lifecycle-redesign
 import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
 import { isUnknownHost } from "@/lib/host/constants";
 import { agentMutationKeys } from "@/lib/query-keys";

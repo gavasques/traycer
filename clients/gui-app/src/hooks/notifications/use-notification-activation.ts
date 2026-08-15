@@ -63,6 +63,7 @@ function ensureOriginHostSelected(input: {
   // makes `indeterminate` route (the dial is attempted and fails recoverably)
   // instead of silently refusing to open an approval the user just clicked.
   if (origin === null || dialableHostEndpoint(origin) === null) return false;
+  // eslint-disable-next-line no-restricted-syntax -- expires P1.2 — notification activation must not write preferred; selectById dies with Phase-1 callers. epics/c6042be5-cbd3-4923-8cbe-d2bc00ae7ade/artifacts/host-lifecycle-redesign
   input.directory.selectById(origin.hostId);
   return true;
 }

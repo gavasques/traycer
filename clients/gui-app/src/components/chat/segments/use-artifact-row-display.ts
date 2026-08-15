@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from "uuid";
 import type { EpicArtifactKind } from "@traycer/protocol/common/registry";
 import type { CheckpointFileOperation } from "@traycer/protocol/persistence/epic/checkpoint-manifests";
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports -- expires P2.2 — tab content must use useTabHostId; F12. epics/c6042be5-cbd3-4923-8cbe-d2bc00ae7ade/artifacts/host-lifecycle-redesign
 import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
 import { useEpicTileNavigation } from "@/hooks/epic/use-epic-tile-navigation";
 import { EPIC_NODE_LABELS } from "@/lib/artifacts/node-display";

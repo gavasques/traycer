@@ -4,6 +4,7 @@ import type { LeftPanelSlotProps } from "@/components/epic-canvas/sidebar/left-p
 import { Button } from "@/components/ui/button";
 import { PrSourceNoticeHint } from "@/components/epic-canvas/pr/pr-source-notice";
 import { usePrListSubscription } from "@/hooks/pr/use-pr-list-subscription";
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports -- expires P2.2 — PR tiles are tab-pinned; use useTabHostId. epics/c6042be5-cbd3-4923-8cbe-d2bc00ae7ade/artifacts/host-lifecycle-redesign
 import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
 import { useRefreshSpinner } from "@/hooks/use-refresh-spinner";
 import { useStreamMethodSupport } from "@/lib/host/stream-runtime-context";

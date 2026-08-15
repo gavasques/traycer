@@ -12,6 +12,7 @@ import { deriveA2ASendCollapsibleKey } from "@/components/chat/chat-collapsible-
 import { chatFindA2ASendBodyUnitId } from "@/components/chat/chat-find";
 import { SegmentEndStateBadge } from "./segment-end-state-badge";
 import { LivePulse } from "@/components/ui/live-pulse";
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports -- expires P2.2 — tab content must use useTabHostId; F12. epics/c6042be5-cbd3-4923-8cbe-d2bc00ae7ade/artifacts/host-lifecycle-redesign
 import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
 import { useEpicAgentReference, useOpenEpicId } from "@/lib/epic-selectors";
 import {

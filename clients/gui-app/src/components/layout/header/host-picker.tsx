@@ -77,6 +77,7 @@ export function HostPicker() {
         </DialogHeader>
         <HostPickerList
           onSelect={(id) => {
+            // eslint-disable-next-line no-restricted-syntax -- expires P1.2 — header picker is a bind-era Activate substitute; selectById dies with Phase-1 callers. epics/c6042be5-cbd3-4923-8cbe-d2bc00ae7ade/artifacts/host-lifecycle-redesign
             binding.directory.selectById(id);
             runnerHost.hostPicker.requestClose();
           }}

@@ -41,8 +41,11 @@ vi.mock("@/components/notifications/mobile-notifications-button", () => ({
 // pulls a host mutation (`useEpicUpdateTitle`) and the registered-epic
 // permission role. Neither host runtime nor a registered epic exist in this
 // bare harness, so stub both.
+// `mobile-app-header-cold-restore.test.tsx` drives these registry accessors for
+// real; here they are stubbed so the surface-resolution cases stay readable.
 const headerTitleState = vi.hoisted(() => ({
   role: "owner",
+  liveTitle: null as string | null,
 }));
 const updateTitleMutateSpy = vi.hoisted(() => vi.fn());
 vi.mock("@/hooks/epic/use-epic-title-mutation", () => ({
@@ -53,6 +56,7 @@ vi.mock("@/hooks/epic/use-epic-title-mutation", () => ({
 }));
 vi.mock("@/lib/epic-selectors", () => ({
   useRegisteredEpicPermissionRole: () => headerTitleState.role,
+  useRegisteredEpicTitle: () => headerTitleState.liveTitle,
 }));
 
 function renderAt(path: string) {
@@ -169,6 +173,7 @@ describe("MobileAppHeader", () => {
     presentNoTab();
     useSettingsStore.setState({ showGlobalResourceMonitor: false });
     headerTitleState.role = "owner";
+    headerTitleState.liveTitle = null;
     updateTitleMutateSpy.mockClear();
   });
   afterEach(() => {

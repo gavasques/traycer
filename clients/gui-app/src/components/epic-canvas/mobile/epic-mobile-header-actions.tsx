@@ -41,8 +41,11 @@ export function EpicMobileSwitcherTrigger(props: { readonly tabId: string }) {
 /**
  * The epic's name in the mobile header, renamed in place: tapping it turns the
  * title into its own field, and the committed value goes through the canonical
- * epic-rename mutation. The active epic route's title sync mirrors the epic
- * title back into the header, so no separate tab-name write is needed.
+ * epic-rename mutation. The committed name reaches this control back through
+ * the same live session the header resolved it from, so no separate tab-name
+ * write is needed - and it must be that session, because the tab record's copy
+ * is only refreshed by the epic route's active-session effects, which the
+ * restore this control has to work under never mounts.
  *
  * Renaming is editor-only (the same role predicate the sidebar uses, read
  * through the header-safe registry accessor because this renders outside the

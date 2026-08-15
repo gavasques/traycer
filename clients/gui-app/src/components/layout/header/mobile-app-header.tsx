@@ -9,6 +9,7 @@ import { ResourceMonitorPopover } from "@/components/resources/resource-monitor-
 import { MobileNotificationsButton } from "@/components/notifications/mobile-notifications-button";
 import { MobileEpicHeaderTitle } from "@/components/epic-canvas/mobile/epic-mobile-header-actions";
 import "@/components/layout/shell/mobile-shell-touch-targets.css";
+import { useRegisteredEpicTitle } from "@/lib/epic-selectors";
 import { useMobileNavStore } from "@/stores/layout/mobile-nav-store";
 import { useMobileHeaderStore } from "@/stores/layout/mobile-header-store";
 import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
@@ -31,7 +32,7 @@ export function MobileAppHeader(): ReactNode {
   const surface = useMobileHeaderSurface();
   const epicTabId = surface.kind === "epic" ? surface.tabId : null;
   const epicId = useMobileHeaderEpicId(epicTabId);
-  const title = useMobileHeaderTitle(surface, epicTabId);
+  const title = useMobileHeaderTitle(surface, epicId, epicTabId);
   const settingsSection = settingsSectionLabel(surface);
   return (
     <header
@@ -233,18 +234,31 @@ function settingsSectionLabel(surface: MobileHeaderSurface): string | null {
 /**
  * Derives the header title from the presented surface: the open epic's name on
  * an epic tab, otherwise a per-surface label.
+ *
+ * An epic's name has two sources and the LIVE session wins. The tab record's
+ * name is a persisted cache of that same title, so it is the faster of the two
+ * and carries the header until the session projects - but it is only written
+ * back by the epic route's active-session effects, which a phone sitting on a
+ * cold restore never mounts. Reading the cache first would therefore show a
+ * name that no longer updates, and the header's own rename field commits into
+ * the live session: the committed title would land, and the row would keep
+ * displaying the stale one. The registered session is the authority whenever it
+ * is up, which is the same registry the title control reads its permission role
+ * from.
  */
 function useMobileHeaderTitle(
   surface: MobileHeaderSurface,
+  epicId: string | null,
   epicTabId: string | null,
 ): string | null {
-  const epicName = useEpicCanvasStore((state) =>
+  const tabName = useEpicCanvasStore((state) =>
     epicTabId === null ? null : (state.tabsById[epicTabId]?.name ?? null),
   );
+  const liveTitle = useRegisteredEpicTitle(epicId);
   // An epic whose name has not resolved yet falls through to no title rather
   // than to a placeholder, so the header never flashes a stand-in and then
   // swaps it for the real name.
-  if (surface.kind === "epic") return epicName;
+  if (surface.kind === "epic") return firstResolvedTitle(liveTitle, tabName);
   if (surface.kind === "settings") return "Settings";
   if (surface.kind === "history") return "History";
   // Titles name a place you navigated TO. The composer surfaces - landing and
@@ -252,4 +266,19 @@ function useMobileHeaderTitle(
   // that carries the page, so "Traycer" and "New task" were both labelling the
   // obvious. History, Settings and an epic's name are the ones that earn a row.
   return null;
+}
+
+/**
+ * The first candidate that carries an actual name. Blank is "not resolved
+ * yet", not a title: a tab record can hold an empty name, and rendering it
+ * would present an empty rename field as though the epic were untitled.
+ */
+function firstResolvedTitle(
+  preferred: string | null,
+  fallback: string | null,
+): string | null {
+  const fromPreferred = preferred === null ? "" : preferred.trim();
+  if (fromPreferred.length > 0) return fromPreferred;
+  const fromFallback = fallback === null ? "" : fallback.trim();
+  return fromFallback.length > 0 ? fromFallback : null;
 }

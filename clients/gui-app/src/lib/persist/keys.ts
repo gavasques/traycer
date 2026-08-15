@@ -48,6 +48,12 @@ export const epicCanvasKey = (identity: string | null): string =>
 export const landingTerminalsKey = (identity: string | null): string =>
   scopedPersistKey("landing-terminals", scopeBucket(identity));
 
+// Per-surface host pins (git-diff / file-tree / new-terminal / composer).
+// Identity-scoped like composer run settings (G1): a pin names an account's
+// host id, so another account must never inherit it across a user switch.
+export const surfaceHostSelectionKey = (email: string | null): string =>
+  scopedPersistKey("surface-host-selection", scopeBucket(email));
+
 // Arg order is `(identity, epicId)` but the emitted string keeps today's
 // `…:open-epic:{identityBucket}:{epicId}` order (the current store's local
 // `persistKey(epicId, userId)` emitted exactly this).
@@ -189,7 +195,7 @@ export interface PersistStoreEntry {
 }
 
 export const PERSIST_STORES = [
-  // ── Scoped zustand stores (9) ────────────────────────────────────────────
+  // ── Scoped zustand stores (10) ───────────────────────────────────────────
   {
     camelName: "composerRunSettings",
     leaf: "composer-run-settings",
@@ -217,6 +223,11 @@ export const PERSIST_STORES = [
     kind: "scoped",
   },
   { camelName: "openEpic", leaf: "open-epic", kind: "scoped" },
+  {
+    camelName: "surfaceHostSelection",
+    leaf: "surface-host-selection",
+    kind: "scoped",
+  },
   {
     camelName: "appLocalNotifications",
     leaf: "app-local-notifications",

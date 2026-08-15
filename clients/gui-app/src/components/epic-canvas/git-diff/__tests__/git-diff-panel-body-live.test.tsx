@@ -54,6 +54,26 @@ vi.mock("@/hooks/worktree/use-worktree-list-bindings-for-epic-query", () => ({
     error: null,
     isPending: false,
   }),
+  useWorktreeListBindingsForEpicForClient: () => ({
+    data: { rows: testState.rows },
+    error: null,
+    isPending: false,
+  }),
+}));
+
+vi.mock("@/hooks/host/use-surface-host-pin", () => ({
+  useGitDiffPanelSurfaceKey: (tileRef: string) => `git-diff\u001f${tileRef}`,
+  useSurfaceHostPin: () => ({
+    selection: null,
+    setSelection: () => undefined,
+    resolvedHostId: "host-1",
+    isPinned: false,
+    latchOnFirstUse: () => undefined,
+    followEffective: () => undefined,
+  }),
+  usePinnedSurfaceDead: () => ({ isDead: false, hostLabel: "host-1" }),
+  useSurfaceHostClient: () => null,
+  useWindowPaneSurfaceKey: () => "file-tree\u001ftest",
 }));
 
 vi.mock("@/hooks/git/use-git-prefetch-worktree-status", () => ({

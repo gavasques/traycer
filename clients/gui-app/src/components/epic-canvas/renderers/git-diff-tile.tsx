@@ -54,7 +54,6 @@ import { NoChangesInWorktree } from "@/components/epic-canvas/git-diff/empty-sta
 import { GitErrorBlock } from "@/components/epic-canvas/git-diff/git-error-block";
 import { GitWatcherStatusNotice } from "@/components/epic-canvas/git-diff/git-watcher-status-notice";
 import { useTabHostId } from "@/components/epic-canvas/hooks/use-tab-host-id";
-import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
 import { useHostReachability } from "@/hooks/agent/use-host-reachability";
 import { useTabHostClient } from "@/hooks/host/use-tab-host-client";
 import { useEditableGitDiffSurface } from "@/components/epic-canvas/git-diff/git-diff-editing";
@@ -120,7 +119,6 @@ function tileOpenFilePath(diff: GitDiffTileRef["diff"]): string | null {
 
 export function GitDiffTile(props: GitDiffTileProps): ReactNode {
   const tabHostId = useTabHostId();
-  const activeHostId = useReactiveActiveHostId();
   const reachability = useHostReachability(tabHostId);
 
   if (reachability.status === "unreachable") {
@@ -128,15 +126,6 @@ export function GitDiffTile(props: GitDiffTileProps): ReactNode {
       <GitDiffDeadTileBanner
         hostLabel={reachability.hostLabel}
         reason="offline"
-        testId={`git-diff-tile-${props.node.id}`}
-      />
-    );
-  }
-  if (tabHostId !== activeHostId) {
-    return (
-      <GitDiffDeadTileBanner
-        hostLabel={reachability.hostLabel}
-        reason="inactive"
         testId={`git-diff-tile-${props.node.id}`}
       />
     );

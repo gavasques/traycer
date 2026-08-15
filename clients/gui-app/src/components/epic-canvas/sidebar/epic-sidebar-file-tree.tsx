@@ -69,7 +69,7 @@ import {
 import { ReportIssueAction } from "@/components/report-issue/report-issue-action";
 import { useEpicNestedFocusNavigation } from "@/hooks/epic/use-epic-nested-focus-navigation";
 import { useGitListChangedFilesSubscription } from "@/hooks/git/use-git-list-changed-files-subscription";
-import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
+
 import { useDebouncedValue } from "@/hooks/ui/use-debounced-value";
 import { useWorkspaceListFileTree } from "@/hooks/workspace/use-list-file-tree-query";
 import {
@@ -433,12 +433,13 @@ export function FileTreePanelBodyForWorkspace(props: {
   readonly epicId: string;
   readonly tabId: string;
   readonly workspacePath: string;
+  readonly hostId: string | null;
 }) {
-  // The file-tree panel resolves against the default host; opened tabs
-  // stamp this host id onto their `WorkspaceFileRef` so they keep
-  // resolving against the same host after a default-host swap or
-  // reload (CLAUDE.md: tabs are bound to a host for life).
-  const activeHostId = useReactiveActiveHostId();
+  // The file-tree panel resolves against its surface pin (`selection ??
+  // effective`). Opened tabs stamp this host id onto their `WorkspaceFileRef`
+  // so they keep resolving against the same host after a later swap
+  // (CLAUDE.md: tabs are bound to a host for life).
+  const { hostId } = props;
   // The box is a filter, not a search field: the query is applied on a pause,
   // and the same debounced value gates both the host RPC and the local row
   // filter so the two can never disagree about what is being filtered for.
@@ -446,7 +447,7 @@ export function FileTreePanelBodyForWorkspace(props: {
   const debouncedQuery = useDebouncedValue(searchQuery, SEARCH_DEBOUNCE_MS);
   const source = useFileTreeSource({
     epicId: props.epicId,
-    hostId: activeHostId,
+    hostId,
     workspacePath: props.workspacePath,
     searchQuery: debouncedQuery,
   });
@@ -471,17 +472,17 @@ export function FileTreePanelBodyForWorkspace(props: {
   // (no active host, or a directory row) is non-openable everywhere.
   const workspaceFileRefForTreePath = useCallback(
     (treePath: string): WorkspaceFileRef | null => {
-      if (activeHostId === null) return null;
+      if (hostId === null) return null;
       const name = nameByTreePath.get(treePath);
       if (name === undefined) return null;
       return workspaceFileRefFromTreePath(
-        activeHostId,
+        hostId,
         props.workspacePath,
         treePath,
         name,
       );
     },
-    [activeHostId, nameByTreePath, props.workspacePath],
+    [hostId, nameByTreePath, props.workspacePath],
   );
 
   // Pierre's useFileTree captures the onSelectionChange closure at mount,
@@ -549,7 +550,7 @@ export function FileTreePanelBodyForWorkspace(props: {
   useWorkspaceFileTreeExpansion({
     model,
     epicId: props.epicId,
-    hostId: activeHostId,
+    hostId,
     workspacePath: props.workspacePath,
     treePaths,
     enabled: source.isLive,
@@ -596,21 +597,21 @@ export function FileTreePanelBodyForWorkspace(props: {
         return { kind: WORKSPACE_FILE_DND_TYPE, epicId, viewTabId, ref };
       }
       if (!treePath.endsWith("/")) return null;
-      if (activeHostId === null) return null;
+      if (hostId === null) return null;
       const name = getBasename(treePath);
       if (name.length === 0) return null;
       return {
         kind: WORKSPACE_FOLDER_DND_TYPE,
         epicId,
         viewTabId,
-        hostId: activeHostId,
+        hostId,
         workspacePath: props.workspacePath,
         folderPath: treePath,
         name,
       };
     },
     [
-      activeHostId,
+      hostId,
       epicId,
       props.workspacePath,
       viewTabId,

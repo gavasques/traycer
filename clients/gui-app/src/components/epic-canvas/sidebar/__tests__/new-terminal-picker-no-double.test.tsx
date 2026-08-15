@@ -33,6 +33,23 @@ vi.mock("@/hooks/worktree/use-worktree-list-bindings-for-epic-query", () => ({
     isPending: false,
     isError: false,
   }),
+  useWorktreeListBindingsForEpicForClient: () => ({
+    data: { rows: [ROW], folderlessCwd: "/Users/tgill" },
+    isPending: false,
+    isError: false,
+  }),
+}));
+
+vi.mock("@/hooks/host/use-host-client-for-host-id", () => ({
+  useHostClientForHostId: () => null,
+}));
+
+vi.mock("@/hooks/agent/use-host-reachability", () => ({
+  useHostReachability: () => ({
+    status: "reachable",
+    hostLabel: "host-1",
+    unavailability: null,
+  }),
 }));
 
 vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({

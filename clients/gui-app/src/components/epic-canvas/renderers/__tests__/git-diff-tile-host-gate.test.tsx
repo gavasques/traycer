@@ -152,14 +152,18 @@ describe("<GitDiffTile /> host-binding gate", () => {
     expect(state.subscribe).not.toHaveBeenCalled();
   });
 
-  it("shows the inactive banner without opening a git stream", () => {
+  it("opens the git stream when the bound host is reachable but not the active host", () => {
     state.activeHostId = "host-B";
     renderTile("host-A");
 
-    expect(
-      screen.getByText(/Switch your active host to "Host A"/),
-    ).toBeTruthy();
-    expect(state.subscribe).not.toHaveBeenCalled();
+    expect(screen.queryByText(/Switch your active host/)).toBeNull();
+    expect(screen.queryByText(/currently unreachable/)).toBeNull();
+    expect(state.subscribe).toHaveBeenCalledWith({
+      hostId: "host-A",
+      runningDir: "/work/repo",
+      ignoreWhitespace: false,
+      enabled: true,
+    });
   });
 
   it("opens the git stream when the bound host is active and reachable", () => {

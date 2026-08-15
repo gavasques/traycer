@@ -20,8 +20,13 @@ import { ReportIssueAction } from "@/components/report-issue/report-issue-action
 import { createReportIssueContext } from "@/lib/report-issue-context";
 import { WorktreeFolderListBody } from "@/components/worktree/worktree-folder-list-body";
 import { WorktreePickerHostSection } from "@/components/worktree/worktree-picker-host-section";
-import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
-import { useWorktreeListBindingsForEpic } from "@/hooks/worktree/use-worktree-list-bindings-for-epic-query";
+import { PinnedSurfaceDeadState } from "@/components/host/pinned-surface-dead-state";
+import {
+  usePinnedSurfaceDead,
+  useSurfaceHostClient,
+  useSurfaceHostPin,
+} from "@/hooks/host/use-surface-host-pin";
+import { useWorktreeListBindingsForEpicForClient } from "@/hooks/worktree/use-worktree-list-bindings-for-epic-query";
 import { worktreeRowKey } from "@/lib/worktree/worktree-row-key";
 import { withoutResolvedMissingRows } from "@/lib/worktree/worktree-row-resolved-missing";
 import type { TerminalLaunchTarget } from "@/components/epic-canvas/sidebar/new-terminal-tile-ref";
@@ -30,17 +35,21 @@ import { PrimaryActionShortcutHint } from "@/components/ui/primary-action-shortc
 
 export interface NewTerminalPickerBodyProps {
   readonly epicId: string;
+  readonly surfaceKey: string;
   readonly onLaunch: (target: TerminalLaunchTarget) => void;
 }
 
 export function NewTerminalPickerBody(props: NewTerminalPickerBodyProps) {
-  const { epicId, onLaunch } = props;
+  const { epicId, onLaunch, surfaceKey } = props;
   const [explicitRow, setExplicitRow] =
     useState<WorktreeBindingSelectorRowV12 | null>(null);
-  const activeHostId = useReactiveActiveHostId();
-  const bindingsQuery = useWorktreeListBindingsForEpic({
+  const pin = useSurfaceHostPin(surfaceKey);
+  const dead = usePinnedSurfaceDead(pin);
+  const client = useSurfaceHostClient(pin.resolvedHostId);
+  const bindingsQuery = useWorktreeListBindingsForEpicForClient({
+    client,
     epicId,
-    enabled: true,
+    enabled: pin.resolvedHostId !== null && !dead.isDead,
   });
   // Host-proven-missing rows are hidden here (a deleted worktree can't host a
   // terminal); the explicit pick is exempt so a worktree deleted while this
@@ -71,11 +80,11 @@ export function NewTerminalPickerBody(props: NewTerminalPickerBodyProps) {
       selectedRow === null
         ? resolveFolderlessTerminalTarget(
             hasLoadedNoRows,
-            activeHostId,
+            pin.resolvedHostId,
             folderlessCwd,
           )
         : { hostId: selectedRow.hostId, cwd: selectedRow.runningDir },
-    [activeHostId, folderlessCwd, hasLoadedNoRows, selectedRow],
+    [folderlessCwd, hasLoadedNoRows, pin.resolvedHostId, selectedRow],
   );
 
   // A double-click on Launch fires the handler twice before React can flush
@@ -114,7 +123,14 @@ export function NewTerminalPickerBody(props: NewTerminalPickerBodyProps) {
 
   return (
     <>
-      <WorktreePickerHostSection />
+      <WorktreePickerHostSection surfaceKey={surfaceKey} />
+      {dead.isDead ? (
+        <PinnedSurfaceDeadState
+          hostLabel={dead.hostLabel}
+          onUseActiveHost={pin.followEffective}
+          testId="new-terminal-pinned-host-dead"
+        />
+      ) : null}
       <WorktreeFolderListBody
         isPending={bindingsQuery.isPending}
         isError={bindingsQuery.isError}
@@ -134,7 +150,7 @@ export function NewTerminalPickerBody(props: NewTerminalPickerBodyProps) {
           size="sm"
           aria-label="Launch"
           aria-keyshortcuts="Meta+Enter Control+Enter"
-          disabled={launchTarget === null}
+          disabled={launchTarget === null || dead.isDead}
           onClick={handleLaunch}
         >
           Launch

@@ -23,6 +23,7 @@ export {
   persistKey,
   scopeBucket,
   scopedPersistKey,
+  surfaceHostSelectionKey,
   worktreeActivityCacheKey,
   worktreeIntentMemoryKey,
   worktreeIntentStagingKey,

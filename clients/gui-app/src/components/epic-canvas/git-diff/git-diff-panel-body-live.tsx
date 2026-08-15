@@ -16,7 +16,14 @@ import type {
   GitListChangedFilesResponseV11,
   WorktreeBindingSelectorRowV12,
 } from "@traycer/protocol/host";
-import { useWorktreeListBindingsForEpic } from "@/hooks/worktree/use-worktree-list-bindings-for-epic-query";
+import { useWorktreeListBindingsForEpicForClient } from "@/hooks/worktree/use-worktree-list-bindings-for-epic-query";
+import {
+  useGitDiffPanelSurfaceKey,
+  usePinnedSurfaceDead,
+  useSurfaceHostClient,
+  useSurfaceHostPin,
+} from "@/hooks/host/use-surface-host-pin";
+import { PinnedSurfaceDeadState } from "@/components/host/pinned-surface-dead-state";
 import { useGitPrefetchWorktreeStatus } from "@/hooks/git/use-git-prefetch-worktree-status";
 import { useGitCapabilitiesQuery } from "@/hooks/git/use-git-capabilities-query";
 import { useGitListChangedFilesSubscription } from "@/hooks/git/use-git-list-changed-files-subscription";
@@ -132,12 +139,34 @@ function useUnavailableGitRootKeys(
   );
 }
 
+function GitDiffPanelPinnedDead(props: {
+  readonly surfaceKey: string;
+  readonly hostLabel: string;
+  readonly onUseActiveHost: () => void;
+}): ReactNode {
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <WorktreePickerHostSection surfaceKey={props.surfaceKey} />
+      <PinnedSurfaceDeadState
+        hostLabel={props.hostLabel}
+        onUseActiveHost={props.onUseActiveHost}
+        testId="git-diff-panel-pinned-host-dead"
+      />
+    </div>
+  );
+}
+
 export function GitDiffPanelBodyLive(
   props: GitDiffPanelBodyLiveProps,
 ): ReactNode {
-  const bindingsQuery = useWorktreeListBindingsForEpic({
+  const surfaceKey = useGitDiffPanelSurfaceKey(props.tabId);
+  const pin = useSurfaceHostPin(surfaceKey);
+  const dead = usePinnedSurfaceDead(pin);
+  const client = useSurfaceHostClient(pin.resolvedHostId);
+  const bindingsQuery = useWorktreeListBindingsForEpicForClient({
+    client,
     epicId: props.epicId,
-    enabled: true,
+    enabled: pin.resolvedHostId !== null && !dead.isDead,
   });
   const selectedRepo = useGitPanelStore(
     (s) => selectGitPanelEpicState(props.epicId)(s).selectedRepo,
@@ -284,25 +313,70 @@ export function GitDiffPanelBodyLive(
     unavailableGitRootKeys,
   ]);
 
-  if (bindingsQuery.isPending) return <DiffLoadingSkeleton variant="panel" />;
-  if (bindingsQuery.error !== null) return <NoGitWorktrees />;
-  if (gitRows.length === 0) {
+  return renderGitDiffPanelBody({
+    dead,
+    surfaceKey,
+    followEffective: pin.followEffective,
+    latchOnFirstUse: pin.latchOnFirstUse,
+    bindingsPending: bindingsQuery.isPending,
+    bindingsError: bindingsQuery.error !== null,
+    gitRows,
+    rows,
+    selectedRepo,
+    selectedRootRow,
+    epicId: props.epicId,
+    tabId: props.tabId,
+    retryUnavailableRoots,
+    unavailableGitRootKeys: unavailableGitRootKeys.keys,
+  });
+}
+
+function renderGitDiffPanelBody(input: {
+  readonly dead: { readonly isDead: boolean; readonly hostLabel: string };
+  readonly surfaceKey: string;
+  readonly followEffective: () => void;
+  readonly latchOnFirstUse: () => void;
+  readonly bindingsPending: boolean;
+  readonly bindingsError: boolean;
+  readonly gitRows: ReadonlyArray<WorktreeBindingSelectorRowV12>;
+  readonly rows: ReadonlyArray<WorktreeBindingSelectorRowV12>;
+  readonly selectedRepo: GitPanelSelectedRepo | null;
+  readonly selectedRootRow: WorktreeBindingSelectorRowV12 | null;
+  readonly epicId: string;
+  readonly tabId: string;
+  readonly retryUnavailableRoots: () => void;
+  readonly unavailableGitRootKeys: ReadonlySet<string>;
+}): ReactNode {
+  if (input.dead.isDead) {
+    return (
+      <GitDiffPanelPinnedDead
+        surfaceKey={input.surfaceKey}
+        hostLabel={input.dead.hostLabel}
+        onUseActiveHost={input.followEffective}
+      />
+    );
+  }
+  if (input.bindingsPending) return <DiffLoadingSkeleton variant="panel" />;
+  if (input.bindingsError) return <NoGitWorktrees />;
+  if (input.gitRows.length === 0) {
     // Rows whose git facts are still unverified placeholders (cold-resolve
     // timeout on the host, or a pre-@1.2 host) are pending, not dead: keep
     // the skeleton instead of declaring "no git workspaces" - the host's
     // sweep pushes `worktree.changed` and the refetch settles this either
     // way within a tick.
-    if (rows.some(isWorkspaceResolvePending)) {
+    if (input.rows.some(isWorkspaceResolvePending)) {
       return <DiffLoadingSkeleton variant="panel" />;
     }
     return <NoGitWorktrees />;
   }
-  if (selectedRepo === null || selectedRootRow === null) {
-    if (allRowsKnownUnavailable(gitRows, unavailableGitRootKeys.keys)) {
+  if (input.selectedRepo === null || input.selectedRootRow === null) {
+    if (
+      allRowsKnownUnavailable(input.gitRows, input.unavailableGitRootKeys)
+    ) {
       // Every bound root probed unavailable: an explicit, recoverable degrade -
       // never the transient skeleton, which with zero available roots would
       // never resolve and read as "still loading" forever.
-      return <GitRootsUnavailable onRetry={retryUnavailableRoots} />;
+      return <GitRootsUnavailable onRetry={input.retryUnavailableRoots} />;
     }
     // Default-pick is resolving the initial selection (one commit).
     return <DiffLoadingSkeleton variant="panel" />;
@@ -310,11 +384,13 @@ export function GitDiffPanelBodyLive(
 
   return (
     <GitDiffPanelLoaded
-      epicId={props.epicId}
-      viewTabId={props.tabId}
-      rows={rows}
-      selected={selectedRepo}
-      selectedRootRow={selectedRootRow}
+      epicId={input.epicId}
+      viewTabId={input.tabId}
+      rows={input.rows}
+      selected={input.selectedRepo}
+      selectedRootRow={input.selectedRootRow}
+      surfaceKey={input.surfaceKey}
+      onLatchHost={input.latchOnFirstUse}
     />
   );
 }
@@ -341,10 +417,12 @@ interface GitDiffPanelLoadedProps {
   readonly rows: ReadonlyArray<WorktreeBindingSelectorRowV12>;
   readonly selected: GitPanelSelectedRepo;
   readonly selectedRootRow: WorktreeBindingSelectorRowV12;
+  readonly surfaceKey: string;
+  readonly onLatchHost: () => void;
 }
 
 function GitDiffPanelLoaded(props: GitDiffPanelLoadedProps): ReactNode {
-  const { selected, selectedRootRow } = props;
+  const { selected, selectedRootRow, epicId, onLatchHost, surfaceKey } = props;
   const [repoSwitcherOpen, setRepoSwitcherOpen] = useState(false);
   const ignoreWhitespace = useSettingsStore(
     (s) => s.diffViewerPreferences.ignoreWhitespace,
@@ -441,13 +519,13 @@ function GitDiffPanelLoaded(props: GitDiffPanelLoadedProps): ReactNode {
 
   useEffect(() => {
     if (selected.repoRoot === selected.rootRunningDir) return;
-    setSelectedRepo(props.epicId, {
+    setSelectedRepo(epicId, {
       hostId: selected.hostId,
       rootRunningDir: selected.rootRunningDir,
       repoRoot: selected.rootRunningDir,
     });
   }, [
-    props.epicId,
+    epicId,
     selected.hostId,
     selected.repoRoot,
     selected.rootRunningDir,
@@ -471,13 +549,14 @@ function GitDiffPanelLoaded(props: GitDiffPanelLoadedProps): ReactNode {
 
   const handleSelectRoot = useCallback(
     (row: WorktreeBindingSelectorRowV12) => {
-      setSelectedRepo(props.epicId, {
+      onLatchHost();
+      setSelectedRepo(epicId, {
         hostId: row.hostId,
         rootRunningDir: row.runningDir,
         repoRoot: row.runningDir,
       });
     },
-    [props.epicId, setSelectedRepo],
+    [epicId, onLatchHost, setSelectedRepo],
   );
 
   return (
@@ -497,7 +576,9 @@ function GitDiffPanelLoaded(props: GitDiffPanelLoadedProps): ReactNode {
                 activeRootSubmodules={submoduleNodes}
                 selected={workspaceSelected}
                 onSelectRoot={handleSelectRoot}
-                hostSection={<WorktreePickerHostSection />}
+                hostSection={
+                  <WorktreePickerHostSection surfaceKey={surfaceKey} />
+                }
                 autoFocusSearch={repoSwitcherOpen}
                 triggerClassName={undefined}
                 contentClassName={undefined}
@@ -524,7 +605,7 @@ function GitDiffPanelLoaded(props: GitDiffPanelLoadedProps): ReactNode {
         runningDir={selectedRootRow.runningDir}
       >
         <SelectedRepoChanges
-          epicId={props.epicId}
+          epicId={epicId}
           viewTabId={props.viewTabId}
           selected={workspaceSelected}
           rootLabel={moduleNameForRow(selectedRootRow)}

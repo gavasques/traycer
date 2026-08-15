@@ -40,7 +40,14 @@ import { FileTreeWorkspacePicker } from "@/components/epic-canvas/sidebar/file-t
 import { FileTreePanelBodyForWorkspace } from "@/components/epic-canvas/sidebar/epic-sidebar-file-tree";
 import { WorkspacePickerWithOpener } from "@/components/worktree/workspace-picker-with-opener";
 import { useEpicNestedFocusNavigation } from "@/hooks/epic/use-epic-nested-focus-navigation";
-import { useWorktreeListBindingsForEpic } from "@/hooks/worktree/use-worktree-list-bindings-for-epic-query";
+import { useWorktreeListBindingsForEpicForClient } from "@/hooks/worktree/use-worktree-list-bindings-for-epic-query";
+import {
+  usePinnedSurfaceDead,
+  useSurfaceHostClient,
+  useSurfaceHostPin,
+  useWindowPaneSurfaceKey,
+} from "@/hooks/host/use-surface-host-pin";
+import { PinnedSurfaceDeadState } from "@/components/host/pinned-surface-dead-state";
 import { isBrowsable } from "@/lib/worktree/worktree-row-browsable";
 import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
 import { requestArtifactEditorFocus } from "@/lib/artifacts/pending-editor-focus";
@@ -224,9 +231,11 @@ interface FileTreeWorkspaceSelection {
 
 function useFileTreeWorkspaceSelection(
   epicId: string,
+  hostId: string | null,
 ): FileTreeWorkspaceSelection {
-  const hostId = useReactiveActiveHostId();
-  const workspacesQuery = useWorktreeListBindingsForEpic({
+  const client = useSurfaceHostClient(hostId);
+  const workspacesQuery = useWorktreeListBindingsForEpicForClient({
+    client,
     epicId,
     enabled: hostId !== null,
   });
@@ -1100,7 +1109,50 @@ function FileTreePanelBody(props: LeftPanelBodyProps) {
 }
 
 function FileTreePanelBodyLive(props: LeftPanelBodyProps) {
-  const selection = useFileTreeWorkspaceSelection(props.epicId);
+  const surfaceKey = useWindowPaneSurfaceKey("file-tree", props.tabId);
+  const pin = useSurfaceHostPin(surfaceKey);
+  const dead = usePinnedSurfaceDead(pin);
+  const selection = useFileTreeWorkspaceSelection(
+    props.epicId,
+    pin.resolvedHostId,
+  );
+  const handleSelectPath = (workspacePath: string): void => {
+    pin.latchOnFirstUse();
+    selection.setSelectedWorkspacePath(workspacePath);
+  };
+  if (dead.isDead) {
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        <div className="shrink-0 px-2 pb-1.5 pt-0.5">
+          <WorkspacePickerWithOpener
+            picker={
+              <FileTreeWorkspacePicker
+                epicId={props.epicId}
+                hostId={selection.hostId}
+                selectedPath={selection.selectedWorkspacePath}
+                onSelectPath={handleSelectPath}
+                surfaceKey={surfaceKey}
+              />
+            }
+            openTarget={
+              selection.hostId !== null &&
+              selection.selectedWorkspacePath !== null
+                ? {
+                    workspacePath: selection.selectedWorkspacePath,
+                    hostId: selection.hostId,
+                  }
+                : null
+            }
+          />
+        </div>
+        <PinnedSurfaceDeadState
+          hostLabel={dead.hostLabel}
+          onUseActiveHost={pin.followEffective}
+          testId="file-tree-pinned-host-dead"
+        />
+      </div>
+    );
+  }
   return (
     <div className="flex h-full min-h-0 flex-col">
       {selection.selectedWorkspacePath === null ? (
@@ -1119,7 +1171,8 @@ function FileTreePanelBodyLive(props: LeftPanelBodyProps) {
                   epicId={props.epicId}
                   hostId={selection.hostId}
                   selectedPath={selection.selectedWorkspacePath}
-                  onSelectPath={selection.setSelectedWorkspacePath}
+                  onSelectPath={handleSelectPath}
+                  surfaceKey={surfaceKey}
                 />
               }
               openTarget={
@@ -1137,6 +1190,7 @@ function FileTreePanelBodyLive(props: LeftPanelBodyProps) {
             epicId={props.epicId}
             tabId={props.tabId}
             workspacePath={selection.selectedWorkspacePath}
+            hostId={pin.resolvedHostId}
           />
         </>
       )}

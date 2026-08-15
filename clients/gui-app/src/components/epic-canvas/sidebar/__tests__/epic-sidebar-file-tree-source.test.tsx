@@ -405,6 +405,7 @@ function renderPanel(client: MockWsStreamClient): void {
         epicId={EPIC_ID}
         tabId="tab-1"
         workspacePath={WORKSPACE_PATH}
+        hostId={HOST_ID}
       />,
     ),
   );

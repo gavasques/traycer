@@ -14,6 +14,7 @@ import {
   lastLocalHostIdKey,
   lastSelectedHostKey,
   interviewDraftKey,
+  surfaceHostSelectionKey,
   interviewDraftKeyPrefix,
   landingTerminalsKey,
   openEpicKey,
@@ -153,6 +154,13 @@ describe("persist key builders — output-preserving against current source", ()
     );
     expect(landingTerminalsKey("u1")).toBe(
       "traycer-gui-app:landing-terminals:u1",
+    );
+    // Source: src/stores/host/surface-host-selection-store.ts
+    expect(surfaceHostSelectionKey(null)).toBe(
+      "traycer-gui-app:surface-host-selection:anon",
+    );
+    expect(surfaceHostSelectionKey("a@b.com")).toBe(
+      "traycer-gui-app:surface-host-selection:a@b.com",
     );
     // Source: src/stores/epics/open-epic/store.ts (local
     // `persistKey(epicId, userId)` emits `…:open-epic:{userBucket}:{epicId}`).

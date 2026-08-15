@@ -12,6 +12,7 @@ import type { ReactElement } from "react";
 import type { RenderResult } from "@testing-library/react";
 import type { WorktreeBindingSelectorRowV12 } from "@traycer/protocol/host";
 import { FileTreeWorkspacePicker } from "../file-tree-workspace-picker";
+import { useSurfaceHostSelectionStore } from "@/stores/host/surface-host-selection-store";
 
 const selectById = vi.fn();
 const refreshDirectory = vi.fn(() => Promise.resolve([]));
@@ -31,6 +32,15 @@ const listQuery = vi.hoisted(() => ({
 
 vi.mock("@/hooks/worktree/use-worktree-list-bindings-for-epic-query", () => ({
   useWorktreeListBindingsForEpic: () => listQuery.current,
+  useWorktreeListBindingsForEpicForClient: () => listQuery.current,
+}));
+
+vi.mock("@/hooks/host/use-host-client-for-host-id", () => ({
+  useHostClientForHostId: () => null,
+}));
+
+vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
+  useReactiveActiveHostId: () => "host-1",
 }));
 
 // This suite is about the WORKSPACE list, not the host list, so it mocks
@@ -157,6 +167,7 @@ function openPicker(
       hostId="host-1"
       selectedPath={selectedPath}
       onSelectPath={onSelectPath}
+      surfaceKey="file-tree-test"
     />,
   );
   fireEvent.click(screen.getByTestId("file-tree-workspace-picker-trigger"));
@@ -167,6 +178,7 @@ describe("<FileTreeWorkspacePicker />", () => {
     cleanup();
     selectById.mockClear();
     refreshDirectory.mockClear();
+    useSurfaceHostSelectionStore.getState().resetForTests();
     stubLoadedWorkspaces();
   });
 
@@ -208,6 +220,7 @@ describe("<FileTreeWorkspacePicker />", () => {
         hostId="host-1"
         selectedPath="/work/traycer"
         onSelectPath={() => undefined}
+        surfaceKey="file-tree-test"
       />,
     );
 
@@ -234,6 +247,7 @@ describe("<FileTreeWorkspacePicker />", () => {
         hostId="host-1"
         selectedPath="/work/traycer"
         onSelectPath={() => undefined}
+        surfaceKey="file-tree-test"
       />,
     );
 
@@ -250,6 +264,7 @@ describe("<FileTreeWorkspacePicker />", () => {
         hostId="host-1"
         selectedPath="/work/traycer"
         onSelectPath={() => undefined}
+        surfaceKey="file-tree-test"
       />,
     );
 
@@ -382,7 +397,7 @@ describe("<FileTreeWorkspacePicker />", () => {
     expect(within(worktreeOption).queryByText("checking")).toBeNull();
   });
 
-  it("swaps the bound host without selecting a folder when a host row is clicked", () => {
+  it("pins the surface host without selecting a folder when a host row is clicked", () => {
     const onSelectPath = vi.fn();
     openPicker("/work/traycer", onSelectPath);
 
@@ -390,7 +405,10 @@ describe("<FileTreeWorkspacePicker />", () => {
     fireEvent.click(screen.getByTestId("settings-host-switcher"));
     fireEvent.click(screen.getByTestId("settings-host-switcher-option-host-1"));
 
-    expect(selectById).toHaveBeenCalledWith("host-1");
+    expect(selectById).not.toHaveBeenCalled();
+    expect(
+      useSurfaceHostSelectionStore.getState().selections["file-tree-test"],
+    ).toBe("host-1");
     expect(onSelectPath).not.toHaveBeenCalled();
   });
 

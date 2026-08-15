@@ -135,11 +135,14 @@ function SwitcherAgentRow(props: {
   return (
     <SwitcherListRow
       icon={
+        // No host prop: the icon reads the row's OWN owner host off the
+        // projection. `record.hostId` is the ACTIVE host for chat rows (see
+        // `recordForChat`) and is right only for the openable ref below, which
+        // is what the tap binds a tab to.
         <SwitcherAgentIcon
           epicId={epicId}
           nodeId={record.id}
           type={agentType}
-          hostId={record.hostId}
         />
       }
       label={record.name}

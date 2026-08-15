@@ -5,6 +5,7 @@ import { HarnessIcon } from "@/components/home/pickers/harness-icon";
 import { EPIC_NODE_ICONS } from "@/lib/artifacts/node-display";
 import {
   useEpicChatHarnessId,
+  useEpicNodeHostId,
   useMaybeEpicTuiAgentHarnessId,
 } from "@/lib/epic-selectors";
 
@@ -38,39 +39,35 @@ export function SwitcherAgentIcon(props: {
   readonly epicId: string;
   readonly nodeId: string;
   readonly type: "chat" | "terminal-agent";
-  /** The row's own owner host, off its projection record - `chatId` is
-   *  host-minted, so it scopes both the session and the indicator read. */
-  readonly hostId: string;
 }) {
   if (props.type === "terminal-agent") {
-    return (
-      <SwitcherTuiAgentIcon
-        epicId={props.epicId}
-        nodeId={props.nodeId}
-        hostId={props.hostId}
-      />
-    );
+    return <SwitcherTuiAgentIcon epicId={props.epicId} nodeId={props.nodeId} />;
   }
-  return (
-    <SwitcherChatIcon
-      epicId={props.epicId}
-      nodeId={props.nodeId}
-      hostId={props.hostId}
-    />
-  );
+  return <SwitcherChatIcon epicId={props.epicId} nodeId={props.nodeId} />;
 }
 
 function SwitcherChatIcon(props: {
   readonly epicId: string;
   readonly nodeId: string;
-  readonly hostId: string;
 }) {
   const harnessId = useEpicChatHarnessId(props.nodeId);
+  // The row's OWN owner host, off the chat projection - the same source the
+  // desktop row reads. NOT the `hostId` on `useEpicArtifactRecords()`, which
+  // stamps chat rows with the app-wide ACTIVE host (`recordForChat`'s
+  // `fallbackHostId`; only TUI records carry a real owner). A retained epic tab
+  // bound to host A while the user switches the active host to B would hand
+  // this icon B, which misses the A-bound session handle and reads the
+  // indicator response's `byOriginHostId[B]` - so the ladder, the access
+  // snapshot, and the session's own run status all silently vanish while
+  // epic awareness can still look live. `null` (a legacy chat with no
+  // projected host) is a value `ChatProgressIcon` handles: no session to read,
+  // and the indicator falls back to the surface aggregate.
+  const ownerHostId = useEpicNodeHostId(props.nodeId);
   return (
     <ChatProgressIcon
       epicId={props.epicId}
       chatId={props.nodeId}
-      hostId={props.hostId}
+      hostId={ownerHostId}
       className="size-4"
       mutedClassName="text-muted-foreground"
       testId={SWITCHER_AGENT_TEST_ID_PREFIX}
@@ -89,7 +86,6 @@ function SwitcherChatIcon(props: {
 function SwitcherTuiAgentIcon(props: {
   readonly epicId: string;
   readonly nodeId: string;
-  readonly hostId: string;
 }) {
   const harnessId = useMaybeEpicTuiAgentHarnessId(props.nodeId);
   const FallbackIcon = EPIC_NODE_ICONS["terminal-agent"];

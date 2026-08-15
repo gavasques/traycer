@@ -33,19 +33,24 @@ interface Holder {
   activityTiers: ReadonlyMap<string, "turn" | "background">;
   /** Chat ids the agents list subscribed indicator state for, per render. */
   indicatorChatIdCalls: ReadonlyArray<string>[];
-  indicators: {
-    readonly epics: Record<string, never>;
-    readonly chats: Record<
-      string,
-      {
-        readonly unreadFailure: boolean;
-        readonly pendingFork: boolean;
-        readonly pendingApproval: boolean;
-        readonly pendingInterview: boolean;
-        readonly unreadDone: boolean;
-      }
-    >;
-  };
+  /** What `useEpicNodeHostId` answers - the row's OWN owner host. */
+  ownerHostIdByNodeId: Record<string, string>;
+  indicators: IndicatorFixture;
+}
+
+interface IndicatorFlags {
+  readonly unreadFailure: boolean;
+  readonly pendingFork: boolean;
+  readonly pendingApproval: boolean;
+  readonly pendingInterview: boolean;
+  readonly unreadDone: boolean;
+}
+interface IndicatorResponseFixture {
+  readonly epics: Record<string, never>;
+  readonly chats: Record<string, IndicatorFlags>;
+}
+interface IndicatorFixture extends IndicatorResponseFixture {
+  readonly byOriginHostId?: Record<string, IndicatorResponseFixture>;
 }
 
 const holder = vi.hoisted((): Holder => ({
@@ -57,6 +62,7 @@ const holder = vi.hoisted((): Holder => ({
   workingAgentIds: new Set<string>(),
   activityTiers: new Map<string, "turn" | "background">(),
   indicatorChatIdCalls: [],
+  ownerHostIdByNodeId: {},
   indicators: { epics: {}, chats: {} },
 }));
 
@@ -67,6 +73,10 @@ vi.mock("@/lib/epic-selectors", () => ({
   useEpicChatHarnessId: () => null,
   useMaybeEpicTuiAgentHarnessId: () => null,
   useEpicPermissionRole: () => holder.role,
+  // The chat projection's OWN host. Deliberately distinct from the `hostId` on
+  // the records above, which is the app-wide ACTIVE host for chat rows.
+  useEpicNodeHostId: (nodeId: string) =>
+    holder.ownerHostIdByNodeId[nodeId] ?? null,
   // The lists sort by tree-node recency; expose nodes for the fixtures so the
   // real epic-sort comparator resolves every id.
   useEpicTreeIndex: () => ({
@@ -171,6 +181,7 @@ beforeEach(() => {
   holder.workingAgentIds = new Set<string>();
   holder.activityTiers = new Map<string, "turn" | "background">();
   holder.indicatorChatIdCalls = [];
+  holder.ownerHostIdByNodeId = {};
   holder.indicators = { epics: {}, chats: {} };
 });
 afterEach(cleanup);
@@ -296,6 +307,54 @@ describe("<SwitcherAgentsList />", () => {
     render(<SwitcherAgentsList {...PROPS} />);
     expect(screen.getByTestId("switcher-agent-failure-chat-1")).toBeTruthy();
     expect(screen.queryByTestId("switcher-agent-activity-chat-1")).toBeNull();
+  });
+
+  it("keeps a retained epic's rows reading status from their own host after the active host changes", () => {
+    // Session/provider bound to host A; the user has since switched the app's
+    // active host to B. `useEpicArtifactRecords()` stamps chat rows with the
+    // ACTIVE host, so the record says B while the chat still lives on A.
+    holder.records = [
+      {
+        id: "chat-1",
+        parentId: null,
+        name: "Alpha",
+        type: "chat",
+        status: null,
+        hostId: "host-B",
+      },
+    ];
+    holder.ownerHostIdByNodeId = { "chat-1": "host-A" };
+    holder.indicators = {
+      epics: {},
+      chats: {
+        "chat-1": {
+          unreadFailure: true,
+          pendingFork: false,
+          pendingApproval: false,
+          pendingInterview: false,
+          unreadDone: false,
+        },
+      },
+      byOriginHostId: {
+        "host-A": {
+          epics: {},
+          chats: {
+            "chat-1": {
+              unreadFailure: true,
+              pendingFork: false,
+              pendingApproval: false,
+              pendingInterview: false,
+              unreadDone: false,
+            },
+          },
+        },
+        "host-B": { epics: {}, chats: {} },
+      },
+    };
+    render(<SwitcherAgentsList {...PROPS} />);
+    // Passing the record's `hostId` would read `byOriginHostId["host-B"]` -
+    // empty - and the row would render an inert idle glyph.
+    expect(screen.getByTestId("switcher-agent-failure-chat-1")).toBeTruthy();
   });
 
   it("subscribes indicator state for exactly the agent rows it lists", () => {

@@ -8,6 +8,7 @@ import type {
   HostNotificationsIndicatorState,
   HostNotificationsIndicatorStateResponse,
 } from "@traycer/protocol/host/notifications/contracts";
+import type { SurfaceNotificationIndicators } from "@/stores/notifications/notification-indicator-state";
 
 // Drive the epic-selector reads the icon (and the shared status mapping it now
 // routes through) depends on. `tui` non-null + type "terminal-agent" reaches
@@ -20,7 +21,15 @@ const state = vi.hoisted(
     gui: string | null;
     tui: string | null;
     role: "owner" | "viewer";
-  } => ({ tier: null, gui: null, tui: null, role: "owner" }),
+    /** The chat projection's OWN host, i.e. what `useEpicNodeHostId` answers. */
+    ownerHostId: string | null;
+  } => ({
+    tier: null,
+    gui: null,
+    tui: null,
+    role: "owner",
+    ownerHostId: null,
+  }),
 );
 vi.mock("@/lib/epic-selectors", () => ({
   useEpicActiveAgentIds: () =>
@@ -32,6 +41,7 @@ vi.mock("@/lib/epic-selectors", () => ({
   useEpicChatHarnessId: () => state.gui,
   useMaybeEpicTuiAgentHarnessId: () => state.tui,
   useEpicPermissionRole: () => state.role,
+  useEpicNodeHostId: () => state.ownerHostId,
 }));
 
 const NO_INDICATORS: HostNotificationsIndicatorStateResponse = {
@@ -53,18 +63,26 @@ function chatIndicators(
   return { epics: {}, chats: { n1: { ...QUIET, ...flags } } };
 }
 
+/**
+ * A per-origin response, the shape a real host read carries
+ * (`scopeIndicatorsToOrigin`). Only the row that names `originHostId` as its
+ * own host reads the flags; every other host sees the empty response.
+ */
+function chatIndicatorsForOrigin(
+  originHostId: string,
+  flags: Partial<HostNotificationsIndicatorState>,
+): SurfaceNotificationIndicators {
+  const scoped = chatIndicators(flags);
+  return { ...scoped, byOriginHostId: { [originHostId]: scoped } };
+}
+
 function renderIcon(
   type: "chat" | "terminal-agent",
-  indicators: HostNotificationsIndicatorStateResponse,
+  indicators: SurfaceNotificationIndicators,
 ): ReactNode {
   return (
     <NotificationIndicatorsProvider indicators={indicators}>
-      <SwitcherAgentIcon
-        epicId="epic-1"
-        nodeId="n1"
-        type={type}
-        hostId="host-A"
-      />
+      <SwitcherAgentIcon epicId="epic-1" nodeId="n1" type={type} />
     </NotificationIndicatorsProvider>
   );
 }
@@ -75,6 +93,7 @@ afterEach(() => {
   state.gui = null;
   state.tui = null;
   state.role = "owner";
+  state.ownerHostId = null;
 });
 
 describe("<SwitcherAgentIcon /> identity glyphs", () => {
@@ -212,5 +231,53 @@ describe("<SwitcherAgentIcon /> matches the desktop mapping", () => {
     state.gui = "claude";
     render(renderIcon("chat", NO_INDICATORS));
     expect(screen.getByLabelText("Read-only agent")).toBeTruthy();
+  });
+});
+
+describe("<SwitcherAgentIcon /> owner-host scoping", () => {
+  // A chat row must name its OWN owner host, off the projection. The list's
+  // `useEpicArtifactRecords()` row carries the app-wide ACTIVE host instead
+  // (`recordForChat` stamps `fallbackHostId`; only TUI records carry a real
+  // owner), so a retained epic tab bound to host A while the user switches the
+  // active host to B would hand this icon B - which reads
+  // `byOriginHostId[B]`, i.e. nothing, and drops the whole host-derived ladder
+  // while epic awareness can still look live.
+  it("reads status under the chat's own host, not the active one", () => {
+    state.ownerHostId = "host-A";
+    state.gui = "claude";
+    render(
+      renderIcon(
+        "chat",
+        chatIndicatorsForOrigin("host-A", { unreadFailure: true }),
+      ),
+    );
+    expect(screen.getByTestId("switcher-agent-failure-n1")).toBeTruthy();
+  });
+
+  it("does not light a row from a same-id chat on another host", () => {
+    state.ownerHostId = "host-A";
+    state.gui = "claude";
+    // `chatId` is host-minted, so host B can legitimately hold the same id.
+    render(
+      renderIcon(
+        "chat",
+        chatIndicatorsForOrigin("host-B", { unreadFailure: true }),
+      ),
+    );
+    expect(screen.queryByTestId("switcher-agent-failure-n1")).toBeNull();
+  });
+
+  it("falls back to the surface aggregate for a chat with no projected host", () => {
+    // A legacy chat predating the field: `useEpicNodeHostId` answers null,
+    // which `ChatProgressIcon` reads as "no session, use the aggregate".
+    state.ownerHostId = null;
+    state.gui = "claude";
+    render(
+      renderIcon(
+        "chat",
+        chatIndicatorsForOrigin("host-A", { unreadFailure: true }),
+      ),
+    );
+    expect(screen.getByTestId("switcher-agent-failure-n1")).toBeTruthy();
   });
 });

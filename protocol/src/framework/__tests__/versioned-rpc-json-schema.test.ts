@@ -783,6 +783,39 @@ describe("response-lane value-growth strictness", () => {
     upgradeRequest: (request) => ({ id: request.id }),
     upgradeResponse: (response) => ({ status: response.status }),
   });
+  const replaceV10 = defineRpcContract({
+    method: "replace",
+    schemaVersion: { major: 1, minor: 0 } as const,
+    requestSchema: z.object({ id: z.string() }),
+    responseSchema: z.object({
+      row: z.union([z.object({ legacy: z.string() }), z.null()]),
+    }),
+  });
+  const replaceV11 = defineRpcContract({
+    method: "replace",
+    schemaVersion: { major: 1, minor: 1 } as const,
+    requestSchema: z.object({ id: z.string() }),
+    responseSchema: z.object({
+      row: z.discriminatedUnion("status", [
+        z.object({ status: z.literal("found"), value: z.string() }),
+        z.object({ status: z.literal("absent") }),
+      ]),
+    }),
+  });
+  const replaceUpgrade = defineUpgradePath<
+    typeof replaceV10,
+    typeof replaceV11
+  >({
+    from: replaceV10.schemaVersion,
+    to: replaceV11.schemaVersion,
+    upgradeRequest: (request) => ({ id: request.id }),
+    upgradeResponse: (response) => ({
+      row:
+        response.row === null
+          ? { status: "absent" as const }
+          : { status: "found" as const, value: response.row.legacy },
+    }),
+  });
 
   it("rejects response enum growth on an unannotated minor, naming the escape hatch", () => {
     const registry = {
@@ -825,39 +858,6 @@ describe("response-lane value-growth strictness", () => {
   });
 
   it("accepts a projection-gated response union replacement", () => {
-    const replaceV10 = defineRpcContract({
-      method: "replace",
-      schemaVersion: { major: 1, minor: 0 } as const,
-      requestSchema: z.object({ id: z.string() }),
-      responseSchema: z.object({
-        row: z.union([z.object({ legacy: z.string() }), z.null()]),
-      }),
-    });
-    const replaceV11 = defineRpcContract({
-      method: "replace",
-      schemaVersion: { major: 1, minor: 1 } as const,
-      requestSchema: z.object({ id: z.string() }),
-      responseSchema: z.object({
-        row: z.discriminatedUnion("status", [
-          z.object({ status: z.literal("found"), value: z.string() }),
-          z.object({ status: z.literal("absent") }),
-        ]),
-      }),
-    });
-    const replaceUpgrade = defineUpgradePath<
-      typeof replaceV10,
-      typeof replaceV11
-    >({
-      from: replaceV10.schemaVersion,
-      to: replaceV11.schemaVersion,
-      upgradeRequest: (request) => ({ id: request.id }),
-      upgradeResponse: (response) => ({
-        row:
-          response.row === null
-            ? { status: "absent" as const }
-            : { status: "found" as const, value: response.row.legacy },
-      }),
-    });
     const registry = {
       replace: {
         1: {
@@ -876,6 +876,88 @@ describe("response-lane value-growth strictness", () => {
     } as const;
 
     expect(() => validateVersionedRpcRegistry(registry)).not.toThrow();
+  });
+
+  it("rejects a response union replacement without the projection gate", () => {
+    const registry = {
+      replace: {
+        1: {
+          latestMinor: 1,
+          versions: {
+            0: { contract: replaceV10, upgradeFromPreviousVersion: null },
+            1: {
+              contract: replaceV11,
+              upgradeFromPreviousVersion: replaceUpgrade,
+            },
+          },
+          downgradePathsFromLatest: {},
+        },
+      },
+    } as const;
+
+    expect(() => validateVersionedRpcRegistry(registry)).toThrow(
+      "Minor 1.1 for method 'replace' response drops union variant",
+    );
+  });
+
+  it("rejects a projection-gated union replacement that also drops another response field", () => {
+    const replaceAndDropV10 = defineRpcContract({
+      method: "replaceAndDrop",
+      schemaVersion: { major: 1, minor: 0 } as const,
+      requestSchema: z.object({ id: z.string() }),
+      responseSchema: z.object({
+        row: z.union([z.object({ legacy: z.string() }), z.null()]),
+        stable: z.string(),
+      }),
+    });
+    const replaceAndDropV11 = defineRpcContract({
+      method: "replaceAndDrop",
+      schemaVersion: { major: 1, minor: 1 } as const,
+      requestSchema: z.object({ id: z.string() }),
+      responseSchema: z.object({
+        row: z.discriminatedUnion("status", [
+          z.object({ status: z.literal("found"), value: z.string() }),
+          z.object({ status: z.literal("absent") }),
+        ]),
+      }),
+    });
+    const replaceAndDropUpgrade = defineUpgradePath<
+      typeof replaceAndDropV10,
+      typeof replaceAndDropV11
+    >({
+      from: replaceAndDropV10.schemaVersion,
+      to: replaceAndDropV11.schemaVersion,
+      upgradeRequest: (request) => ({ id: request.id }),
+      upgradeResponse: (response) => ({
+        row:
+          response.row === null
+            ? { status: "absent" as const }
+            : { status: "found" as const, value: response.row.legacy },
+      }),
+    });
+    const registry = {
+      replaceAndDrop: {
+        1: {
+          latestMinor: 1,
+          versions: {
+            0: {
+              contract: replaceAndDropV10,
+              upgradeFromPreviousVersion: null,
+            },
+            1: {
+              contract: replaceAndDropV11,
+              upgradeFromPreviousVersion: replaceAndDropUpgrade,
+              responseGrowthProjectionGated: true,
+            },
+          },
+          downgradePathsFromLatest: {},
+        },
+      },
+    } as const;
+
+    expect(() => validateVersionedRpcRegistry(registry)).toThrow(
+      "Minor 1.1 for method 'replaceAndDrop' response drops field 'stable' from 1.0",
+    );
   });
 
   it("keeps REQUEST enum growth legal on minors without annotation", () => {
@@ -934,12 +1016,14 @@ describe("response-lane value-growth strictness", () => {
         rows: z.array(z.object({ status: z.enum(["queued", "running"]) })),
       }),
     });
-    const nestedUpgrade = defineUpgradePath<typeof nestedV10, typeof nestedV11>({
-      from: nestedV10.schemaVersion,
-      to: nestedV11.schemaVersion,
-      upgradeRequest: (request) => ({ id: request.id }),
-      upgradeResponse: (response) => ({ rows: response.rows }),
-    });
+    const nestedUpgrade = defineUpgradePath<typeof nestedV10, typeof nestedV11>(
+      {
+        from: nestedV10.schemaVersion,
+        to: nestedV11.schemaVersion,
+        upgradeRequest: (request) => ({ id: request.id }),
+        upgradeResponse: (response) => ({ rows: response.rows }),
+      },
+    );
 
     const registry = {
       nested: {
@@ -976,7 +1060,10 @@ describe("response-lane value-growth strictness", () => {
       method: "flat",
       schemaVersion: { major: 1, minor: 1 } as const,
       requestSchema: z.object({ id: z.string() }),
-      responseSchema: z.object({ ok: z.boolean(), note: z.string().optional() }),
+      responseSchema: z.object({
+        ok: z.boolean(),
+        note: z.string().optional(),
+      }),
     });
     const flatUpgrade = defineUpgradePath<typeof flatV10, typeof flatV11>({
       from: flatV10.schemaVersion,
@@ -1003,7 +1090,7 @@ describe("response-lane value-growth strictness", () => {
     } as const;
 
     expect(() => validateVersionedRpcRegistry(registry)).toThrow(
-      /declares `responseGrowthProjectionGated` but its response has no value growth.*remove the annotation/s,
+      /declares `responseGrowthProjectionGated` but its response has no value growth or union-arm replacement.*remove the annotation/s,
     );
   });
 

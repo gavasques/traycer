@@ -8,6 +8,7 @@ import {
   toUnknownKeyTree,
   describeAdditivityViolation,
   findAdditivityViolation,
+  findAdditivityViolationAllowingUnionArmReplacement,
   rootAdditivityViolation,
   findBreakingChange,
   toJsonSchemaFingerprint,
@@ -482,11 +483,11 @@ function assertSchemaCompatibility(
         // same minor. Require it to be load-bearing.
         if (responseGrowthGated && strictResponseViolation === null) {
           throw new Error(
-            `Minor ${major}.${currentMinor} for method '${method}' declares \`responseGrowthProjectionGated\` but its response has no value growth over ${major}.${previousMinor}; remove the annotation`,
+            `Minor ${major}.${currentMinor} for method '${method}' declares \`responseGrowthProjectionGated\` but its response has no value growth or union-arm replacement over ${major}.${previousMinor}; remove the annotation`,
           );
         }
         const responseViolation = responseGrowthGated
-          ? findAdditivityViolation(
+          ? findAdditivityViolationAllowingUnionArmReplacement(
               previous.response,
               current.response,
               "lenient",
@@ -503,15 +504,6 @@ function assertSchemaCompatibility(
           const isValueGrowth =
             rootViolation.kind === "enum-value-added" ||
             rootViolation.kind === "union-variant-added";
-          // A projection-gated minor may replace a response union arm: the
-          // emitter has a version-specific projection for older callers, so
-          // it can stop accepting/emitting their legacy arm while exposing a
-          // stricter canonical shape to the new minor. Other structural
-          // reductions remain forbidden even with the annotation.
-          const isProjectionGatedUnionReplacement =
-            responseGrowthGated &&
-            rootViolation.kind === "union-variant";
-          if (isProjectionGatedUnionReplacement) continue;
           const annotationHint = isValueGrowth
             ? " (if this growth is genuinely emission-gated on the negotiated version, declare `responseGrowthProjectionGated: true` on the minor's registry entry)"
             : "";

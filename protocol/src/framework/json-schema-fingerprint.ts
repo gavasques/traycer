@@ -305,6 +305,7 @@ function unknownKeyPolicyRelaxation(
     "no-value-growth",
     previous.schema,
     next.schema,
+    false,
   );
   return catchallMismatch === null
     ? null
@@ -569,6 +570,34 @@ export function findAdditivityViolation(
     mode,
     previousInput,
     nextInput,
+    false,
+  );
+}
+
+/**
+ * First non-additive change while treating removed union arms as compatible.
+ *
+ * Versioned RPC uses this only after a minor's reviewed
+ * `responseGrowthProjectionGated` declaration has made a version-specific
+ * projection responsible for the old arm. The recursive walk still visits
+ * every sibling and reports every other reduction; it does not turn the
+ * response lane generally lenient.
+ */
+export function findAdditivityViolationAllowingUnionArmReplacement(
+  previous: JsonSchemaFingerprint,
+  next: JsonSchemaFingerprint,
+  mode: AdditivityMode,
+  previousInput: unknown,
+  nextInput: unknown,
+): AdditivityViolation | null {
+  return findNodeAdditivityViolation(
+    previous,
+    next,
+    [],
+    mode,
+    previousInput,
+    nextInput,
+    true,
   );
 }
 
@@ -732,6 +761,13 @@ function snippet(node: unknown): string {
   return JSON.stringify(node)?.slice(0, 80) ?? String(node);
 }
 
+function unionArmReplacementViolation(
+  detail: string,
+  allowUnionArmReplacement: boolean,
+): AdditivityViolation | null {
+  return allowUnionArmReplacement ? null : { kind: "union-variant", detail };
+}
+
 /**
  * JSON Schema keywords that annotate a leaf without constraining the values
  * it accepts. Two leaves differing only in these describe the same accepted
@@ -851,6 +887,7 @@ function findNodeAdditivityViolation(
   mode: AdditivityMode,
   previousInput: unknown,
   nextInput: unknown,
+  allowUnionArmReplacement: boolean,
 ): AdditivityViolation | null {
   const previousNode = classifySchemaNode(previous);
   const nextNode = classifySchemaNode(next);
@@ -876,11 +913,15 @@ function findNodeAdditivityViolation(
             mode,
             previousInput,
             nextWideningArms[variantIndex] ?? null,
+            allowUnionArmReplacement,
           ) === null,
       );
       return oldFormRetained
         ? null
-        : { kind: "union-variant", detail: snippet(previous) };
+        : unionArmReplacementViolation(
+            snippet(previous),
+            allowUnionArmReplacement,
+          );
     }
     // Union collapse: only additive when every previous variant's payloads
     // still project onto the replacement schema.
@@ -895,9 +936,13 @@ function findNodeAdditivityViolation(
             mode,
             previousInputArms[index] ?? null,
             nextInput,
+            allowUnionArmReplacement,
           ) !== null
         ) {
-          return { kind: "union-variant", detail: snippet(variant) };
+          return unionArmReplacementViolation(
+            snippet(variant),
+            allowUnionArmReplacement,
+          );
         }
       }
       return null;
@@ -933,6 +978,7 @@ function findNodeAdditivityViolation(
         mode,
         inputProperty(previousInput, field),
         inputProperty(nextInput, field),
+        allowUnionArmReplacement,
       );
       if (nested !== null) return nested;
     }
@@ -969,6 +1015,7 @@ function findNodeAdditivityViolation(
           "no-value-growth",
           policy.schema,
           inputProperty(nextInput, field),
+          false,
         );
         if (mismatch !== null) {
           return {
@@ -1063,6 +1110,7 @@ function findNodeAdditivityViolation(
             mode,
             previousArmInput,
             nextInputArms[nextIndex] ?? null,
+            allowUnionArmReplacement,
           ) === null,
       );
       if (survives) continue;
@@ -1076,6 +1124,7 @@ function findNodeAdditivityViolation(
               "lenient",
               previousArmInput,
               nextInputArms[nextIndex] ?? null,
+              allowUnionArmReplacement,
             ) === null,
         );
         if (lenientIndex !== -1) {
@@ -1086,10 +1135,14 @@ function findNodeAdditivityViolation(
             mode,
             previousArmInput,
             nextInputArms[lenientIndex] ?? null,
+            allowUnionArmReplacement,
           );
         }
       }
-      return { kind: "union-variant", detail: snippet(previousVariant) };
+      return unionArmReplacementViolation(
+        snippet(previousVariant),
+        allowUnionArmReplacement,
+      );
     }
     if (mode === "no-value-growth") {
       for (const [nextIndex, nextVariant] of nextNode.variants.entries()) {
@@ -1107,6 +1160,7 @@ function findNodeAdditivityViolation(
               mode,
               previousInputArms[index] ?? null,
               nextInputArms[nextIndex] ?? null,
+              allowUnionArmReplacement,
             ) === null,
         );
         if (!hasPredecessor) {
@@ -1131,6 +1185,7 @@ function findNodeAdditivityViolation(
       mode,
       inputItems(previousInput),
       inputItems(nextInput),
+      allowUnionArmReplacement,
     );
     if (itemsViolation !== null) {
       return {
@@ -1154,6 +1209,7 @@ function findNodeAdditivityViolation(
       mode,
       inputRecordKeys(previousInput),
       inputRecordKeys(nextInput),
+      allowUnionArmReplacement,
     );
     if (keysViolation !== null) return keysViolation;
     return findNodeAdditivityViolation(
@@ -1163,6 +1219,7 @@ function findNodeAdditivityViolation(
       mode,
       inputRecordValues(previousInput),
       inputRecordValues(nextInput),
+      allowUnionArmReplacement,
     );
   }
 

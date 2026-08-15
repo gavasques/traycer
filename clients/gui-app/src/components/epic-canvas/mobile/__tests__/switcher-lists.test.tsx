@@ -19,9 +19,18 @@ interface FixtureSession {
   readonly activeProcessName: string | null;
   readonly cwd: string;
 }
+/**
+ * The whole ref, not just its `type`. The ref's `hostId` is what the opened
+ * tile BINDS TO for life, so it is the field most worth asserting - and a
+ * fixture that dropped it is why a wrong-host ref went unnoticed here.
+ */
+interface ActivateRef {
+  readonly type: string;
+  readonly hostId: string;
+}
 interface ActivateCall {
   readonly id: string;
-  readonly ref: { readonly type: string };
+  readonly ref: ActivateRef;
 }
 interface Holder {
   records: ReadonlyArray<FixtureRecord>;
@@ -29,6 +38,28 @@ interface Holder {
   activeId: string | null;
   role: "owner" | "viewer";
   activateCalls: ActivateCall[];
+  workingAgentIds: ReadonlySet<string>;
+  activityTiers: ReadonlyMap<string, "turn" | "background">;
+  /** Chat ids the agents list subscribed indicator state for, per render. */
+  indicatorChatIdCalls: ReadonlyArray<string>[];
+  /** What `useEpicNodeHostId` answers - the row's OWN owner host. */
+  ownerHostIdByNodeId: Record<string, string>;
+  indicators: IndicatorFixture;
+}
+
+interface IndicatorFlags {
+  readonly unreadFailure: boolean;
+  readonly pendingFork: boolean;
+  readonly pendingApproval: boolean;
+  readonly pendingInterview: boolean;
+  readonly unreadDone: boolean;
+}
+interface IndicatorResponseFixture {
+  readonly epics: Record<string, never>;
+  readonly chats: Record<string, IndicatorFlags>;
+}
+interface IndicatorFixture extends IndicatorResponseFixture {
+  readonly byOriginHostId?: Record<string, IndicatorResponseFixture>;
 }
 
 const holder = vi.hoisted((): Holder => ({
@@ -37,14 +68,24 @@ const holder = vi.hoisted((): Holder => ({
   activeId: null,
   role: "owner",
   activateCalls: [],
+  workingAgentIds: new Set<string>(),
+  activityTiers: new Map<string, "turn" | "background">(),
+  indicatorChatIdCalls: [],
+  ownerHostIdByNodeId: {},
+  indicators: { epics: {}, chats: {} },
 }));
 
 vi.mock("@/lib/epic-selectors", () => ({
   useEpicArtifactRecords: () => holder.records,
-  useEpicActiveAgentIds: () => new Set<string>(),
+  useEpicActiveAgentIds: () => holder.workingAgentIds,
+  useEpicAgentActivityTiers: () => holder.activityTiers,
   useEpicChatHarnessId: () => null,
   useMaybeEpicTuiAgentHarnessId: () => null,
   useEpicPermissionRole: () => holder.role,
+  // The chat projection's OWN host. Deliberately distinct from the `hostId` on
+  // the records above, which is the app-wide ACTIVE host for chat rows.
+  useEpicNodeHostId: (nodeId: string) =>
+    holder.ownerHostIdByNodeId[nodeId] ?? null,
   // The lists sort by tree-node recency; expose nodes for the fixtures so the
   // real epic-sort comparator resolves every id.
   useEpicTreeIndex: () => ({
@@ -70,7 +111,11 @@ vi.mock("@/stores/epics/canvas/canvas-selectors", () => ({
 }));
 vi.mock("@/components/epic-canvas/mobile/use-switcher-activate", () => ({
   useSwitcherActivate:
-    () => (id: string, buildRef: () => { readonly type: string }) => {
+    () =>
+    (
+      id: string,
+      buildRef: () => { readonly type: string; readonly hostId: string },
+    ) => {
       holder.activateCalls.push({ id, ref: buildRef() });
     },
 }));
@@ -107,6 +152,20 @@ vi.mock("@/hooks/terminal/use-terminal-kill-mutation", () => ({
 vi.mock("@/hooks/epic/use-epic-nested-focus-navigation", () => ({
   useEpicNestedFocusNavigation: () => vi.fn(),
 }));
+// The agents list owns the indicator subscription its rows read through
+// context; record what it asks for so the wiring is asserted rather than
+// assumed, and answer from the holder.
+vi.mock("@/hooks/epic/use-epic-session-host-id", () => ({
+  useEpicSessionHostId: () => "host-A",
+}));
+vi.mock("@/hooks/notifications/use-notification-indicators-query", () => ({
+  useNotificationIndicators: (args: {
+    readonly chatIds: readonly string[];
+  }) => {
+    holder.indicatorChatIdCalls.push(args.chatIds);
+    return holder.indicators;
+  },
+}));
 // Each category list renders its own create row/menu (Agents: New chat,
 // Terminals: New terminal, Artifacts: a "+" kind menu); stub all three to
 // markers so their own wiring (composer mode, the terminal picker dialog, the
@@ -132,6 +191,11 @@ beforeEach(() => {
   holder.activeId = null;
   holder.role = "owner";
   holder.activateCalls = [];
+  holder.workingAgentIds = new Set<string>();
+  holder.activityTiers = new Map<string, "turn" | "background">();
+  holder.indicatorChatIdCalls = [];
+  holder.ownerHostIdByNodeId = {};
+  holder.indicators = { epics: {}, chats: {} };
 });
 afterEach(cleanup);
 
@@ -194,6 +258,163 @@ describe("<SwitcherAgentsList />", () => {
     expect(holder.activateCalls).toHaveLength(1);
     expect(holder.activateCalls[0].id).toBe("chat-1");
     expect(holder.activateCalls[0].ref.type).toBe("chat");
+  });
+
+  it("spins a row whose agent is mid-turn and leaves the idle rows alone", () => {
+    holder.workingAgentIds = new Set<string>(["chat-1"]);
+    holder.activityTiers = new Map<string, "turn" | "background">([
+      ["chat-1", "turn"],
+    ]);
+    render(<SwitcherAgentsList {...PROPS} />);
+    expect(screen.getByTestId("switcher-agent-activity-chat-1")).toBeTruthy();
+    expect(screen.queryByTestId("switcher-agent-activity-tui-1")).toBeNull();
+  });
+
+  it("updates a row's status live while the sheet stays open", () => {
+    const view = render(<SwitcherAgentsList {...PROPS} />);
+    expect(screen.queryByTestId("switcher-agent-activity-tui-1")).toBeNull();
+
+    holder.workingAgentIds = new Set<string>(["tui-1"]);
+    holder.activityTiers = new Map<string, "turn" | "background">([
+      ["tui-1", "turn"],
+    ]);
+    view.rerender(<SwitcherAgentsList {...PROPS} />);
+    expect(screen.getByTestId("switcher-agent-activity-tui-1")).toBeTruthy();
+
+    // …and back down when the turn ends.
+    holder.workingAgentIds = new Set<string>();
+    holder.activityTiers = new Map<string, "turn" | "background">();
+    view.rerender(<SwitcherAgentsList {...PROPS} />);
+    expect(screen.queryByTestId("switcher-agent-activity-tui-1")).toBeNull();
+  });
+
+  it("renders the desktop mapping's background glyph, not the busy spinner, for background-only work", () => {
+    holder.workingAgentIds = new Set<string>(["tui-1"]);
+    holder.activityTiers = new Map<string, "turn" | "background">([
+      ["tui-1", "background"],
+    ]);
+    render(<SwitcherAgentsList {...PROPS} />);
+    expect(
+      screen.getByTestId("switcher-agent-background-activity-tui-1"),
+    ).toBeTruthy();
+    expect(screen.queryByTestId("switcher-agent-activity-tui-1")).toBeNull();
+  });
+
+  it("surfaces notification status on a row, outranking a running turn", () => {
+    holder.workingAgentIds = new Set<string>(["chat-1"]);
+    holder.activityTiers = new Map<string, "turn" | "background">([
+      ["chat-1", "turn"],
+    ]);
+    holder.indicators = {
+      epics: {},
+      chats: {
+        "chat-1": {
+          unreadFailure: true,
+          pendingFork: false,
+          pendingApproval: false,
+          pendingInterview: false,
+          unreadDone: false,
+        },
+      },
+    };
+    render(<SwitcherAgentsList {...PROPS} />);
+    expect(screen.getByTestId("switcher-agent-failure-chat-1")).toBeTruthy();
+    expect(screen.queryByTestId("switcher-agent-activity-chat-1")).toBeNull();
+  });
+
+  it("keeps a retained epic's rows reading status from their own host after the active host changes", () => {
+    // Session/provider bound to host A; the user has since switched the app's
+    // active host to B. `useEpicArtifactRecords()` stamps chat rows with the
+    // ACTIVE host, so the record says B while the chat still lives on A.
+    holder.records = [
+      {
+        id: "chat-1",
+        parentId: null,
+        name: "Alpha",
+        type: "chat",
+        status: null,
+        hostId: "host-B",
+      },
+    ];
+    holder.ownerHostIdByNodeId = { "chat-1": "host-A" };
+    holder.indicators = {
+      epics: {},
+      chats: {
+        "chat-1": {
+          unreadFailure: true,
+          pendingFork: false,
+          pendingApproval: false,
+          pendingInterview: false,
+          unreadDone: false,
+        },
+      },
+      byOriginHostId: {
+        "host-A": {
+          epics: {},
+          chats: {
+            "chat-1": {
+              unreadFailure: true,
+              pendingFork: false,
+              pendingApproval: false,
+              pendingInterview: false,
+              unreadDone: false,
+            },
+          },
+        },
+        "host-B": { epics: {}, chats: {} },
+      },
+    };
+    render(<SwitcherAgentsList {...PROPS} />);
+    // Passing the record's `hostId` would read `byOriginHostId["host-B"]` -
+    // empty - and the row would render an inert idle glyph.
+    expect(screen.getByTestId("switcher-agent-failure-chat-1")).toBeTruthy();
+
+    // …and the same rule governs the ref the tap builds. A tab binds its host
+    // FOR LIFE, so a B-bound tile for an A-owned chat asks the wrong machine
+    // for the transcript permanently - not just until the next host switch.
+    fireEvent.click(screen.getByTestId("switcher-agent-row-chat-1"));
+    expect(holder.activateCalls).toHaveLength(1);
+    expect(holder.activateCalls[0].ref.hostId).toBe("host-A");
+  });
+
+  it("falls back to the record's host for a legacy chat with no projected owner", () => {
+    // `useEpicNodeHostId` answers null for a chat predating the field. The
+    // record's host is the active one by construction, matching the desktop
+    // row's `?? activeHostId` - a tap always opens something.
+    holder.records = [
+      {
+        id: "chat-1",
+        parentId: null,
+        name: "Alpha",
+        type: "chat",
+        status: null,
+        hostId: "host-B",
+      },
+    ];
+    holder.ownerHostIdByNodeId = {};
+    render(<SwitcherAgentsList {...PROPS} />);
+    fireEvent.click(screen.getByTestId("switcher-agent-row-chat-1"));
+    expect(holder.activateCalls[0].ref.hostId).toBe("host-B");
+  });
+
+  it("opens a TUI agent against its projected owner host", () => {
+    // In production both sides of the `??` read the same projection field for
+    // a terminal-agent, so they cannot disagree; the fixture drives them apart
+    // only to pin WHICH one the row takes - the owner, uniformly, with no
+    // per-kind branch to fall out of sync.
+    holder.ownerHostIdByNodeId = { "tui-1": "host-C" };
+    render(<SwitcherAgentsList {...PROPS} />);
+    fireEvent.click(screen.getByTestId("switcher-agent-row-tui-1"));
+    expect(holder.activateCalls[0].ref.type).toBe("terminal-agent");
+    expect(holder.activateCalls[0].ref.hostId).toBe("host-C");
+  });
+
+  it("subscribes indicator state for exactly the agent rows it lists", () => {
+    render(<SwitcherAgentsList {...PROPS} />);
+    const chatIds = holder.indicatorChatIdCalls.at(-1);
+    // Agents only - the spec artifact in the fixture is not a chat entity, and
+    // the ids are sorted so the query key does not churn on every re-sort.
+    expect(chatIds).toEqual(["chat-1", "tui-1"]);
   });
 
   it("shows the '…' menu for an editor and hides it entirely for a viewer", () => {

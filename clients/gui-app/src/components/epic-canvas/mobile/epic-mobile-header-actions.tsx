@@ -76,15 +76,15 @@ export function MobileEpicHeaderTitle(props: {
 }
 
 /**
- * Fills / clears the mobile-header right-actions slot for the ACTIVE epic
- * route. Mounted once (from the active epic's route effects), self-gated on
- * `useIsMobileViewport()`. The slot stores a `ReactNode` element: this is safe
- * because the element is a self-contained component keyed only on the stable
- * route ids - it re-reads volatile state from its own hooks each header render,
- * so nothing goes stale. A render-fn slot would be isomorphic (a fn returning
- * the same element) but a larger store change; a baked-in control that closed
- * over epic-session handlers WOULD go stale, which is exactly what this shape
- * avoids.
+ * Fills / clears the mobile-header right-actions slot for the FOCUSED epic
+ * surface. Mounted once (by that surface, from its tab-focus flag), self-gated
+ * on `useIsMobileViewport()`. The slot stores a `ReactNode` element: this is
+ * safe because the element is a self-contained component keyed only on the
+ * stable tab id - it re-reads volatile state from its own hooks each header
+ * render, so nothing goes stale. A render-fn slot would be isomorphic (a fn
+ * returning the same element) but a larger store change; a baked-in control
+ * that closed over epic-session handlers WOULD go stale, which is exactly what
+ * this shape avoids.
  */
 export function MobileEpicHeaderActionsBinder(props: {
   readonly tabId: string;

@@ -14,6 +14,8 @@ import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
 import { useMobileHeaderStore } from "@/stores/layout/mobile-header-store";
 import { useMobileNavStore } from "@/stores/layout/mobile-nav-store";
 import { useSettingsStore } from "@/stores/settings/settings-store";
+import { tabItemId } from "@/stores/tabs/layout";
+import { useTabsStore } from "@/stores/tabs/store";
 
 // The real rate-limit / resource-monitor controls pull host + stream
 // providers; stub them to their accessible trigger so the header renders in
@@ -95,11 +97,36 @@ function renderAt(path: string) {
   render(<RouterProvider router={router} />);
 }
 
+/**
+ * The tab layout an epic tab is presented through, plus its canvas record.
+ *
+ * The layout is what the header reads, and it is what a restored session
+ * actually restores - so every epic case here seeds it, INCLUDING the ones that
+ * also put the router on the epic route. A case that only set the route would
+ * be testing a state the phone never reaches.
+ */
+function presentEpicTab(tabId: string, epicId: string, name: string): void {
+  const ref = { kind: "epic", id: tabId } as const;
+  const itemId = tabItemId(ref);
+  useTabsStore.setState({
+    items: [{ kind: "tab", id: itemId, ref }],
+    activeItemId: itemId,
+  });
+  useEpicCanvasStore.setState({
+    tabsById: { [tabId]: { tabId, epicId, name } },
+  });
+}
+
+function presentNoTab(): void {
+  useTabsStore.setState({ items: [], activeItemId: null });
+  useEpicCanvasStore.setState({ tabsById: {} });
+}
+
 describe("MobileAppHeader", () => {
   beforeEach(() => {
     useMobileNavStore.setState({ open: false });
     useMobileHeaderStore.setState({ rightActions: null });
-    useEpicCanvasStore.setState({ tabsById: {} });
+    presentNoTab();
     useSettingsStore.setState({ showGlobalResourceMonitor: false });
     headerTitleState.role = "owner";
     updateTitleMutateSpy.mockClear();
@@ -108,7 +135,7 @@ describe("MobileAppHeader", () => {
     cleanup();
     useMobileNavStore.setState({ open: false });
     useMobileHeaderStore.setState({ rightActions: null });
-    useEpicCanvasStore.setState({ tabsById: {} });
+    presentNoTab();
   });
 
   it("renders the hamburger menu trigger", async () => {
@@ -156,19 +183,28 @@ describe("MobileAppHeader", () => {
   });
 
   it("titles the epic surface with the open epic's name", async () => {
-    useEpicCanvasStore.setState({
-      tabsById: { t1: { tabId: "t1", epicId: "e1", name: "Wire up billing" } },
-    });
+    presentEpicTab("t1", "e1", "Wire up billing");
     renderAt("/epics/e1/t1");
     expect((await screen.findByTestId("mobile-header-title")).textContent).toBe(
       "Wire up billing",
     );
   });
 
+  // The phone shell has no route persistence: its WebView boots at `/` and the
+  // restored epic tab is painted from the tab layout alone, with the router
+  // still on the landing route. The header has to name that tab anyway - this
+  // is the cold-restore path, and seeding the epic ROUTE here (as a suite that
+  // renders at `/epics/e1/t1` does) would hide the whole failure.
+  it("titles the epic surface restored under the landing route", async () => {
+    presentEpicTab("t1", "e1", "Wire up billing");
+    renderAt("/");
+    expect((await screen.findByTestId("mobile-header-title")).textContent).toBe(
+      "Wire up billing",
+    );
+  });
+
   it("renders the epic title as an editable control for an editor and plain text for a viewer", async () => {
-    useEpicCanvasStore.setState({
-      tabsById: { t1: { tabId: "t1", epicId: "e1", name: "Wire up billing" } },
-    });
+    presentEpicTab("t1", "e1", "Wire up billing");
     headerTitleState.role = "owner";
     renderAt("/epics/e1/t1");
     expect(
@@ -215,10 +251,11 @@ describe("MobileAppHeader", () => {
     ).toBeNull();
   });
 
-  it("renders route-contributed right actions from the slot store", async () => {
+  it("renders surface-contributed right actions from the slot store", async () => {
     useMobileHeaderStore.setState({
       rightActions: <button type="button">epic action</button>,
     });
+    presentEpicTab("t1", "e1", "Wire up billing");
     renderAt("/epics/e1/t1");
     expect(
       await screen.findByRole("button", { name: "epic action" }),

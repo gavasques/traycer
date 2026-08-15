@@ -1,6 +1,6 @@
 import { type ReactNode } from "react";
 import { ChevronRight, Menu } from "lucide-react";
-import { Link, useMatch, useRouterState } from "@tanstack/react-router";
+import { Link, useRouterState } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
 import { SETTINGS_SECTIONS } from "@/lib/settings-sections";
 import { RateLimitIconButton } from "@/components/layout/header/rate-limit-icon";
@@ -12,14 +12,16 @@ import { useMobileNavStore } from "@/stores/layout/mobile-nav-store";
 import { useMobileHeaderStore } from "@/stores/layout/mobile-header-store";
 import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
 import { useSettingsStore } from "@/stores/settings/settings-store";
+import { useTabsStore } from "@/stores/tabs/store";
+import { selectHostFocusedRef } from "@/stores/tabs/selectors";
 import { isHistoryPath } from "@/stores/tabs/kinds/history";
 import { isSettingsPath } from "@/stores/tabs/kinds/settings";
 
 /**
  * The phone app header. Replaces the desktop tab strip + control cluster with a
  * hamburger (opens the navigation drawer), the current surface title, and a
- * right slot the active route fills with its own actions. Rendered only below
- * md (see `AppHeader`), so desktop is untouched.
+ * right slot the focused surface fills with its own actions. Rendered only
+ * below md (see `AppHeader`), so desktop is untouched.
  */
 export function MobileAppHeader(): ReactNode {
   const setNavOpen = useMobileNavStore((state) => state.setOpen);
@@ -27,8 +29,9 @@ export function MobileAppHeader(): ReactNode {
   const showGlobalResourceMonitor = useSettingsStore(
     (state) => state.showGlobalResourceMonitor,
   );
-  const epicId = useMobileHeaderEpicId();
-  const title = useMobileHeaderTitle();
+  const epicTabId = useMobileHeaderEpicTabId();
+  const epicId = useMobileHeaderEpicId(epicTabId);
+  const title = useMobileHeaderTitle(epicTabId);
   const settingsSection = useSettingsSectionLabel();
   return (
     <header
@@ -65,8 +68,8 @@ export function MobileAppHeader(): ReactNode {
       {/* Right cluster: global status controls sit parallel to the hamburger,
           mirroring the desktop header's rate-limit + resource-monitor gating
           (navDisabled never applies here - MobileAppHeader only renders for the
-          "app" variant). They come before the route-provided actions so a
-          route's own controls (e.g. the epic overflow) land outermost. */}
+          "app" variant). They come before the surface-provided actions so a
+          surface's own controls (e.g. the epic overflow) land outermost. */}
       <div className="flex shrink-0 items-center gap-1">
         <RateLimitIconButton />
         {showGlobalResourceMonitor ? (
@@ -84,7 +87,7 @@ export function MobileAppHeader(): ReactNode {
 interface MobileHeaderTitleSlotProps {
   readonly title: string | null;
   readonly settingsSection: string | null;
-  /** The open epic on the epic route; null on every other surface. */
+  /** The open epic on the presented epic tab; null on every other surface. */
   readonly epicId: string | null;
 }
 
@@ -151,15 +154,33 @@ function MobileHeaderTitleSlot(props: MobileHeaderTitleSlotProps): ReactNode {
 }
 
 /**
- * The open epic's id on the epic route, null everywhere else.
+ * The tab id of the epic this phone is presenting, null when the focused
+ * surface is not an epic.
+ *
+ * Taken from the tab layout that renders the surface, NOT from a route match.
+ * The two are one activation seen twice, and only the layout survives a cold
+ * start: the phone shell has no URL bar and no route persistence (that is the
+ * Electron-only `createPersistentMemoryHistory`), so its WebView always boots
+ * at `/`, and `TabNavigationController` deliberately leaves a landing location
+ * alone rather than clobber the restored focus. A relaunch therefore paints the
+ * restored epic tab under a router still matching the landing route, and a
+ * header keyed on that match names nothing while the epic it belongs to fills
+ * the screen.
  */
-function useMobileHeaderEpicId(): string | null {
-  const epicId = useMatch({
-    from: "/epics/$epicId/$tabId",
-    shouldThrow: false,
-    select: (match) => match.params.epicId,
+function useMobileHeaderEpicTabId(): string | null {
+  return useTabsStore((state) => {
+    const focused = selectHostFocusedRef(state);
+    return focused === null || focused.kind !== "epic" ? null : focused.id;
   });
-  return epicId ?? null;
+}
+
+/**
+ * The presented epic's id, resolved through its tab record.
+ */
+function useMobileHeaderEpicId(epicTabId: string | null): string | null {
+  return useEpicCanvasStore((state) =>
+    epicTabId === null ? null : (state.tabsById[epicTabId]?.epicId ?? null),
+  );
 }
 
 /**
@@ -177,25 +198,20 @@ function useSettingsSectionLabel(): string | null {
 }
 
 /**
- * Derives the header title from the active route: the open epic's name on the
- * epic route, otherwise a per-surface label.
+ * Derives the header title from the presented surface: the open epic's name on
+ * an epic tab, otherwise a per-surface label.
  */
-function useMobileHeaderTitle(): string | null {
+function useMobileHeaderTitle(epicTabId: string | null): string | null {
   const pathname = useRouterState({
     select: (state) => state.location.pathname,
   });
-  const epicTabId = useMatch({
-    from: "/epics/$epicId/$tabId",
-    shouldThrow: false,
-    select: (match) => match.params.tabId,
-  });
   const epicName = useEpicCanvasStore((state) =>
-    epicTabId === undefined ? null : (state.tabsById[epicTabId]?.name ?? null),
+    epicTabId === null ? null : (state.tabsById[epicTabId]?.name ?? null),
   );
   // An epic whose name has not resolved yet falls through to no title rather
   // than to a placeholder, so the header never flashes a stand-in and then
   // swaps it for the real name.
-  if (epicTabId !== undefined && epicName !== null) return epicName;
+  if (epicTabId !== null && epicName !== null) return epicName;
   if (isSettingsPath(pathname)) return "Settings";
   if (isHistoryPath(pathname)) return "History";
   // Titles name a place you navigated TO. The composer surfaces - landing and

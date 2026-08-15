@@ -1,5 +1,6 @@
 import { useMatch } from "@tanstack/react-router";
 import { EpicRouteSessionBody } from "@/components/epic-canvas/epic-route-session-body";
+import { MobileEpicHeaderActionsBinder } from "@/components/epic-canvas/mobile/epic-mobile-header-actions";
 import { EpicSidebarColumn } from "@/components/epic-canvas/sidebar/epic-sidebar-column";
 import { useIsMobileViewport } from "@/hooks/ui/use-mobile-viewport";
 import {
@@ -41,6 +42,16 @@ export function EpicSurface(props: EpicSurfaceProps) {
     <PaneSurfaceActivityContext.Provider value={activity}>
       <PaneVisibilityContext.Provider value={activity.visible}>
         <EpicSessionProvider epicId={props.epicId} tabId={props.tabId}>
+          {/* Fills the mobile header's right-actions slot (the tab switcher
+              trigger) for the epic the tab layout has FOCUSED, not for the one
+              the route names. Only the focused surface writes, so the single
+              cell still has one owner, and the trigger appears on a phone cold
+              restore - where the layout restores the tab but the router boots
+              at `/`, leaving the route-active effects below unmounted. Self-
+              gates on mobile, so desktop renders nothing either way. */}
+          {activity.focused ? (
+            <MobileEpicHeaderActionsBinder tabId={props.tabId} />
+          ) : null}
           <EpicViewTabContext.Provider value={props.tabId}>
             <div
               className="flex min-h-0 min-w-0 flex-1 flex-row"

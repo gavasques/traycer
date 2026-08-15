@@ -17,6 +17,7 @@ import {
 } from "@traycer-clients/shared/auth/push-token-fetcher";
 import "./index.css";
 import { MobileRunnerHost } from "../mobile-runner-host";
+import { MobileLinkCodeScanner } from "../link-code-scanner";
 import {
   MobilePushRegistration,
   pushRegistrationTarget,
@@ -132,6 +133,12 @@ function bootstrap(): void {
     // entry registers nothing and must not name a scheme some other installed
     // app would answer.
     returnScheme: Capacitor.isNativePlatform() ? "traycer" : null,
+    // The ML Kit plugin has no web implementation, so the camera capability
+    // exists only on a native install; the browser entry keeps the manual
+    // code-entry path alone.
+    linkCodeScanner: Capacitor.isNativePlatform()
+      ? new MobileLinkCodeScanner()
+      : null,
   });
   // After the host exists: registration follows the token store (sign-in,
   // app start while signed in, sign-out), and the plugin listeners attach

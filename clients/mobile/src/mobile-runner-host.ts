@@ -35,6 +35,10 @@ import {
   type RevokeUserSessionFetchResult,
   type StepUpChallengeFetchResult,
 } from "@traycer-clients/shared/auth/devices-sessions-fetcher";
+import {
+  mintLinkLoginCodeViaHttp,
+  type MintLinkLoginCodeFetchResult,
+} from "@traycer-clients/shared/auth/link-login";
 import type { MintHostCredentialRequest } from "@traycer/protocol/auth/devices-sessions";
 import {
   fetchRegisteredHostsViaHttp,
@@ -57,6 +61,7 @@ import type {
   HostRestartRequestResult,
   IDeviceFlowHost,
   IHostPicker,
+  ILinkCodeScanner,
   INotificationHost,
   IRunnerHost,
   ISecureStorage,
@@ -97,6 +102,12 @@ export interface MobileRunnerHostOptions {
    * would launch an installed production app instead.
    */
   readonly returnScheme: string | null;
+  /**
+   * Native QR scanner for link-login sign-in, or `null` where no camera
+   * exists (the dev web entry, tests). Constructed by the entry point so the
+   * ML Kit plugin import stays out of this module's web-safe dependency set.
+   */
+  readonly linkCodeScanner: ILinkCodeScanner | null;
 }
 
 const STEP_UP_EXPIRY_SKEW_MS = 5_000;
@@ -149,6 +160,7 @@ export class MobileRunnerHost implements IRunnerHost {
   readonly migration = null;
   readonly hostManagement = null;
   readonly hostTray = null;
+  readonly linkCodeScanner: ILinkCodeScanner | null;
   readonly deviceFlow: IDeviceFlowHost;
   private retainedStepUpCredential: RetainedStepUpCredential | null = null;
   private readonly systemResume = new MobileSystemResume();
@@ -157,6 +169,7 @@ export class MobileRunnerHost implements IRunnerHost {
     this.signInUrl = options.signInUrl;
     this.authnBaseUrl = options.authnBaseUrl;
     this.relayBaseUrl = options.relayBaseUrl;
+    this.linkCodeScanner = options.linkCodeScanner;
     this.notifications = buildNotifications(options.pushRegistration);
     this.tokenStore = new MobileTokenStore(
       this.secureStorage,
@@ -245,6 +258,15 @@ export class MobileRunnerHost implements IRunnerHost {
     bearerToken: string,
   ): Promise<StepUpChallengeFetchResult> {
     return requestStepUpChallengeViaHttp(this.authnBaseUrl, bearerToken);
+  }
+
+  mintLinkLoginCode(
+    bearerToken: string,
+    signal: AbortSignal,
+  ): Promise<MintLinkLoginCodeFetchResult> {
+    // In-process shell: the shared HTTP helper runs directly, and the caller's
+    // signal aborts the request for real.
+    return mintLinkLoginCodeViaHttp(this.authnBaseUrl, bearerToken, signal);
   }
 
   async verifyStepUpChallenge(

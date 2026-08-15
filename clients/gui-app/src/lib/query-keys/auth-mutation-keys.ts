@@ -1,5 +1,6 @@
 export const authMutationKeys = {
   signIn: () => ["auth", "signIn"] as const,
+  signInWithLinkCode: () => ["auth", "signInWithLinkCode"] as const,
   openVerificationPage: () => ["auth", "openVerificationPage"] as const,
   // Remote Host Support (§13, T16): "Update now" / auto-policy toggle /
   // "Apply now — ends N sessions", scoped per host so concurrent writes to

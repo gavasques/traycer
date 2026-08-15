@@ -50,6 +50,10 @@ import {
   type RevokeUserSessionFetchResult,
   type StepUpChallengeFetchResult,
 } from "../../auth/devices-sessions-fetcher";
+import {
+  mintLinkLoginCodeViaHttp,
+  type MintLinkLoginCodeFetchResult,
+} from "../../auth/link-login";
 import type { MintHostCredentialRequest } from "@traycer/protocol/auth/devices-sessions";
 import {
   credentialsIdentityFromAuthenticatedUser,
@@ -313,6 +317,15 @@ export class MockRunnerHost implements IRunnerHost {
   ): Promise<StepUpChallengeFetchResult> {
     return requestStepUpChallengeViaHttp(this.authnBaseUrl, bearerToken);
   }
+
+  mintLinkLoginCode(
+    bearerToken: string,
+    signal: AbortSignal,
+  ): Promise<MintLinkLoginCodeFetchResult> {
+    return mintLinkLoginCodeViaHttp(this.authnBaseUrl, bearerToken, signal);
+  }
+
+  readonly linkCodeScanner = null;
 
   async verifyStepUpChallenge(
     bearerToken: string,

@@ -29,6 +29,9 @@ export function createFakeRunnerHost(
       Promise.resolve({ kind: "network-error" as const }),
     verifyStepUpChallenge: () =>
       Promise.resolve({ kind: "network-error" as const }),
+    mintLinkLoginCode: () =>
+      Promise.resolve({ kind: "network-error" as const }),
+    linkCodeScanner: null,
     updateHostVersionPolicy: () =>
       Promise.resolve({ kind: "network-error" as const }),
     deregisterHostFromAccount: () =>

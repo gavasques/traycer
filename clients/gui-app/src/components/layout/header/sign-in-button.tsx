@@ -3,7 +3,9 @@ import { useAuthServiceError } from "@/hooks/auth/use-auth-service-error";
 import { useAuthService } from "@/lib/host";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth/auth-store";
+import { isMobileApp } from "@/lib/mobile-app";
 import { DeviceCodeProgress } from "./sign-in/device-code-progress";
+import { LinkCodeSignIn } from "./sign-in/link-code-sign-in";
 import {
   PrimarySignInButton,
   RetrySignInButton,
@@ -68,6 +70,11 @@ export function SignInButton(props: SignInButtonProps) {
         <>
           <PrimarySignInButton isHero={isHero} isSigningIn={isSigningIn} />
           <RetrySignInButton isHero={isHero} isSigningIn={isSigningIn} />
+          {/* Product-gated, not capability-gated: the mobile APP offers the
+              link-code path even where the camera capability is absent (the
+              simulator, the dev web entry) because typing the code is the
+              same flow without the scan shortcut. */}
+          {isMobileApp() ? <LinkCodeSignIn isHero={isHero} /> : null}
         </>
       )}
     </div>

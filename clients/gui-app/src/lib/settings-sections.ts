@@ -8,6 +8,7 @@ import {
   Keyboard,
   LineChart,
   Palette,
+  QrCode,
   Server,
   ShieldCheck,
   Settings as SettingsIcon,
@@ -25,6 +26,7 @@ export type SettingsSectionId =
   | "worktrees"
   | "host"
   | "devices"
+  | "link-phone"
   // Two sections, both labelled "Diagnostics", and the group they sit in is
   // what distinguishes them — `app-diagnostics` is this window's own logging
   // and heap, `diagnostics` is the selected host's. The host one keeps the
@@ -147,6 +149,14 @@ export const SETTINGS_SECTIONS: ReadonlyArray<SettingsSection> = [
     id: "devices",
     label: "Sessions",
     icon: ShieldCheck,
+    group: "account",
+  },
+  // Account, like Sessions: the code it mints signs the PHONE into the
+  // account, regardless of which host this window looks at.
+  {
+    id: "link-phone",
+    label: "Link a phone",
+    icon: QrCode,
     group: "account",
   },
   // Account, not Host: what this reports is the ACCOUNT's token and cost

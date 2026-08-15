@@ -91,6 +91,10 @@ import type {
   StepUpChallengeFetchResult,
   RetainedStepUpVerifyFetchResult,
 } from "@traycer-clients/shared/auth/devices-sessions-fetcher";
+import {
+  mintLinkLoginCodeViaHttp,
+  type MintLinkLoginCodeFetchResult,
+} from "@traycer-clients/shared/auth/link-login";
 import type { MintHostCredentialRequest } from "@traycer/protocol/auth/devices-sessions";
 import type {
   UpdateHostVersionPolicyFetchResult,
@@ -833,6 +837,22 @@ export class DesktopRunnerHost implements IRunnerHost {
     bearerToken: string,
   ): Promise<RevokeAllSessionsFetchResult> {
     return this.bridge.revokeAllSessions(bearerToken);
+  }
+
+  // No camera on the desktop shell; sign-in by link code is a phone surface.
+  readonly linkCodeScanner = null;
+
+  mintLinkLoginCode(
+    bearerToken: string,
+    signal: AbortSignal,
+  ): Promise<MintLinkLoginCodeFetchResult> {
+    // Runs in the renderer rather than behind the preload bridge: unlike the
+    // session list above there is no retained-credential handling here, and
+    // the dev renderer origin is on authn's dev CORS allow-list. A packaged
+    // desktop build that needs this surface routes it through Electron main
+    // like `listUserSessions` — until then a blocked origin surfaces as
+    // `network-error`, never a broken auth state.
+    return mintLinkLoginCodeViaHttp(this.authnBaseUrl, bearerToken, signal);
   }
 
   mintHostCredential(

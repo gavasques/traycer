@@ -225,6 +225,9 @@ function createBaseRunnerHost(): IRunnerHost {
       Promise.resolve({ kind: "network-error" as const }),
     verifyStepUpChallenge: () =>
       Promise.resolve({ kind: "network-error" as const }),
+    mintLinkLoginCode: () =>
+      Promise.resolve({ kind: "network-error" as const }),
+    linkCodeScanner: null,
     openExternalLink: () => Promise.resolve(),
     getRegisteredUrlSchemes: () => Promise.resolve([]),
     requestMicrophoneAccess: () => Promise.resolve("granted" as const),

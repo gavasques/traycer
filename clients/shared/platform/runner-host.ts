@@ -8,6 +8,7 @@ import type {
   StepUpChallengeFetchResult,
   RetainedStepUpVerifyFetchResult,
 } from "../auth/devices-sessions-fetcher";
+import type { MintLinkLoginCodeFetchResult } from "../auth/link-login";
 import type { MintHostCredentialRequest } from "@traycer/protocol/auth/devices-sessions";
 import type { HostListFetchResult } from "../host-client/remote-fetcher";
 import type { LiveHostAvailability } from "../host-client/host-directory";
@@ -162,6 +163,28 @@ export interface IRunnerHost {
   requestStepUpChallenge(
     bearerToken: string,
   ): Promise<StepUpChallengeFetchResult>;
+
+  /**
+   * Mints a one-time link-login code under the user bearer — the "Link a
+   * phone" QR surface. The RESULT carries the raw code back into the renderer
+   * by necessity: the QR that must display it renders there. The code is
+   * short-lived and single-use, and the surface re-mints while open, so the
+   * renderer never holds a long-lived secret.
+   */
+  mintLinkLoginCode(
+    bearerToken: string,
+    signal: AbortSignal,
+  ): Promise<MintLinkLoginCodeFetchResult>;
+
+  /**
+   * Native QR scanner for the link-login sign-in path, or `null` where no
+   * camera scanner exists (desktop, plain browser, tests). A capability, not
+   * identity (see `lib/mobile-app.ts` in gui-app): the paste-the-code
+   * fallback must render regardless, because a null scanner — and a denied
+   * camera permission on a non-null one — are both ordinary states of the
+   * same surface.
+   */
+  readonly linkCodeScanner: ILinkCodeScanner | null;
 
   /**
    * Verifies a step-up OTP and retains the short-TTL bearer credential inside
@@ -657,6 +680,29 @@ export interface IServiceHost {
    * `null` when the log file is missing or unreadable.
    */
   getLogTail(maxLines: number): Promise<string | null>;
+}
+
+/**
+ * One attempt of the native link-login QR scan. `scanned` carries the RAW
+ * decoded text — parsing it into a code (`parseLinkLoginInput`) is the
+ * caller's job, so a QR that is not a Traycer payload surfaces as a visible
+ * "not a link code" state rather than being silently swallowed here.
+ * `permission-denied` is a first-class outcome, not an error: the surface
+ * falls back to manual code entry.
+ */
+export type LinkCodeScanResult =
+  | { readonly kind: "scanned"; readonly text: string }
+  | { readonly kind: "permission-denied" }
+  | { readonly kind: "canceled" }
+  | { readonly kind: "error" };
+
+/**
+ * A native camera QR scanner. Present only on shells that physically have one
+ * (`IRunnerHost.linkCodeScanner`); `scan()` owns the whole native interaction
+ * including the permission prompt and the fullscreen scan UI.
+ */
+export interface ILinkCodeScanner {
+  scan(): Promise<LinkCodeScanResult>;
 }
 
 /**

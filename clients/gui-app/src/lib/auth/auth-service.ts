@@ -24,6 +24,10 @@ import type {
   RevokeUserSessionFetchResult,
   StepUpChallengeFetchResult,
 } from "@traycer-clients/shared/auth/devices-sessions-fetcher";
+import {
+  redeemLinkLoginCodeViaHttp,
+  type MintLinkLoginCodeFetchResult,
+} from "@traycer-clients/shared/auth/link-login";
 import type {
   UpdateHostVersionPolicyFetchResult,
   UpdateHostVersionPolicyInput,
@@ -72,6 +76,19 @@ import { AuthTokenStore } from "./auth-token-store";
 // shared file, then wipes them.
 const LEGACY_ACCESS_TOKEN_KEY = "traycer.token";
 const LEGACY_REFRESH_TOKEN_KEY = "traycer.refresh-token";
+
+/**
+ * Terminal outcome of {@link AuthService.signInWithLinkCode}. `invalid-code`
+ * covers expired, used, and never-existed codes indistinguishably (the server
+ * does not say which); `failed` is a local failure after a successful redeem
+ * (validation, persistence, or a superseding transition).
+ */
+export type LinkLoginSignInResult =
+  | { readonly kind: "signed-in" }
+  | { readonly kind: "invalid-code" }
+  | { readonly kind: "rate-limited" }
+  | { readonly kind: "network-error" }
+  | { readonly kind: "failed" };
 
 /**
  * Thrown when a read is asked for on behalf of a credential era that is no
@@ -1832,6 +1849,20 @@ export class AuthService {
     return this.runnerHost.requestStepUpChallenge(this.currentBearer);
   }
 
+  /**
+   * Mints a one-time link-login code for the "Link a phone" QR surface. The
+   * raw bearer stays inside this auth boundary; the panel consumes only the
+   * short-lived one-time code, which is itself the thing being displayed.
+   */
+  async mintLinkLoginCode(
+    signal: AbortSignal,
+  ): Promise<MintLinkLoginCodeFetchResult> {
+    if (this.currentBearer === null) {
+      return { kind: "unauthorized" };
+    }
+    return this.runnerHost.mintLinkLoginCode(this.currentBearer, signal);
+  }
+
   async verifyStepUpChallenge(
     code: string,
   ): Promise<RetainedStepUpVerifyFetchResult> {
@@ -2529,6 +2560,49 @@ export class AuthService {
       this.authResolvedDuringStart = true;
     }
     this.applyFailure(deviceFailureError(result));
+  }
+
+  /**
+   * Link-code sign-in: redeems a one-time code scanned from (or shown by) a
+   * signed-in desktop and lands the minted pair through the SAME validate →
+   * persist → signed-in tail as a device-flow authorization
+   * (`applyTokenInternal`), so the resulting session is indistinguishable from
+   * any other sign-in to the rest of the app.
+   *
+   * Any in-flight device attempt is discarded first: the shared tail is
+   * invoked with the cold-start epoch (`null`), which is only current while no
+   * attempt is live — and the user redeeming a code has visibly chosen this
+   * path over the one that was waiting.
+   */
+  async signInWithLinkCode(code: string): Promise<LinkLoginSignInResult> {
+    if (this.isDisposed()) {
+      return { kind: "failed" };
+    }
+    this.clearPendingTimeout();
+    this.discardActiveAttempt();
+    const redeemed = await redeemLinkLoginCodeViaHttp(
+      this.runnerHost.authnBaseUrl,
+      code,
+    );
+    if (this.isDisposed()) {
+      return { kind: "failed" };
+    }
+    if (redeemed.kind !== "ok") {
+      // Terminal, user-visible failure — surface the retry CTA exactly like a
+      // failed device attempt. `invalid-code` deliberately reads the same for
+      // expired, used, and never-existed codes; the server does not say which.
+      this.applyFailure(AUTH_ERROR_SIGN_IN_FAILED);
+      return redeemed.kind === "invalid-code" ||
+        redeemed.kind === "rate-limited"
+        ? { kind: redeemed.kind }
+        : { kind: "network-error" };
+    }
+    const applied = await this.applyTokenInternal(
+      redeemed.response.token,
+      redeemed.response.refreshToken,
+      null,
+    );
+    return applied ? { kind: "signed-in" } : { kind: "failed" };
   }
 
   /**

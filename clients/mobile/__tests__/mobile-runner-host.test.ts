@@ -36,6 +36,7 @@ function runner(returnScheme: string | null): MobileRunnerHost {
     // click sink with `null` is the dev-web no-op these tests always had.
     pushRegistration: null,
     returnScheme,
+    linkCodeScanner: null,
   });
 }
 

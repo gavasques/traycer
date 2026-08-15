@@ -11,8 +11,9 @@ import { useAuthStore } from "@/stores/auth/auth-store";
 
 // Re-mint comfortably inside the code's 60s TTL, so the rendered QR is always
 // live: a phone that scans just before rotation still has several seconds to
-// redeem before the pictured code expires.
-const LINK_LOGIN_REMINT_MS = 50_000;
+// redeem before the pictured code expires. Exported so the panel's countdown
+// can derive the rotation moment from the same cadence rather than a copy.
+export const LINK_LOGIN_REMINT_MS = 50_000;
 
 function linkLoginCodeQueryOptions(
   auth: AuthService | null,

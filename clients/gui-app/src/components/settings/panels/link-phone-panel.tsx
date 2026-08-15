@@ -5,7 +5,10 @@ import { SettingsPanelShell } from "@/components/settings/settings-panel-shell";
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useAuthLinkLoginCode } from "@/hooks/auth/use-link-login-code-query";
+import {
+  LINK_LOGIN_REMINT_MS,
+  useAuthLinkLoginCode,
+} from "@/hooks/auth/use-link-login-code-query";
 import { useAuthStore } from "@/stores/auth/auth-store";
 
 /**
@@ -48,6 +51,39 @@ function LinkLoginQr(props: { readonly code: string }) {
       // as a tile on both themes without re-rendering the matrix.
       className="aspect-square w-full max-w-64 rounded-lg ring-1 ring-border/60"
     />
+  );
+}
+
+/**
+ * Ticks down to the moment the query's interval mints the next code. The
+ * rotation happens `expiresIn − LINK_LOGIN_REMINT_MS/1000` seconds before the
+ * shown code's expiry, so the target derives from the mint response the panel
+ * already holds — no extra requests, just a local 1s clock.
+ */
+function LinkCodeRotation(props: {
+  readonly expiresAtEpochSeconds: number;
+  readonly expiresInSeconds: number;
+}) {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNowMs(Date.now());
+    }, 1_000);
+    return () => {
+      clearInterval(timer);
+    };
+  }, []);
+  const rotationLeadMs =
+    props.expiresInSeconds * 1_000 - LINK_LOGIN_REMINT_MS;
+  const nextCodeAtMs = props.expiresAtEpochSeconds * 1_000 - rotationLeadMs;
+  const secondsLeft = Math.max(0, Math.ceil((nextCodeAtMs - nowMs) / 1_000));
+  return (
+    <p
+      className="text-ui-xs text-muted-foreground tabular-nums"
+      data-testid="link-phone-countdown"
+    >
+      New code in {secondsLeft}s
+    </p>
   );
 }
 
@@ -116,6 +152,18 @@ export function LinkPhonePanel() {
               <code className="w-full rounded-md border border-border/60 bg-muted/40 px-3 py-2 text-center font-mono text-ui-xs break-all select-all">
                 {code.data.code}
               </code>
+              <div className="flex flex-col items-center gap-0.5">
+                <LinkCodeRotation
+                  expiresAtEpochSeconds={code.data.expires_at}
+                  expiresInSeconds={code.data.expires_in}
+                />
+                <p
+                  className="text-ui-xs text-muted-foreground"
+                  data-testid="link-phone-single-use-hint"
+                >
+                  Each code signs in one phone and expires in a minute.
+                </p>
+              </div>
             </div>
           </>
         )}

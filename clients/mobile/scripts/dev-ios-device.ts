@@ -113,6 +113,23 @@ const lanUrls: DevRunUrls = {
 };
 const env = deviceLaneEnv(slot, lanUrls, lanIp, port);
 
+// Fail fast on the Mac when the backend stack is down: `run.json` outlives
+// the processes it describes, and a phone pointed at a dead authn reports
+// only an in-app "Couldn't reach the sign-in service" — this probe turns
+// that into an actionable error before anything is built or installed. Any
+// HTTP status counts as alive; only a transport failure means "not running".
+const authnAlive = await fetch(lanUrls.authnBaseUrl, {
+  signal: AbortSignal.timeout(3_000),
+}).then(
+  () => true,
+  () => false,
+);
+if (!authnAlive) {
+  throw new Error(
+    `authn is not answering at ${lanUrls.authnBaseUrl} — the ${slot} backend stack is not running (start \`make dev-gui-app\` in the internal repository first)`,
+  );
+}
+
 buildLanWebAssets(env);
 
 console.log(`[device] slot=${slot}`);

@@ -2465,9 +2465,6 @@ export class AuthService {
       return false;
     }
     if (outcome.kind === "valid") {
-      // Consume the attempt so a subsequent replayed device result cannot
-      // re-apply the same token.
-      this.clearActiveAttempt();
       // Interactive sign-in: write the freshly-minted pair + validated identity to
       // the shared credentials file. `signIn` stamps `savedAt` in main and
       // rejects if the write cannot land. This is the file the host's
@@ -2476,6 +2473,12 @@ export class AuthService {
       // connection, closing the UNAUTHORIZED race that would burn refresh tokens.
       // (This subsumes the old best-effort `ensureLocalProvisioning`/`cliLogin`
       // seed, which would now be a second, unsynchronized writer to the same file.)
+      //
+      // The attempt stays ACTIVE through this durable write — it is consumed
+      // only after the post-save fence below passes. The fence must cover the
+      // write itself, not just the projection: a supersession landing mid-save
+      // otherwise leaves this attempt's credentials on disk where a failed
+      // successor's next launch would rehydrate them.
       const signInError: unknown = await this.tokenStore
         .signIn({ token, refreshToken }, identityFromUser(outcome.user))
         .then(
@@ -2485,14 +2488,22 @@ export class AuthService {
       // Checked before acting on the outcome: a transition (or dispose) that
       // landed during the write owns the state now, so neither the signed-in
       // projection nor the failure projection below may run for this stale
-      // finalization.
-      if (!this.isIdentityCurrent(generation)) {
+      // finalization — and the durable write this stale finalization just
+      // made must not survive it either.
+      if (
+        !this.isIdentityCurrent(generation) ||
+        !this.isAttemptCurrent(expectedOAuthEpoch)
+      ) {
         appLogger.debug(
           "[auth] dropped sign-in finalization superseded during token save",
           {},
         );
+        await this.undoSupersededCredentialSave(token);
         return false;
       }
+      // Consume the attempt now that the save is settled and still ours; a
+      // replayed device result for this epoch is stale from here on.
+      this.clearActiveAttempt();
       if (signInError !== null) {
         // Without the persisted pair the "signed-in" projection would be a
         // lie the next launch cannot rehydrate and the rotate cannot refresh.
@@ -2521,6 +2532,27 @@ export class AuthService {
     this.clearActiveAttempt();
     this.applyFailure(AUTH_ERROR_SIGN_IN_FAILED);
     return false;
+  }
+
+  /**
+   * Best-effort undo for a credential save whose attempt was superseded
+   * mid-write: remove the pair ONLY if the store still holds exactly the
+   * token this stale finalization wrote — a successor that has already
+   * written its own pair must never be deleted. Failures are logged and
+   * swallowed; the caller is already returning a silent no-op.
+   */
+  private async undoSupersededCredentialSave(token: string): Promise<void> {
+    try {
+      const stored = await this.tokenStore.get();
+      if (stored !== null && stored.token === token) {
+        await this.tokenStore.delete();
+      }
+    } catch (error) {
+      appLogger.warn(
+        "[auth] failed to undo a superseded credential save",
+        { error: describeLogError(error) },
+      );
+    }
   }
 
   /**

@@ -7,14 +7,11 @@ import { SettingsPanelShell } from "@/components/settings/settings-panel-shell";
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { LINK_LOGIN_REMINT_MS } from "@/hooks/auth/use-link-login-code-query";
 import {
-  LINK_LOGIN_REMINT_MS,
-  useAuthLinkLoginCode,
-} from "@/hooks/auth/use-link-login-code-query";
-import {
-  useAuthLinkLoginStatus,
-  type LinkLoginStatusDatum,
-} from "@/hooks/auth/use-link-login-status-query";
+  useLinkLoginWatch,
+  type LiveClaim,
+} from "@/hooks/auth/use-link-login-watch";
 import { useRespondLinkLoginMutation } from "@/hooks/auth/use-respond-link-login-mutation";
 import { useAuthStore } from "@/stores/auth/auth-store";
 
@@ -91,55 +88,6 @@ function LinkCodeRotation(props: {
       New code in {secondsLeft}s
     </p>
   );
-}
-
-interface LiveClaim {
-  readonly code: string;
-  readonly claimedAt: number;
-  readonly address: string | null;
-  readonly userAgent: string | null;
-  readonly location: string | null;
-}
-
-function claimFromStatus(
-  code: string | null,
-  datum: LinkLoginStatusDatum | null | undefined,
-): LiveClaim | null {
-  if (
-    code === null ||
-    datum === null ||
-    datum === undefined ||
-    datum === "gone" ||
-    datum.status !== "claimed" ||
-    datum.claimant === null
-  ) {
-    return null;
-  }
-  return {
-    code,
-    claimedAt: datum.claimant.claimedAt ?? 0,
-    address: datum.claimant.address,
-    userAgent: datum.claimant.userAgent,
-    location: datum.claimant.location,
-  };
-}
-
-/**
- * First claim wins across EVERY code this panel still watches — including
- * the previous QR inside its rotation grace, so a phone that scanned just
- * before rotation still surfaces here. Ties resolve to the earliest claim.
- */
-function earliestClaim(
-  first: LiveClaim | null,
-  second: LiveClaim | null,
-): LiveClaim | null {
-  if (first === null) {
-    return second;
-  }
-  if (second === null) {
-    return first;
-  }
-  return second.claimedAt < first.claimedAt ? second : first;
 }
 
 /**
@@ -322,31 +270,9 @@ function MintErrorCard(props: {
 export function LinkPhonePanel() {
   const signedIn = useAuthStore((s) => s.status === "signed-in");
   const [approvedDone, setApprovedDone] = useState(false);
-  const [mintedCodes, setMintedCodes] = useState<readonly string[]>([]);
   const respond = useRespondLinkLoginMutation();
-
-  const watching = signedIn && !approvedDone;
-  const currentStatus = useAuthLinkLoginStatus(
-    watching ? (mintedCodes[0] ?? null) : null,
-  );
-  const previousStatus = useAuthLinkLoginStatus(
-    watching ? (mintedCodes[1] ?? null) : null,
-  );
-  const claim = earliestClaim(
-    claimFromStatus(mintedCodes[0] ?? null, currentStatus.data),
-    claimFromStatus(mintedCodes[1] ?? null, previousStatus.data),
-  );
-
-  // Rotation freezes the moment any watched code is claimed: the user must
-  // decide on THAT claimant, not be shown a fresh QR.
-  const code = useAuthLinkLoginCode(watching && claim === null);
+  const { claim, code } = useLinkLoginWatch(signedIn && !approvedDone);
   const minted = code.data ?? null;
-  if (minted !== null && mintedCodes[0] !== minted.code) {
-    // Adjust-during-render (guarded): remember the codes this panel put on
-    // screen. The two newest cover every still-claimable window — the 60s
-    // code TTL spans at most one 50s rotation.
-    setMintedCodes([minted.code, ...mintedCodes].slice(0, 2));
-  }
 
   const restart = () => {
     setApprovedDone(false);
@@ -375,58 +301,94 @@ export function LinkPhonePanel() {
     );
   };
 
-  let body: React.ReactNode;
-  if (!signedIn) {
-    body = (
-      <p className="text-ui-sm text-muted-foreground">
-        Sign in on this device first — the phone takes over this account.
-      </p>
-    );
-  } else if (approvedDone) {
-    body = <ApprovedCard onRestart={restart} />;
-  } else if (claim !== null) {
-    body = (
-      <ConfirmClaimCard
-        claim={claim}
-        busy={respond.isPending}
-        onDecide={decide}
-      />
-    );
-  } else if (minted !== null) {
-    body = <ShowingCard minted={minted} />;
-  } else if (code.isError) {
-    body = (
-      <MintErrorCard
-        message={
-          code.error instanceof Error
-            ? code.error.message
-            : "Could not mint a link code."
-        }
-        retrying={code.isRefetching}
-        onRetry={() => {
-          void code.refetch();
-        }}
-      />
-    );
-  } else {
-    body = (
-      <div className="flex flex-col items-center gap-3">
-        <Skeleton className="aspect-square w-full max-w-64 rounded-lg" />
-        <AgentSpinningDots
-          className={undefined}
-          testId={undefined}
-          variant={undefined}
-        />
-      </div>
-    );
-  }
-
   return (
     <SettingsPanelShell
       title="Link a phone"
       description="Sign the Traycer mobile app in by scanning a code from this device. Scanning alone signs nothing in — you approve each phone here before it gets access."
     >
-      <div className="flex flex-col items-center gap-6 p-6">{body}</div>
+      <div className="flex flex-col items-center gap-6 p-6">
+        <LinkPhonePanelBody
+          signedIn={signedIn}
+          approvedDone={approvedDone}
+          claim={claim}
+          minted={minted}
+          code={{
+            isError: code.isError,
+            isRefetching: code.isRefetching,
+            error: code.error,
+            refetch: () => {
+              void code.refetch();
+            },
+          }}
+          respondPending={respond.isPending}
+          onDecide={decide}
+          onRestart={restart}
+        />
+      </div>
     </SettingsPanelShell>
+  );
+}
+
+interface PanelCodeView {
+  readonly isError: boolean;
+  readonly isRefetching: boolean;
+  readonly error: unknown;
+  readonly refetch: () => void;
+}
+
+function LinkPhonePanelBody(props: {
+  readonly signedIn: boolean;
+  readonly approvedDone: boolean;
+  readonly claim: LiveClaim | null;
+  readonly minted: MintLinkLoginCodeResponse | null;
+  readonly code: PanelCodeView;
+  readonly respondPending: boolean;
+  readonly onDecide: (approve: boolean) => void;
+  readonly onRestart: () => void;
+}) {
+  if (!props.signedIn) {
+    return (
+      <p className="text-ui-sm text-muted-foreground">
+        Sign in on this device first — the phone takes over this account.
+      </p>
+    );
+  }
+  if (props.approvedDone) {
+    return <ApprovedCard onRestart={props.onRestart} />;
+  }
+  if (props.claim !== null) {
+    return (
+      <ConfirmClaimCard
+        claim={props.claim}
+        busy={props.respondPending}
+        onDecide={props.onDecide}
+      />
+    );
+  }
+  if (props.minted !== null) {
+    return <ShowingCard minted={props.minted} />;
+  }
+  if (props.code.isError) {
+    return (
+      <MintErrorCard
+        message={
+          props.code.error instanceof Error
+            ? props.code.error.message
+            : "Could not mint a link code."
+        }
+        retrying={props.code.isRefetching}
+        onRetry={props.code.refetch}
+      />
+    );
+  }
+  return (
+    <div className="flex flex-col items-center gap-3">
+      <Skeleton className="aspect-square w-full max-w-64 rounded-lg" />
+      <AgentSpinningDots
+        className={undefined}
+        testId={undefined}
+        variant={undefined}
+      />
+    </div>
   );
 }

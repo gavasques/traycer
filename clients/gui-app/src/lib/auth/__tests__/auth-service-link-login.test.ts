@@ -7,11 +7,52 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MockRunnerHost } from "@traycer-clients/shared/host-client/mock/mock-runner-host";
+import type {
+  ITokenStore,
+  StoredCredentials,
+  StoredCredentialsIdentity,
+} from "@traycer-clients/shared/platform/runner-host";
 import { AuthService } from "@/lib/auth/auth-service";
 import { useAuthStore } from "@/stores/auth/auth-store";
 
 const CLAIM_URL = "http://localhost:5005/api/v3/auth/link/claim";
 const TOKEN_URL = "http://localhost:5005/api/v3/auth/link/token";
+const VALIDATION_URL = "http://localhost:5005/api/v3/user";
+
+const PROFILE_BODY = {
+  user: {
+    id: "user-1",
+    name: "Test User",
+    providerId: "gh-1",
+    providerHandle: "test-user",
+    providerType: "GITHUB",
+    email: "test@example.com",
+    avatarUrl: null,
+    activatedAt: null,
+    createdAt: "2024-01-01T00:00:00.000Z",
+    updatedAt: "2024-01-01T00:00:00.000Z",
+    lastSeenAt: null,
+    privacyMode: false,
+    isLearningEnabled: true,
+  },
+  userSubscription: {
+    id: "sub-1",
+    userID: "user-1",
+    orgID: null,
+    teamID: null,
+    customerId: "cus-1",
+    createdAt: "2024-01-01T00:00:00.000Z",
+    updatedAt: "2024-01-01T00:00:00.000Z",
+    subscriptionExpiry: null,
+    trialEndsAt: null,
+    subscriptionStatus: "FREE",
+    hasPaymentMethod: false,
+    isInTrial: false,
+    rechargeRateSeconds: 0,
+  },
+  teamSubscriptions: [],
+  payAsYouGoUsage: { allowPayAsYouGo: false },
+};
 
 const trackedServices: AuthService[] = [];
 
@@ -41,12 +82,15 @@ function json(body: object, status: number): Response {
 interface LinkFetchScript {
   /** Mutable: the next token-poll outcome. */
   tokenResponse: () => Response;
+  /** Mutable: the /api/v3/user identity-validation outcome. */
+  validationResponse: () => Response;
   readonly tokenPolls: string[];
 }
 
 function installLinkFetch(): { script: LinkFetchScript; restore: () => void } {
   const script: LinkFetchScript = {
     tokenResponse: () => json({ error: "authorization_pending" }, 428),
+    validationResponse: () => new Response(null, { status: 401 }),
     tokenPolls: [],
   };
   const originalFetch: unknown = (globalThis as { fetch?: unknown }).fetch;
@@ -64,7 +108,10 @@ function installLinkFetch(): { script: LinkFetchScript; restore: () => void } {
         script.tokenPolls.push(url);
         return Promise.resolve(script.tokenResponse());
       }
-      // Anything else (validation, refresh) answering 401 keeps stray calls
+      if (url === VALIDATION_URL) {
+        return Promise.resolve(script.validationResponse());
+      }
+      // Anything else (refresh, sessions) answering 401 keeps stray calls
       // from accidentally signing anything in.
       return Promise.resolve(new Response(null, { status: 401 }));
     },
@@ -150,6 +197,64 @@ describe("link-login attempt fence", () => {
       expect(service.getLastError()).toBeNull();
       expect(useAuthStore.getState().status).toBe(statusAfterSupersede);
       await deviceSignIn;
+    } finally {
+      restore();
+    }
+  });
+
+  it("a supersession landing MID-SAVE undoes the durable credential write", async () => {
+    const { service, host } = makeService();
+    const { script, restore } = installLinkFetch();
+    // Pause the credential save at the durable-store boundary.
+    const realStore: ITokenStore = host.tokenStore;
+    let releaseSave: () => void = () => undefined;
+    let saveEntered: () => void = () => undefined;
+    const saveEnteredPromise = new Promise<void>((resolve) => {
+      saveEntered = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      releaseSave = resolve;
+    });
+    const originalSignIn = realStore.signIn.bind(realStore);
+    Object.defineProperty(realStore, "signIn", {
+      configurable: true,
+      value: async (
+        tokens: { readonly token: string; readonly refreshToken: string },
+        identity: StoredCredentialsIdentity,
+      ): Promise<void> => {
+        saveEntered();
+        await gate;
+        return originalSignIn(tokens, identity);
+      },
+    });
+    try {
+      script.validationResponse = () => json(PROFILE_BODY, 200);
+      script.tokenResponse = () =>
+        json(
+          { token: "attempt-a-token", refreshToken: "attempt-a-r", familyId: "f" },
+          200,
+        );
+      const linkResult = service.signInWithLinkCode("ABCDE-FGHJK");
+      // Reach the paused save: claim, one poll (authorized), validation.
+      await vi.advanceTimersByTimeAsync(1_100);
+      await saveEnteredPromise;
+
+      // B starts (superseding A mid-save) and immediately fails to launch.
+      Object.defineProperty(host.deviceFlow, "start", {
+        configurable: true,
+        value: () => Promise.resolve(null),
+      });
+      const deviceSignIn = service.signIn();
+      await vi.advanceTimersByTimeAsync(10);
+      await deviceSignIn;
+
+      // A's paused write now lands — and must be undone, not persisted.
+      releaseSave();
+      const result = await linkResult;
+      expect(result.kind).toBe("failed");
+      const stored: StoredCredentials | null = await realStore.get();
+      expect(stored).toBeNull();
+      expect(useAuthStore.getState().status).not.toBe("signed-in");
     } finally {
       restore();
     }

@@ -63,6 +63,12 @@ function respondIdle() {
   return { isPending: false, mutate: vi.fn() };
 }
 
+let currentView: { rerender: (ui: React.ReactElement) => void } | null = null;
+
+function viewRerender(): void {
+  currentView?.rerender(<LinkPhonePanel />);
+}
+
 beforeEach(() => {
   vi.useFakeTimers();
   mocks.useAuthLinkLoginStatus.mockReturnValue(statusResult(null));
@@ -169,37 +175,41 @@ describe("LinkPhonePanel rotation affordances", () => {
     );
   });
 
-  it("claims on BOTH live codes resolve deterministically to the earliest", () => {
-    mocks.useAuthLinkLoginCode.mockReturnValue({
-      ...queryResultWithCode(Date.now()),
-      data: { code: "AAAAA-AAAAA", expires_in: 60, expires_at: 1 },
-    });
-    const view = render(<LinkPhonePanel />);
-    mocks.useAuthLinkLoginCode.mockReturnValue({
-      ...queryResultWithCode(Date.now()),
-      data: { code: "BBBBB-BBBBB", expires_in: 60, expires_at: 2 },
-    });
-    view.rerender(<LinkPhonePanel />);
-    const claimFor = (address: string, claimedAt: number) => ({
-      status: "claimed",
-      claimant: { address, userAgent: null, location: null, claimedAt },
-    });
-    mocks.useAuthLinkLoginStatus.mockImplementation((code: string | null) => {
+  it("a claimed code with a DELAYED status survives fresh mints (never sliced out)", () => {
+    // Three rotations land before A's claimed status arrives.
+    for (const code of ["AAAAA-AAAAA", "BBBBB-BBBBB", "CCCCC-CCCCC"]) {
+      mocks.useAuthLinkLoginCode.mockReturnValue({
+        ...queryResultWithCode(Date.now()),
+        data: { code, expires_in: 60, expires_at: 1 },
+      });
       if (code === "AAAAA-AAAAA") {
-        return statusResult(claimFor("10.0.0.1", 100));
+        currentView = render(<LinkPhonePanel />);
+      } else {
+        screen.getByTestId("link-phone-single-use-hint"); // still showing
+        viewRerender();
       }
-      if (code === "BBBBB-BBBBB") {
-        return statusResult(claimFor("10.0.0.2", 200));
-      }
-      return statusResult(null);
-    });
+    }
+    // Now A's claim finally reports. The server's per-user lock means it is
+    // the ONLY possible claim; the panel must still be watching A.
+    mocks.useAuthLinkLoginStatus.mockImplementation((code: string | null) =>
+      statusResult(
+        code === "AAAAA-AAAAA"
+          ? {
+              status: "claimed",
+              claimant: {
+                address: "10.0.0.9",
+                userAgent: null,
+                location: null,
+                claimedAt: 100,
+              },
+            }
+          : null,
+      ),
+    );
     const respond = respondIdle();
     mocks.useRespondLinkLoginMutation.mockReturnValue(respond);
-    view.rerender(<LinkPhonePanel />);
-    // The earlier claim (on A) wins the single confirmation card.
-    expect(screen.getByTestId("link-phone-claimant").textContent).toContain(
-      "10.0.0.1",
-    );
+    viewRerender();
+    expect(screen.getByTestId("link-phone-confirm")).toBeTruthy();
     act(() => {
       screen.getByTestId("link-phone-approve").click();
     });

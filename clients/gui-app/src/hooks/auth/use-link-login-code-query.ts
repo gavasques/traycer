@@ -53,7 +53,11 @@ function linkLoginCodeQueryOptions(
     refetchInterval: LINK_LOGIN_REMINT_MS,
     refetchOnMount: "always",
     refetchOnWindowFocus: false,
-    staleTime: Infinity,
+    // A few seconds, not Infinity: when the panel re-enables this query after
+    // a decision (rotation was frozen while a claim awaited approval), the
+    // cached code is stale by then and must be replaced immediately rather
+    // than on the next 50s interval tick.
+    staleTime: 5_000,
     gcTime: 15_000,
     retry: false,
   });

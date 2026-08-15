@@ -128,6 +128,87 @@ describe("LinkPhonePanel rotation affordances", () => {
     );
   });
 
+  it("a claim on the PREVIOUS code (rotation grace) still surfaces the approval", () => {
+    // First render shows code A; rotation replaces it with B.
+    mocks.useAuthLinkLoginCode.mockReturnValue({
+      ...queryResultWithCode(Date.now()),
+      data: { code: "AAAAA-AAAAA", expires_in: 60, expires_at: 1 },
+    });
+    const view = render(<LinkPhonePanel />);
+    mocks.useAuthLinkLoginCode.mockReturnValue({
+      ...queryResultWithCode(Date.now()),
+      data: { code: "BBBBB-BBBBB", expires_in: 60, expires_at: 2 },
+    });
+    view.rerender(<LinkPhonePanel />);
+    // The phone claimed A just before rotation; B is untouched.
+    mocks.useAuthLinkLoginStatus.mockImplementation((code: string | null) =>
+      statusResult(
+        code === "AAAAA-AAAAA"
+          ? {
+              status: "claimed",
+              claimant: {
+                address: "10.0.0.9",
+                userAgent: "TraycerMobile/1.0 (iPhone)",
+                location: null,
+                claimedAt: 100,
+              },
+            }
+          : null,
+      ),
+    );
+    const respond = respondIdle();
+    mocks.useRespondLinkLoginMutation.mockReturnValue(respond);
+    view.rerender(<LinkPhonePanel />);
+    expect(screen.getByTestId("link-phone-confirm")).toBeTruthy();
+    act(() => {
+      screen.getByTestId("link-phone-approve").click();
+    });
+    expect(respond.mutate).toHaveBeenCalledWith(
+      { code: "AAAAA-AAAAA", approve: true },
+      expect.anything(),
+    );
+  });
+
+  it("claims on BOTH live codes resolve deterministically to the earliest", () => {
+    mocks.useAuthLinkLoginCode.mockReturnValue({
+      ...queryResultWithCode(Date.now()),
+      data: { code: "AAAAA-AAAAA", expires_in: 60, expires_at: 1 },
+    });
+    const view = render(<LinkPhonePanel />);
+    mocks.useAuthLinkLoginCode.mockReturnValue({
+      ...queryResultWithCode(Date.now()),
+      data: { code: "BBBBB-BBBBB", expires_in: 60, expires_at: 2 },
+    });
+    view.rerender(<LinkPhonePanel />);
+    const claimFor = (address: string, claimedAt: number) => ({
+      status: "claimed",
+      claimant: { address, userAgent: null, location: null, claimedAt },
+    });
+    mocks.useAuthLinkLoginStatus.mockImplementation((code: string | null) => {
+      if (code === "AAAAA-AAAAA") {
+        return statusResult(claimFor("10.0.0.1", 100));
+      }
+      if (code === "BBBBB-BBBBB") {
+        return statusResult(claimFor("10.0.0.2", 200));
+      }
+      return statusResult(null);
+    });
+    const respond = respondIdle();
+    mocks.useRespondLinkLoginMutation.mockReturnValue(respond);
+    view.rerender(<LinkPhonePanel />);
+    // The earlier claim (on A) wins the single confirmation card.
+    expect(screen.getByTestId("link-phone-claimant").textContent).toContain(
+      "10.0.0.1",
+    );
+    act(() => {
+      screen.getByTestId("link-phone-approve").click();
+    });
+    expect(respond.mutate).toHaveBeenCalledWith(
+      { code: "AAAAA-AAAAA", approve: true },
+      expect.anything(),
+    );
+  });
+
   it("states that a code is single-use and short-lived", () => {
     mocks.useAuthLinkLoginCode.mockReturnValue(queryResultWithCode(Date.now()));
     render(<LinkPhonePanel />);

@@ -2579,57 +2579,94 @@ export class AuthService {
    * Link-code sign-in, confirm-gated: CLAIMS the scanned public code — which
    * grants nothing beyond the private polling secret and a spot in front of
    * the desktop's approve/reject prompt — then polls WITH THAT SECRET until
-   * the desktop decides. Session delivery is bound to the secret, so a
-   * bystander who also saw the QR can neither claim again nor poll. An approved poll lands the
-   * minted pair through the SAME validate → persist → signed-in tail as a
-   * device-flow authorization (`applyTokenInternal`), so the resulting
-   * session is indistinguishable from any other sign-in to the rest of the
-   * app.
+   * the desktop decides. An approved poll lands the minted pair through the
+   * SAME validate → persist → signed-in tail as a device-flow authorization
+   * (`applyTokenInternal`), so the resulting session is indistinguishable
+   * from any other sign-in to the rest of the app.
    *
-   * Any in-flight device attempt is discarded first: the shared tail is
-   * invoked with the cold-start epoch (`null`), which is only current while
-   * no attempt is live — and the user redeeming a code has visibly chosen
-   * this path over the one that was waiting.
+   * Runs inside the SAME `Attempt` lifecycle as device sign-in: it registers
+   * as the active attempt (superseding any in-flight one), every post-await
+   * branch is fenced on that attempt identity, and the token tail receives
+   * the attempt epoch. A link attempt superseded by a newer sign-in becomes
+   * a silent no-op — a late approval can never overwrite the newer session,
+   * and a late denial/timeout can never sign it out.
    */
   async signInWithLinkCode(code: string): Promise<LinkLoginSignInResult> {
-    if (this.isDisposed()) {
+    if (this.disposed) {
       return { kind: "failed" };
     }
-    this.clearPendingTimeout();
-    this.discardActiveAttempt();
+    this.identityGeneration += 1;
+    this.settleSessionRecovery("interactive-attempt");
+    this.setLastError(null);
+    const attempt = this.beginAttempt();
+    // Global signing-in projection: disables the sibling device sign-in
+    // action while this attempt runs (defense in depth on top of the fence).
+    useAuthStore.getState().setSigningIn();
+
     const authnBaseUrl = this.runnerHost.authnBaseUrl;
     const claimed = await claimLinkLoginCodeViaHttp(authnBaseUrl, code);
-    if (this.isDisposed()) {
+    if (this.isDisposed() || this.activeAttempt !== attempt) {
       return { kind: "failed" };
     }
     if (claimed.kind !== "claimed") {
+      this.clearActiveAttempt();
       this.applyFailure(AUTH_ERROR_SIGN_IN_FAILED);
-      return claimed.kind === "invalid-code" || claimed.kind === "rate-limited"
-        ? { kind: claimed.kind }
-        : { kind: "network-error" };
+      if (claimed.kind === "invalid-code" || claimed.kind === "rate-limited") {
+        return { kind: claimed.kind };
+      }
+      return { kind: "network-error" };
     }
+    return this.pollLinkLoginResult(
+      authnBaseUrl,
+      claimed.secret,
+      claimed.pollIntervalSeconds,
+      attempt,
+    );
+  }
 
-    // Poll at the server-directed pace until a terminal outcome or the
-    // approval window closes. Consecutive transport errors end the attempt —
-    // a phone that lost the desktop's network cannot be approved anyway.
+  /**
+   * The claim's poll loop, fenced on `attempt`: a superseded attempt returns
+   * silently without touching global auth state — the superseding flow owns
+   * it now. Terminal outcomes for the CURRENT attempt consume it and project
+   * failure exactly like a failed device attempt.
+   */
+  private async pollLinkLoginResult(
+    authnBaseUrl: string,
+    secret: string,
+    pollIntervalSeconds: number,
+    attempt: Attempt,
+  ): Promise<LinkLoginSignInResult> {
+    const failCurrent = (
+      result: LinkLoginSignInResult,
+    ): LinkLoginSignInResult => {
+      this.clearActiveAttempt();
+      this.applyFailure(AUTH_ERROR_SIGN_IN_FAILED);
+      return result;
+    };
     const deadline = Date.now() + LINK_LOGIN_APPROVAL_TIMEOUT_MS;
-    let intervalMs = Math.max(1_000, claimed.pollIntervalSeconds * 1_000);
+    let intervalMs = Math.max(1_000, pollIntervalSeconds * 1_000);
     let transportFailures = 0;
     while (Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, intervalMs));
-      if (this.isDisposed()) {
+      if (
+        this.isDisposed() ||
+        this.activeAttempt !== attempt ||
+        attempt.abortController.signal.aborted
+      ) {
         return { kind: "failed" };
       }
-      const polled = await linkLoginTokenViaHttp(authnBaseUrl, claimed.secret);
-      if (this.isDisposed()) {
+      const polled = await linkLoginTokenViaHttp(authnBaseUrl, secret);
+      if (this.isDisposed() || this.activeAttempt !== attempt) {
         return { kind: "failed" };
       }
       switch (polled.kind) {
         case "authorized": {
+          // The shared tail re-checks the epoch, consumes the attempt on
+          // success, and drops a finalization superseded mid-persist.
           const applied = await this.applyTokenInternal(
             polled.response.token,
             polled.response.refreshToken,
-            null,
+            attempt.epoch,
           );
           return applied ? { kind: "signed-in" } : { kind: "failed" };
         }
@@ -2640,26 +2677,22 @@ export class AuthService {
           transportFailures = 0;
           intervalMs = Math.max(
             intervalMs,
-            (polled.retryAfterSeconds ?? claimed.pollIntervalSeconds) * 1_000,
+            (polled.retryAfterSeconds ?? pollIntervalSeconds) * 1_000,
           );
           continue;
         case "access-denied":
-          this.applyFailure(AUTH_ERROR_SIGN_IN_FAILED);
-          return { kind: "denied" };
+          return failCurrent({ kind: "denied" });
         case "invalid-code":
-          this.applyFailure(AUTH_ERROR_SIGN_IN_FAILED);
-          return { kind: "invalid-code" };
+          return failCurrent({ kind: "invalid-code" });
         case "network-error":
           transportFailures += 1;
           if (transportFailures >= 3) {
-            this.applyFailure(AUTH_ERROR_SIGN_IN_FAILED);
-            return { kind: "network-error" };
+            return failCurrent({ kind: "network-error" });
           }
           continue;
       }
     }
-    this.applyFailure(AUTH_ERROR_SIGN_IN_FAILED);
-    return { kind: "timed-out" };
+    return failCurrent({ kind: "timed-out" });
   }
 
   /**

@@ -29,6 +29,7 @@ import {
   type HostRpcRegistry,
 } from "@/lib/host";
 import type { AuthService } from "@/lib/auth/auth-service";
+import { setMobileApp } from "@/lib/mobile-app";
 import { AuthSessionExpiredToastBridge } from "@/providers/auth-session-expired-toast-bridge";
 import { RunnerHostProvider } from "@/providers/runner-host-provider";
 import { useAuthStore } from "@/stores/auth/auth-store";
@@ -243,6 +244,44 @@ function CaptureAuthService(props: {
   }, [auth, onCapture]);
   return null;
 }
+
+describe("link-code entry is gated on the mobile-app PRODUCT signal", () => {
+  // The immutable Capacitor product flag, never the viewport: a narrow
+  // desktop window is still a desktop, and a desktop offering to scan a QR
+  // from itself is a nonsense affordance (and would mint a `mobile` session
+  // for a non-mobile shell).
+  let restoreFetch: () => void = () => undefined;
+
+  beforeEach(() => {
+    useAuthStore.getState().setSignedOut();
+    restoreFetch = installFetch(() =>
+      Promise.resolve(new Response(null, { status: 401 })),
+    );
+  });
+
+  afterEach(() => {
+    cleanup();
+    setMobileApp(false);
+    useAuthStore.getState().setSignedOut();
+    restoreFetch();
+  });
+
+  it("shows 'Scan from desktop' only in the mobile app", async () => {
+    setMobileApp(true);
+    const mobile = mountSignInButton(buildHost());
+    await mobile.waitForAuthService();
+    expect(screen.getByTestId("link-code-signin-open")).toBeTruthy();
+    cleanup();
+    mobile.cleanupClient();
+
+    setMobileApp(false);
+    const desktop = mountSignInButton(buildHost());
+    await desktop.waitForAuthService();
+    expect(screen.getByTestId("signin-button")).toBeTruthy();
+    expect(screen.queryByTestId("link-code-signin-open")).toBeNull();
+    desktop.cleanupClient();
+  });
+});
 
 describe("<SignInButton />", () => {
   let restoreFetch: () => void = () => undefined;

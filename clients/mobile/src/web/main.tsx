@@ -111,9 +111,14 @@ const remoteFetcher: RemoteHostFetcher | null =
 function bootstrap(): void {
   document.documentElement.classList.add("traycer-mobile-client");
   // PRODUCT flag, not layout: unlocks mobile-app-only UX policy such as the
-  // single-composer draft model. See gui-app's `src/lib/mobile-app.ts` for
-  // how this differs from the viewport signal.
-  setMobileApp(true);
+  // single-composer draft model and the link-code sign-in entry. See gui-app's
+  // `src/lib/mobile-app.ts` for how this differs from the viewport signal.
+  // Platform-derived, not unconditional: this same bundle is ALSO the dev
+  // stack's browser surface (`make dev-gui-app` serves it as the "gui-app"
+  // stream), and a browser tab is not the installed mobile app — it must not
+  // inherit phone-only affordances like "Scan from desktop", which on the
+  // desktop side of that loop is a nonsense offer.
+  setMobileApp(Capacitor.isNativePlatform());
   // APNs addressing follows code signing, not the Vite mode: dev and staging
   // installs are debug-signed (`aps-environment: development`), so only a
   // production bundle registers against the production gateway.

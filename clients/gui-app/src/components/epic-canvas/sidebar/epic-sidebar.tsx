@@ -149,7 +149,6 @@ import {
   useArtifactReadStateStore,
 } from "@/stores/epics/artifact-read-state-store";
 import { revealCommentThreadAnchor } from "@/lib/comments/comment-editor-registry";
-import { useArtifactSearchAvailable } from "@/components/epic-canvas/sidebar/artifact-search-availability";
 import { usePanelHeaderSearchStore } from "@/stores/epics/panel-header-search-store";
 import {
   usePanelHeaderMenuOpen,
@@ -164,6 +163,7 @@ import {
   MessageSquareText,
   MoreHorizontal,
   Plus,
+  Search,
   Trash2,
   X,
 } from "lucide-react";
@@ -1921,6 +1921,7 @@ function ChatHeaderMoreMenu(props: {
   const selection = useSidebarBulkSelection();
   const permissionRole = useEpicPermissionRole();
   const connectionStatus = useEpicConnectionStatus();
+  const openSearch = usePanelHeaderSearchStore((state) => state.openSearch);
   const menu = useExpandableHeaderMenu(props.tabId, "chats", props.collapsed);
   const selectionEnabled = selection.canSelect && connectionStatus !== "closed";
 
@@ -1937,6 +1938,13 @@ function ChatHeaderMoreMenu(props: {
         avoidCollisions={false}
         className="w-[var(--radix-dropdown-menu-content-available-width)] min-w-0 max-w-56"
       >
+        <DropdownMenuItem
+          onSelect={() => openSearch(props.tabId, "chats", "")}
+          data-testid="epic-sidebar-more-search-chats"
+        >
+          <Search className="size-4" />
+          Search agents
+        </DropdownMenuItem>
         <CommGraphOpenMenuItem epicId={props.epicId} disabled={false} />
         {isEditableRole(permissionRole) ? (
           <DropdownMenuItem
@@ -1957,7 +1965,6 @@ function ArtifactHeaderMoreMenu(props: {
   readonly collapsed: boolean;
 }) {
   const selection = useSidebarBulkSelection();
-  const searchAvailable = useArtifactSearchAvailable();
   const openSearch = usePanelHeaderSearchStore((state) => state.openSearch);
   const menu = useExpandableHeaderMenu(
     props.tabId,
@@ -1978,14 +1985,13 @@ function ArtifactHeaderMoreMenu(props: {
         avoidCollisions={false}
         className="w-[var(--radix-dropdown-menu-content-available-width)] min-w-0 max-w-52"
       >
-        {searchAvailable ? (
-          <DropdownMenuItem
-            onSelect={() => openSearch(props.tabId, "artifacts", "")}
-            data-testid="epic-sidebar-more-search-artifacts"
-          >
-            Search artifacts
-          </DropdownMenuItem>
-        ) : null}
+        <DropdownMenuItem
+          onSelect={() => openSearch(props.tabId, "artifacts", "")}
+          data-testid="epic-sidebar-more-search-artifacts"
+        >
+          <Search className="size-4" />
+          Search artifacts
+        </DropdownMenuItem>
         <DropdownMenuItem
           disabled={!selection.canSelect}
           onSelect={selection.enterSelectionMode}

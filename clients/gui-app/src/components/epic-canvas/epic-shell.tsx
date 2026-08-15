@@ -124,7 +124,7 @@ function EpicShellStatusRow(props: EpicShellStatusRowProps) {
       {props.snapshotLoaded ? (
         <>
           <EpicUsageEntryPoint epicId={props.epicId} />
-          <EpicConnectionPill />
+          <EpicConnectionPill epicId={props.epicId} />
           <EpicSweepAction epicId={props.epicId} tabId={props.tabId} />
         </>
       ) : null}

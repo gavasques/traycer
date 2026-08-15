@@ -169,6 +169,7 @@ export function WorktreeOwnerMetadataTooltip(props: {
           <WorktreeOwnerSettingsHeader
             ownerId={props.ownerId}
             hostId={props.hostId}
+            epicId={props.epicId}
             ownerKind={props.ownerKind}
           />
           {/* `w-0 min-w-full` so the folder block takes the width the header
@@ -184,6 +185,7 @@ export function WorktreeOwnerMetadataTooltip(props: {
               worktrees={metadata.worktrees}
               workspaces={metadata.workspaces}
               pending={metadata.isPending}
+              hostUnavailable={metadata.hostUnavailable}
               error={metadata.error !== null}
               openPrInApp={openPrInApp}
             />
@@ -341,7 +343,7 @@ function OwnerMetadataCheckedAtText(props: {
       className="text-ui-xs whitespace-nowrap text-muted-foreground"
       data-testid="owner-workspace-checked-at"
     >
-      Checked {relative}
+      Workspace snapshot · {relative}
     </span>
   );
 }

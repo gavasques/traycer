@@ -540,10 +540,24 @@ function useChatCloneOnHostSwitch(args: UseChatCloneOnHostSwitchArgs): {
   }, []);
 
   const clone = useCallback(() => {
-    if (binding === null) return;
+    if (binding === null) {
+      toast("Can't clone this agent - no host connection.");
+      return;
+    }
     const target = binding.directory.getSelected();
-    if (target === null) return;
-    if (target.hostId === args.sourceHostId) return;
+    if (target === null) {
+      toast("Pick an active host before cloning this agent.");
+      return;
+    }
+    if (target.hostId === args.sourceHostId) {
+      // The refusal this finding is about: the active host IS the agent's
+      // own bound host, so there is nowhere to clone to - silently doing
+      // nothing here used to read as a broken button.
+      toast(
+        "The active host is this agent's own bound host - switch to a different host before cloning.",
+      );
+      return;
+    }
     if (cancelRef.current !== null) cancelRef.current();
     setCloning(true);
     cancelRef.current = cloneChatOnHostSwitch({

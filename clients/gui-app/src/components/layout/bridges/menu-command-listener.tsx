@@ -18,7 +18,10 @@ import {
   runnerQueryKeys,
 } from "@/lib/query-keys/runner-mutation-keys";
 import { toastFromRunnerError } from "@/lib/runner-error-toast";
-import { toastHostRestartDeclined } from "@/lib/host-restart-toast";
+import {
+  toastHostRestartDeclined,
+  toastHostRestartRequested,
+} from "@/lib/host-restart-toast";
 import { resolveDesktopMenuBridge } from "@/lib/windows/desktop-capabilities";
 import type {
   DesktopMenuCommandId,
@@ -118,7 +121,7 @@ export function MenuCommandListener() {
         toastHostRestartDeclined(result.message);
         return;
       }
-      toast.success("Host restart requested");
+      toastHostRestartRequested();
       if (traycerCli !== null) {
         void queryClient.invalidateQueries({
           queryKey: runnerQueryKeys.traycerHostStatus(traycerCli),

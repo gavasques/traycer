@@ -66,10 +66,13 @@ export function useHostReachability(hostId: string): HostReachability {
       return { status: "reachable", hostLabel: hostId, unavailability: null };
     }
     // An EMPTY directory means this machine's own host has not published
-    // yet (boot, ensure/respawn in progress, post-wake re-probe) - the
-    // directory only ever contains the local host today (remote discovery
-    // is a stub). No bound host's fate is knowable in that state, so it is
-    // "host-starting", never a per-tab death: the 2026-07-14 incident
+    // yet (boot, ensure/respawn in progress, post-wake re-probe) AND no
+    // remote fetch has resolved a registry twin for it either - remote
+    // discovery is a real registry fetch now (`HostDirectoryService`'s
+    // `remoteEntries`), not the stub this comment used to describe, so an
+    // empty list is genuine "nothing known yet", not "local-only by
+    // construction". No bound host's fate is knowable in that state, so it
+    // is "host-starting", never a per-tab death: the 2026-07-14 incident
     // rendered every chat as "Bound host is offline" + Clone CTA (and
     // terminals as "permanently closed") from exactly this window.
     if (list.data.length === 0) {

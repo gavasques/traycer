@@ -58,7 +58,10 @@ import {
 } from "@/components/settings/panels/host-service-write-latch-store";
 import { useHostBinding, type HostRpcRegistry } from "@/lib/host";
 import { toastFromHostError } from "@/lib/host-error-toast";
-import { toastHostRestartDeclined } from "@/lib/host-restart-toast";
+import {
+  toastHostRestartDeclined,
+  toastHostRestartRequested,
+} from "@/lib/host-restart-toast";
 import { runnerMutationKeys } from "@/lib/query-keys/runner-mutation-keys";
 import { toastFromRunnerError } from "@/lib/runner-error-toast";
 import { useRunnerHostOrNull } from "@/providers/use-runner-host";
@@ -244,7 +247,7 @@ export function HostOverviewPanel(props: {
         toastHostRestartDeclined(result.message);
         return;
       }
-      toast.success(`Restarting ${variables.hostName}`);
+      toastHostRestartRequested();
     },
     onError: (error) => {
       toastFromRunnerError(error, "Couldn't restart host");
@@ -739,7 +742,7 @@ export function HostOverviewPanel(props: {
                   setRestartBusyCount(response.verdict.busySessionCount);
                   return;
                 }
-                toast.success(`Restarting ${displayName}`);
+                toastHostRestartRequested();
               },
               onError: (error) => {
                 setRestartConfirmOpen(false);

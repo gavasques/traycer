@@ -9,6 +9,7 @@
  */
 import { useMemo } from "react";
 import { v4 as uuidv4 } from "uuid";
+import { toast } from "sonner";
 import type { WorktreeBindingSelectorRowV12 } from "@traycer/protocol/host";
 import type { HostClient } from "@traycer-clients/shared/host-client/host-client";
 import { buildTerminalTileRef } from "@/components/epic-canvas/sidebar/new-terminal-tile-ref";
@@ -74,6 +75,12 @@ function terminalWorkspaceLeaf(
       // explain to anyone, and it must give the same answer the tile's own
       // dial will give a moment later.
       if (liveEntry === null || dialableHostEndpoint(liveEntry) === null) {
+        // Silent refusal used to look like a broken row - the palette entry
+        // that offered this launch a moment ago went stale between listing
+        // and selection (host dropped its lease, session died).
+        toast(
+          `Can't create a terminal on ${liveEntry?.label ?? target.hostId} right now - it's not reachable.`,
+        );
         return;
       }
       hasLaunched = true;

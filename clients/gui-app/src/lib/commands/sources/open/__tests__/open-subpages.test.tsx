@@ -21,7 +21,9 @@ const spies = vi.hoisted(() => ({
   createChatMutate: vi.fn(),
   createTuiAgent: vi.fn(),
   refreshHostDirectory: vi.fn(() => Promise.resolve([])),
+  toast: vi.fn(),
 }));
+vi.mock("sonner", () => ({ toast: spies.toast }));
 const activeHostIdMock = vi.hoisted<{ current: string | null }>(() => ({
   current: "default-host",
 }));
@@ -614,6 +616,9 @@ describe("Terminals opener sub-page", () => {
     runById(remoteWorkspaces, remoteWorkspace?.id ?? "missing");
 
     expect(spies.openTileIntoTargetGroup).not.toHaveBeenCalled();
+    // F20: the refusal used to be silent - the row just did nothing.
+    expect(spies.toast).toHaveBeenCalledTimes(1);
+    expect(spies.toast.mock.calls[0]?.[0]).toContain("Remote Terminal Mac");
   });
 
   it("keeps reachable remote hosts selectable while no active host is resolved", () => {

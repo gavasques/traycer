@@ -14,7 +14,10 @@ import { useRunnerHost } from "@/providers/use-runner-host";
 import { useDesktopDialogStore } from "@/stores/dialogs/desktop-dialog-store";
 import { runnerMutationKeys, runnerQueryKeys } from "@/lib/query-keys";
 import { toastFromRunnerError } from "@/lib/runner-error-toast";
-import { toastHostRestartDeclined } from "@/lib/host-restart-toast";
+import {
+  toastHostRestartDeclined,
+  toastHostRestartRequested,
+} from "@/lib/host-restart-toast";
 import { ConfirmDestructiveDialog } from "@/components/ui/confirm-destructive-dialog";
 import { resolveSettingsTabIntent } from "@/lib/commands/actions/open-system-tab";
 import { activateTabIntent } from "@/lib/tab-navigation";
@@ -172,7 +175,7 @@ export function HostTrayCommandListener() {
         toastHostRestartDeclined(result.message);
         return;
       }
-      toast.success("Host restart requested");
+      toastHostRestartRequested();
       if (management !== null) {
         void queryClient.invalidateQueries({
           queryKey: runnerQueryKeys.hostInstalledRecord(management),

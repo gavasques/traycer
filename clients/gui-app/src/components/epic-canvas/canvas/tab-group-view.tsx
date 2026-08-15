@@ -10,6 +10,7 @@ import {
 } from "react";
 import { Button } from "@/components/ui/button";
 import type { ChatRecordRemovalReason } from "@traycer/protocol/host/epic/chat-records";
+import type { HostUnavailability } from "@traycer-clients/shared/host-client/remote-fetcher";
 import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
 import { useHostReachability } from "@/hooks/agent/use-host-reachability";
 import { UNKNOWN_HOST_PLACEHOLDER } from "@/lib/host/constants";
@@ -615,6 +616,7 @@ function resolveChatFallbackDecision(args: {
   readonly isChat: boolean;
   readonly isSameHost: boolean;
   readonly hostUnreachable: boolean;
+  readonly unavailability: HostUnavailability | null;
   readonly confirmedAbsent: boolean;
   readonly cloudChatOwnerUserId: string | null;
   readonly liveArtifactOwnerUserId: string | null;
@@ -639,6 +641,7 @@ function resolveChatFallbackDecision(args: {
   const substitute = args.isChat && (crossHostFallback || sameHostFallback);
   const reason = deadTileBannerReason({
     hostUnreachable: args.hostUnreachable,
+    unavailability: args.unavailability,
     isSameHost: args.isSameHost,
   });
   const ownerUserId = args.liveArtifactOwnerUserId ?? args.cloudChatOwnerUserId;
@@ -661,9 +664,19 @@ function resolveChatFallbackDecision(args: {
  */
 function deadTileBannerReason(input: {
   readonly hostUnreachable: boolean;
+  readonly unavailability: HostUnavailability | null;
   readonly isSameHost: boolean;
 }): ChatDeadTileBannerReason {
-  if (input.hostUnreachable) return "host-offline";
+  if (input.hostUnreachable) {
+    // The hook's reason, not a constant - collapsing every unreachable
+    // result to `host-offline` is how a `plan-restricted` host (running
+    // fine, just with no remote route on this account's plan) got reported
+    // to its owner as being off. Same fix as `chat-tile.tsx`'s live-render
+    // path.
+    return input.unavailability === "plan-restricted"
+      ? "host-plan-restricted"
+      : "host-offline";
+  }
   return input.isSameHost ? "chat-not-on-this-host" : "chat-not-visible";
 }
 
@@ -725,6 +738,7 @@ function usePublishedChatFallbackRef(args: {
     isChat,
     isSameHost,
     hostUnreachable: reachability.status === "unreachable",
+    unavailability: reachability.unavailability,
     confirmedAbsent,
     cloudChatOwnerUserId: cloudChatRecord?.identity.ownerUserId ?? null,
     liveArtifactOwnerUserId,

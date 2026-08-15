@@ -21,6 +21,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { HarnessModelPicker } from "@/components/home/pickers/harness-model-picker";
 import { ActiveHostWorkspaceControls } from "@/components/home/host-workspace-selector/host-workspace-selector";
+import { buildFixedHostWorkspaceControlsScope } from "@/components/home/host-workspace-selector/host-workspace-controls-scope";
 import { isHostSwitcherListInteraction } from "@/components/settings/host-scope/host-switcher-portal";
 import { SurfaceActivityProvider } from "@/components/home/composer/surface-activity-context";
 import { useSurfaceActivity } from "@/components/home/composer/surface-activity-hooks";
@@ -375,7 +376,10 @@ function ChatForkDialogBody(props: ChatForkDialogProps) {
             workspaceSeed={target?.workspaceSeed.workspace ?? null}
             seedIntent={target?.workspaceSeed.intent ?? null}
             seedIntentOverride={target?.seedIntentOverride ?? null}
-            hostScope={{ kind: "active" }}
+            hostScope={buildFixedHostWorkspaceControlsScope({
+              hostId: tabHostId,
+              hostClient: tabHostClient,
+            })}
           />
         </div>
         <DialogFooter>

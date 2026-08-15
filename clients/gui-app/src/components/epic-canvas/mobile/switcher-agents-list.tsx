@@ -11,6 +11,7 @@ import { useSwitcherActivate } from "@/components/epic-canvas/mobile/use-switche
 import { useOrderedSwitcherRecords } from "@/components/epic-canvas/mobile/switcher-record-order";
 import {
   useEpicArtifactRecords,
+  useEpicNodeHostId,
   useEpicPermissionRole,
   type EpicTreeRecord,
 } from "@/lib/epic-selectors";
@@ -114,6 +115,25 @@ function SwitcherAgentRow(props: {
   const agentType: "chat" | "terminal-agent" =
     record.type === "terminal-agent" ? "terminal-agent" : "chat";
 
+  // The host the opened tile BINDS TO, and a tab's host binding is for life -
+  // so this has to be the row's owner, exactly as the desktop row resolves it
+  // (`openHostId = useEpicNodeHostId(nodeId) ?? activeHostId`). `record.hostId`
+  // alone is not that host: `recordForChat` stamps chat rows with the app-wide
+  // ACTIVE host, so a retained epic tab bound to host A would permanently open
+  // an A-owned chat against host B once the user switched hosts, and ask the
+  // wrong machine for the transcript forever after.
+  //
+  // The fallback covers a legacy chat carrying no projected host, and is the
+  // active host by construction - that is precisely what `recordForChat`
+  // stamped - reusing the value already in hand rather than re-subscribing the
+  // row to `useReactiveActiveHostId()`. It differs from the desktop row only
+  // in the no-active-host degenerate case, where this yields the records'
+  // `UNKNOWN_HOST_PLACEHOLDER` and the sidebar its own "unknown-host" literal;
+  // neither is dialable. TUI rows are unaffected either way - both sides of
+  // the `??` read the same projection field for them.
+  const ownerHostId = useEpicNodeHostId(record.id);
+  const openHostId = ownerHostId ?? record.hostId;
+
   const onSelect = useCallback(() => {
     const type = record.type;
     if (!isOpenableEpicNodeKind(type)) return;
@@ -123,10 +143,10 @@ function SwitcherAgentRow(props: {
         instanceId: uuidv4(),
         type,
         name: record.name,
-        hostId: record.hostId,
+        hostId: openHostId,
       }),
     );
-  }, [activate, record]);
+  }, [activate, record, openHostId]);
 
   const cascadeSummary = formatCascadeSummary(
     computeDescendantCounts(records, record.id),
@@ -135,10 +155,9 @@ function SwitcherAgentRow(props: {
   return (
     <SwitcherListRow
       icon={
-        // No host prop: the icon reads the row's OWN owner host off the
-        // projection. `record.hostId` is the ACTIVE host for chat rows (see
-        // `recordForChat`) and is right only for the openable ref below, which
-        // is what the tap binds a tab to.
+        // No host prop: the icon resolves the row's owner host itself, from the
+        // same selector `openHostId` above uses. `record.hostId` is the ACTIVE
+        // host for chat rows and is never the right answer for either.
         <SwitcherAgentIcon
           epicId={epicId}
           nodeId={record.id}

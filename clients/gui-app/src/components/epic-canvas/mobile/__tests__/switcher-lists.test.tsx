@@ -19,9 +19,18 @@ interface FixtureSession {
   readonly activeProcessName: string | null;
   readonly cwd: string;
 }
+/**
+ * The whole ref, not just its `type`. The ref's `hostId` is what the opened
+ * tile BINDS TO for life, so it is the field most worth asserting - and a
+ * fixture that dropped it is why a wrong-host ref went unnoticed here.
+ */
+interface ActivateRef {
+  readonly type: string;
+  readonly hostId: string;
+}
 interface ActivateCall {
   readonly id: string;
-  readonly ref: { readonly type: string };
+  readonly ref: ActivateRef;
 }
 interface Holder {
   records: ReadonlyArray<FixtureRecord>;
@@ -102,7 +111,11 @@ vi.mock("@/stores/epics/canvas/canvas-selectors", () => ({
 }));
 vi.mock("@/components/epic-canvas/mobile/use-switcher-activate", () => ({
   useSwitcherActivate:
-    () => (id: string, buildRef: () => { readonly type: string }) => {
+    () =>
+    (
+      id: string,
+      buildRef: () => { readonly type: string; readonly hostId: string },
+    ) => {
       holder.activateCalls.push({ id, ref: buildRef() });
     },
 }));
@@ -355,6 +368,45 @@ describe("<SwitcherAgentsList />", () => {
     // Passing the record's `hostId` would read `byOriginHostId["host-B"]` -
     // empty - and the row would render an inert idle glyph.
     expect(screen.getByTestId("switcher-agent-failure-chat-1")).toBeTruthy();
+
+    // …and the same rule governs the ref the tap builds. A tab binds its host
+    // FOR LIFE, so a B-bound tile for an A-owned chat asks the wrong machine
+    // for the transcript permanently - not just until the next host switch.
+    fireEvent.click(screen.getByTestId("switcher-agent-row-chat-1"));
+    expect(holder.activateCalls).toHaveLength(1);
+    expect(holder.activateCalls[0].ref.hostId).toBe("host-A");
+  });
+
+  it("falls back to the record's host for a legacy chat with no projected owner", () => {
+    // `useEpicNodeHostId` answers null for a chat predating the field. The
+    // record's host is the active one by construction, matching the desktop
+    // row's `?? activeHostId` - a tap always opens something.
+    holder.records = [
+      {
+        id: "chat-1",
+        parentId: null,
+        name: "Alpha",
+        type: "chat",
+        status: null,
+        hostId: "host-B",
+      },
+    ];
+    holder.ownerHostIdByNodeId = {};
+    render(<SwitcherAgentsList {...PROPS} />);
+    fireEvent.click(screen.getByTestId("switcher-agent-row-chat-1"));
+    expect(holder.activateCalls[0].ref.hostId).toBe("host-B");
+  });
+
+  it("opens a TUI agent against its projected owner host", () => {
+    // In production both sides of the `??` read the same projection field for
+    // a terminal-agent, so they cannot disagree; the fixture drives them apart
+    // only to pin WHICH one the row takes - the owner, uniformly, with no
+    // per-kind branch to fall out of sync.
+    holder.ownerHostIdByNodeId = { "tui-1": "host-C" };
+    render(<SwitcherAgentsList {...PROPS} />);
+    fireEvent.click(screen.getByTestId("switcher-agent-row-tui-1"));
+    expect(holder.activateCalls[0].ref.type).toBe("terminal-agent");
+    expect(holder.activateCalls[0].ref.hostId).toBe("host-C");
   });
 
   it("subscribes indicator state for exactly the agent rows it lists", () => {

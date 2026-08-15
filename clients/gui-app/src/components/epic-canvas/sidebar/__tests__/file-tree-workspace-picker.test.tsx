@@ -35,12 +35,26 @@ vi.mock("@/hooks/worktree/use-worktree-list-bindings-for-epic-query", () => ({
   useWorktreeListBindingsForEpicForClient: () => listQuery.current,
 }));
 
+const clientHostIds = vi.hoisted(() => ({
+  last: null as string | null,
+}));
+
 vi.mock("@/hooks/host/use-host-client-for-host-id", () => ({
-  useHostClientForHostId: () => null,
+  useHostClientForHostId: (hostId: string | null) => {
+    clientHostIds.last = hostId;
+    return null;
+  },
 }));
 
 vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
   useReactiveActiveHostId: () => "host-1",
+}));
+
+vi.mock("@/hooks/host/use-host-directory-list-query", () => ({
+  useHostDirectoryList: () => ({
+    data: [{ hostId: "host-1" }],
+    fetchStatus: "idle",
+  }),
 }));
 
 // This suite is about the WORKSPACE list, not the host list, so it mocks
@@ -179,6 +193,7 @@ describe("<FileTreeWorkspacePicker />", () => {
     selectById.mockClear();
     refreshDirectory.mockClear();
     useSurfaceHostSelectionStore.getState().resetForTests();
+    clientHostIds.last = null;
     stubLoadedWorkspaces();
   });
 
@@ -410,6 +425,20 @@ describe("<FileTreeWorkspacePicker />", () => {
       useSurfaceHostSelectionStore.getState().selections["file-tree-test"],
     ).toBe("host-1");
     expect(onSelectPath).not.toHaveBeenCalled();
+  });
+
+  it("resolves RPCs against the pinned host, not the active host", () => {
+    renderWithClient(
+      <FileTreeWorkspacePicker
+        epicId="epic-1"
+        hostId="host-pinned"
+        selectedPath="/work/traycer"
+        onSelectPath={() => undefined}
+        surfaceKey="file-tree-test"
+      />,
+    );
+
+    expect(clientHostIds.last).toBe("host-pinned");
   });
 
   it("shows the shared error state when workspaces fail to load", () => {

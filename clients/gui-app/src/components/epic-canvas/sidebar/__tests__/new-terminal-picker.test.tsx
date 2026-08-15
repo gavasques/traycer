@@ -64,6 +64,13 @@ vi.mock("@/hooks/agent/use-host-reachability", () => ({
   }),
 }));
 
+vi.mock("@/hooks/host/use-host-directory-list-query", () => ({
+  useHostDirectoryList: () => ({
+    data: [{ hostId: "host-1" }],
+    fetchStatus: "idle",
+  }),
+}));
+
 function stubLoadedBindings(): void {
   bindingsQuery.current = {
     data: {

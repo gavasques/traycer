@@ -127,20 +127,23 @@ export function NewTerminalPickerBody(props: NewTerminalPickerBodyProps) {
       {dead.isDead ? (
         <PinnedSurfaceDeadState
           hostLabel={dead.hostLabel}
+          unavailability={dead.unavailability}
+          vanished={dead.vanished}
           onUseActiveHost={pin.followEffective}
           testId="new-terminal-pinned-host-dead"
         />
-      ) : null}
-      <WorktreeFolderListBody
-        isPending={bindingsQuery.isPending}
-        isError={bindingsQuery.isError}
-        rows={rows}
-        selectedRow={selectedRow}
-        secondaryLabel={(row) => row.runningDir}
-        onSelect={setExplicitRow}
-        autoFocusSearch
-        emptyMessage="No directories available. Open a workspace in the epic first."
-      />
+      ) : (
+        <WorktreeFolderListBody
+          isPending={bindingsQuery.isPending}
+          isError={bindingsQuery.isError}
+          rows={rows}
+          selectedRow={selectedRow}
+          secondaryLabel={(row) => row.runningDir}
+          onSelect={setExplicitRow}
+          autoFocusSearch
+          emptyMessage="No directories available. Open a workspace in the epic first."
+        />
+      )}
       <div className="flex items-center justify-between gap-3 border-t border-border/60 bg-muted/20 px-2.5 py-2.5">
         <div className="min-w-0 text-xs text-muted-foreground">
           {folderlessCwdStatus}

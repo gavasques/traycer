@@ -97,5 +97,37 @@ describe("<SurfaceHostSelectionPersistLifecycleBridge />", () => {
     await waitFor(() => {
       expect(useSurfaceHostSelectionStore.getState().selections).toEqual({});
     });
+    expect(window.localStorage.getItem(surfaceHostSelectionKey("a@b.com"))).toBe(
+      null,
+    );
+  });
+
+  it("retargets the persist bucket on user switch", async () => {
+    persistSnapshot("a@b.com", "host-alice");
+    persistSnapshot("b@b.com", "host-bob");
+
+    render(
+      <SurfaceHostSelectionPersistLifecycleBridge>
+        <div />
+      </SurfaceHostSelectionPersistLifecycleBridge>,
+    );
+
+    act(() => {
+      resetAuth("signed-in", "a@b.com");
+    });
+    await waitFor(() => {
+      expect(
+        useSurfaceHostSelectionStore.getState().selections[GIT_KEY],
+      ).toBe("host-alice");
+    });
+
+    act(() => {
+      resetAuth("signed-in", "b@b.com");
+    });
+    await waitFor(() => {
+      expect(
+        useSurfaceHostSelectionStore.getState().selections[GIT_KEY],
+      ).toBe("host-bob");
+    });
   });
 });

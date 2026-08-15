@@ -37,6 +37,7 @@ export function WorktreePickerHostSection(
         isLoading={options.isLoading}
         listsFailed={options.listsFailed}
         onRetryLists={options.retryLists}
+        intent="pin"
       />
     </div>
   );

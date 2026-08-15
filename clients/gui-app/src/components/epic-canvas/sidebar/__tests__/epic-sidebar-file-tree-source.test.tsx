@@ -406,6 +406,7 @@ function renderPanel(client: MockWsStreamClient): void {
         tabId="tab-1"
         workspacePath={WORKSPACE_PATH}
         hostId={HOST_ID}
+        onLatchHost={() => undefined}
       />,
     ),
   );

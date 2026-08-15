@@ -2,18 +2,17 @@ import { useCallback } from "react";
 import { useHostClientForHostId } from "@/hooks/host/use-host-client-for-host-id";
 import { useEffectiveHostId } from "@/hooks/host/use-effective-host-id";
 import { useHostReachability } from "@/hooks/agent/use-host-reachability";
+import { useHostDirectoryList } from "@/hooks/host/use-host-directory-list-query";
 import { UNKNOWN_HOST_PLACEHOLDER } from "@/lib/host/constants";
-import { useWindowsBridge } from "@/providers/windows-bridge-context";
 import {
   gitDiffPanelSurfaceKey,
   resolvedSurfaceHostId,
-  resolveSurfaceWindowId,
-  surfaceHostKey,
+  tabSurfaceKey,
   useSurfaceHostSelectionStore,
-  windowPaneSurfaceInstanceId,
   type SurfaceHostSelection,
   type SurfaceKind,
 } from "@/stores/host/surface-host-selection-store";
+import type { HostUnavailability } from "@traycer-clients/shared/host-client/remote-fetcher";
 import type { HostClient } from "@traycer-clients/shared/host-client/host-client";
 import type { HostRpcRegistry } from "@/lib/host";
 
@@ -73,6 +72,8 @@ export function useSurfaceHostClient(
 export interface PinnedSurfaceDead {
   readonly isDead: boolean;
   readonly hostLabel: string;
+  readonly unavailability: HostUnavailability | null;
+  readonly vanished: boolean;
 }
 
 /** D6: pinned + unreachable. Following surfaces never take this arm. */
@@ -80,20 +81,28 @@ export function usePinnedSurfaceDead(pin: SurfaceHostPin): PinnedSurfaceDead {
   const reachability = useHostReachability(
     pin.selection ?? UNKNOWN_HOST_PLACEHOLDER,
   );
+  const directory = useHostDirectoryList();
+  const listed =
+    pin.selection !== null &&
+    (directory.data ?? []).some((entry) => entry.hostId === pin.selection);
+  const vanished =
+    pin.isPinned &&
+    directory.data !== undefined &&
+    directory.data.length > 0 &&
+    !listed;
   return {
     isDead: pin.isPinned && reachability.status === "unreachable",
-    hostLabel: reachability.hostLabel,
+    hostLabel: vanished ? "The pinned host" : reachability.hostLabel,
+    unavailability: reachability.unavailability,
+    vanished,
   };
 }
 
-export function useWindowPaneSurfaceKey(
+export function useTabSurfaceKey(
   kind: Extract<SurfaceKind, "file-tree" | "new-terminal">,
-  paneId: string,
+  tabId: string,
 ): string {
-  const windowId = resolveSurfaceWindowId(
-    useWindowsBridge()?.windowId ?? null,
-  );
-  return surfaceHostKey(kind, windowPaneSurfaceInstanceId(windowId, paneId));
+  return tabSurfaceKey(kind, tabId);
 }
 
 export function useGitDiffPanelSurfaceKey(tileRef: string): string {

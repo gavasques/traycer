@@ -45,7 +45,7 @@ import {
   usePinnedSurfaceDead,
   useSurfaceHostClient,
   useSurfaceHostPin,
-  useWindowPaneSurfaceKey,
+  useTabSurfaceKey,
 } from "@/hooks/host/use-surface-host-pin";
 import { PinnedSurfaceDeadState } from "@/components/host/pinned-surface-dead-state";
 import { isBrowsable } from "@/lib/worktree/worktree-row-browsable";
@@ -232,12 +232,13 @@ interface FileTreeWorkspaceSelection {
 function useFileTreeWorkspaceSelection(
   epicId: string,
   hostId: string | null,
+  queryEnabled: boolean,
 ): FileTreeWorkspaceSelection {
   const client = useSurfaceHostClient(hostId);
   const workspacesQuery = useWorktreeListBindingsForEpicForClient({
     client,
     epicId,
-    enabled: hostId !== null,
+    enabled: queryEnabled,
   });
   const storedWorkspacePath = useSelectedFileTreeWorkspace(epicId, hostId);
   const setSelectedWorkspace = useFileTreeStore((s) => s.setSelectedWorkspace);
@@ -1109,12 +1110,13 @@ function FileTreePanelBody(props: LeftPanelBodyProps) {
 }
 
 function FileTreePanelBodyLive(props: LeftPanelBodyProps) {
-  const surfaceKey = useWindowPaneSurfaceKey("file-tree", props.tabId);
+  const surfaceKey = useTabSurfaceKey("file-tree", props.tabId);
   const pin = useSurfaceHostPin(surfaceKey);
   const dead = usePinnedSurfaceDead(pin);
   const selection = useFileTreeWorkspaceSelection(
     props.epicId,
     pin.resolvedHostId,
+    pin.resolvedHostId !== null && !dead.isDead,
   );
   const handleSelectPath = (workspacePath: string): void => {
     pin.latchOnFirstUse();
@@ -1134,19 +1136,13 @@ function FileTreePanelBodyLive(props: LeftPanelBodyProps) {
                 surfaceKey={surfaceKey}
               />
             }
-            openTarget={
-              selection.hostId !== null &&
-              selection.selectedWorkspacePath !== null
-                ? {
-                    workspacePath: selection.selectedWorkspacePath,
-                    hostId: selection.hostId,
-                  }
-                : null
-            }
+            openTarget={null}
           />
         </div>
         <PinnedSurfaceDeadState
           hostLabel={dead.hostLabel}
+          unavailability={dead.unavailability}
+          vanished={dead.vanished}
           onUseActiveHost={pin.followEffective}
           testId="file-tree-pinned-host-dead"
         />
@@ -1191,6 +1187,7 @@ function FileTreePanelBodyLive(props: LeftPanelBodyProps) {
             tabId={props.tabId}
             workspacePath={selection.selectedWorkspacePath}
             hostId={pin.resolvedHostId}
+            onLatchHost={pin.latchOnFirstUse}
           />
         </>
       )}

@@ -13,8 +13,9 @@ export type SurfaceHostSelection = string | null;
 
 /**
  * Multi-instance surfaces key by instance; singletons would use a type-level
- * instance id. `composer` is reserved so P1.2 can land window-keyed pins
- * without changing this module.
+ * instance id. Sidebar panels (git-diff, file-tree, new-terminal) all use
+ * the view tab id — tab ids are uuid-unique app-wide, so a tab that moves
+ * windows keeps its pins. `composer` is reserved for P1.2 (window-keyed).
  */
 export type SurfaceKind =
   | "git-diff"
@@ -39,21 +40,21 @@ export function surfaceHostKey(
   return `${kind}${SURFACE_KEY_SEP}${instanceId}`;
 }
 
-/** File-tree / new-terminal instance: window + pane (tab id in the sidebar). */
-export function windowPaneSurfaceInstanceId(
-  windowId: string,
-  paneId: string,
+/** Sidebar panel instance: the view tab id. */
+export function tabSurfaceKey(
+  kind: Extract<SurfaceKind, "git-diff" | "file-tree" | "new-terminal">,
+  tabId: string,
 ): string {
-  return `${windowId}${SURFACE_KEY_SEP}${paneId}`;
+  return surfaceHostKey(kind, tabId);
 }
 
 /** Git-diff sidebar panel instance. `tileRef` is the view tab id. */
 export function gitDiffPanelSurfaceKey(tileRef: string): string {
-  return surfaceHostKey("git-diff", tileRef);
+  return tabSurfaceKey("git-diff", tileRef);
 }
 
-/** Reserved for P1.2. Do not wire composer consumers here. */
-export function composerSurfaceKey(windowId: string): string {
+/** Reserved for P1.2. Accepts null so the contract matches `resolveSurfaceWindowId`. */
+export function composerSurfaceKey(windowId: string | null): string {
   return surfaceHostKey("composer", resolveSurfaceWindowId(windowId));
 }
 
@@ -115,7 +116,6 @@ interface SurfaceHostSelectionStoreState {
     surfaceKey: string,
     resolvedHostId: string,
   ) => void;
-  readonly clearAllSelections: () => void;
   readonly resetForTests: () => void;
 }
 
@@ -162,10 +162,6 @@ export const useSurfaceHostSelectionStore =
           const current = get().selections;
           if (current[surfaceKey] !== undefined) return;
           set({ selections: { ...current, [surfaceKey]: resolvedHostId } });
-        },
-        clearAllSelections: () => {
-          if (Object.keys(get().selections).length === 0) return;
-          set({ selections: {} });
         },
         resetForTests: () => {
           set({ selections: {} });

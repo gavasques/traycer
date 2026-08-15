@@ -21,7 +21,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { NewTerminalPickerBody } from "@/components/epic-canvas/sidebar/new-terminal-picker-body";
-import { useWindowPaneSurfaceKey } from "@/hooks/host/use-surface-host-pin";
+import { useTabSurfaceKey } from "@/hooks/host/use-surface-host-pin";
 import {
   buildTerminalTileRef,
   type TerminalLaunchTarget,
@@ -43,7 +43,7 @@ interface NewTerminalPickerProps {
 
 export function NewTerminalPicker(props: NewTerminalPickerProps) {
   const { epicId, onBeforeOpen, tabId } = props;
-  const surfaceKey = useWindowPaneSurfaceKey("new-terminal", tabId);
+  const surfaceKey = useTabSurfaceKey("new-terminal", tabId);
   const isOpen = usePanelHeaderMenuOpen(tabId, "terminals", "create");
   const setMenuOpen = usePanelHeaderMenuStore((state) => state.setMenuOpen);
   const setIsOpen = useCallback(

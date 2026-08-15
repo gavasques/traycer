@@ -88,6 +88,7 @@ describe("useSurfaceHostSelectionStore", () => {
 
   it("reserves a composer window key without requiring a consumer", () => {
     expect(composerSurfaceKey("window-1")).toBe("composer\u001fwindow-1");
+    expect(composerSurfaceKey(null)).toBe("composer\u001fbrowser");
   });
 
   it("persists pins and drops invalid rehydrated entries", async () => {

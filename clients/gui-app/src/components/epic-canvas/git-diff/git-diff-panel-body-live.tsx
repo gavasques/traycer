@@ -11,6 +11,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import type { QueryClient } from "@tanstack/react-query";
+import type { HostUnavailability } from "@traycer-clients/shared/host-client/remote-fetcher";
 import type {
   GitListChangedFilesResponse,
   GitListChangedFilesResponseV11,
@@ -142,6 +143,8 @@ function useUnavailableGitRootKeys(
 function GitDiffPanelPinnedDead(props: {
   readonly surfaceKey: string;
   readonly hostLabel: string;
+  readonly unavailability: HostUnavailability | null;
+  readonly vanished: boolean;
   readonly onUseActiveHost: () => void;
 }): ReactNode {
   return (
@@ -149,6 +152,8 @@ function GitDiffPanelPinnedDead(props: {
       <WorktreePickerHostSection surfaceKey={props.surfaceKey} />
       <PinnedSurfaceDeadState
         hostLabel={props.hostLabel}
+        unavailability={props.unavailability}
+        vanished={props.vanished}
         onUseActiveHost={props.onUseActiveHost}
         testId="git-diff-panel-pinned-host-dead"
       />
@@ -161,6 +166,7 @@ export function GitDiffPanelBodyLive(
 ): ReactNode {
   const surfaceKey = useGitDiffPanelSurfaceKey(props.tabId);
   const pin = useSurfaceHostPin(surfaceKey);
+  const { latchOnFirstUse } = pin;
   const dead = usePinnedSurfaceDead(pin);
   const client = useSurfaceHostClient(pin.resolvedHostId);
   const bindingsQuery = useWorktreeListBindingsForEpicForClient({
@@ -248,7 +254,10 @@ export function GitDiffPanelBodyLive(
         row.runningDir === selectedRepo.rootRunningDir &&
         !unavailableGitRootKeys.keys.has(worktreeRowKey(row)),
     );
-    if (selectedRootReady) return;
+    if (selectedRootReady) {
+      latchOnFirstUse();
+      return;
+    }
 
     const next = pickDefaultRow(
       gitRows,
@@ -256,6 +265,9 @@ export function GitDiffPanelBodyLive(
       unavailableGitRootKeys.keys,
       ignoreWhitespace,
     );
+    if (next !== null) {
+      latchOnFirstUse();
+    }
     setSelectedRepo(
       props.epicId,
       next === null
@@ -276,6 +288,7 @@ export function GitDiffPanelBodyLive(
     selectedRepo,
     setSelectedRepo,
     unavailableGitRootKeys.keys,
+    latchOnFirstUse,
   ]);
 
   // Clear the probed-unavailable set and re-probe every root's capability, so a
@@ -294,6 +307,9 @@ export function GitDiffPanelBodyLive(
       cleared,
       ignoreWhitespace,
     );
+    if (next !== null) {
+      latchOnFirstUse();
+    }
     setSelectedRepo(
       props.epicId,
       next === null
@@ -311,6 +327,7 @@ export function GitDiffPanelBodyLive(
     queryClient,
     setSelectedRepo,
     unavailableGitRootKeys,
+    latchOnFirstUse,
   ]);
 
   return renderGitDiffPanelBody({
@@ -332,7 +349,12 @@ export function GitDiffPanelBodyLive(
 }
 
 function renderGitDiffPanelBody(input: {
-  readonly dead: { readonly isDead: boolean; readonly hostLabel: string };
+  readonly dead: {
+    readonly isDead: boolean;
+    readonly hostLabel: string;
+    readonly unavailability: HostUnavailability | null;
+    readonly vanished: boolean;
+  };
   readonly surfaceKey: string;
   readonly followEffective: () => void;
   readonly latchOnFirstUse: () => void;
@@ -352,6 +374,8 @@ function renderGitDiffPanelBody(input: {
       <GitDiffPanelPinnedDead
         surfaceKey={input.surfaceKey}
         hostLabel={input.dead.hostLabel}
+        unavailability={input.dead.unavailability}
+        vanished={input.dead.vanished}
         onUseActiveHost={input.followEffective}
       />
     );

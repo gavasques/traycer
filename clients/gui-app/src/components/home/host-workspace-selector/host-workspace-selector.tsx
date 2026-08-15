@@ -434,6 +434,7 @@ export function ActiveHostWorkspaceControls(
           isLoading={hostOptions.isLoading}
           listsFailed={hostOptions.listsFailed}
           onRetryLists={hostOptions.retryLists}
+          intent="bind"
         />
         <section
           aria-label="Workspaces"

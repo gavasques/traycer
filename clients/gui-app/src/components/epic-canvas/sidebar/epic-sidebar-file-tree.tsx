@@ -69,7 +69,6 @@ import {
 import { ReportIssueAction } from "@/components/report-issue/report-issue-action";
 import { useEpicNestedFocusNavigation } from "@/hooks/epic/use-epic-nested-focus-navigation";
 import { useGitListChangedFilesSubscription } from "@/hooks/git/use-git-list-changed-files-subscription";
-
 import { useDebouncedValue } from "@/hooks/ui/use-debounced-value";
 import { useWorkspaceListFileTree } from "@/hooks/workspace/use-list-file-tree-query";
 import {
@@ -434,12 +433,13 @@ export function FileTreePanelBodyForWorkspace(props: {
   readonly tabId: string;
   readonly workspacePath: string;
   readonly hostId: string | null;
+  readonly onLatchHost: () => void;
 }) {
   // The file-tree panel resolves against its surface pin (`selection ??
   // effective`). Opened tabs stamp this host id onto their `WorkspaceFileRef`
   // so they keep resolving against the same host after a later swap
   // (CLAUDE.md: tabs are bound to a host for life).
-  const { hostId } = props;
+  const { hostId, onLatchHost } = props;
   // The box is a filter, not a search field: the query is applied on a pause,
   // and the same debounced value gates both the host RPC and the local row
   // filter so the two can never disagree about what is being filtered for.
@@ -499,6 +499,7 @@ export function FileTreePanelBodyForWorkspace(props: {
     ) => {
       const ref = workspaceFileRefForTreePath(treePath);
       if (ref === null) return;
+      onLatchHost();
       navigateNested(props.epicId, props.tabId, () => open(props.tabId, ref));
     };
     handlersRef.current.onSelect = (treePath) => {
@@ -514,6 +515,7 @@ export function FileTreePanelBodyForWorkspace(props: {
     props.tabId,
     prepareOpenTilePreviewInTabFocusTarget,
     prepareOpenTileInTabFocusTarget,
+    onLatchHost,
   ]);
 
   const { model } = useFileTree({

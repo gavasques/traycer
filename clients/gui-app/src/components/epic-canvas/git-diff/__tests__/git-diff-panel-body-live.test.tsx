@@ -26,6 +26,8 @@ import {
 } from "@/stores/epics/git-panel-store";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { GitDiffPanelBodyLive } from "../git-diff-panel-body-live";
+import { useSurfaceHostSelectionStore } from "@/stores/host/surface-host-selection-store";
+import { gitDiffPanelSurfaceKey } from "@/stores/host/surface-host-selection-store";
 import { expectModuleHeaderPreview } from "./git-module-header-test-utils";
 
 const testState = vi.hoisted(() => ({
@@ -61,19 +63,52 @@ vi.mock("@/hooks/worktree/use-worktree-list-bindings-for-epic-query", () => ({
   }),
 }));
 
-vi.mock("@/hooks/host/use-surface-host-pin", () => ({
-  useGitDiffPanelSurfaceKey: (tileRef: string) => `git-diff\u001f${tileRef}`,
-  useSurfaceHostPin: () => ({
-    selection: null,
-    setSelection: () => undefined,
-    resolvedHostId: "host-1",
-    isPinned: false,
-    latchOnFirstUse: () => undefined,
-    followEffective: () => undefined,
+interface PinTestReachability {
+  status: "reachable" | "unreachable" | "checking" | "host-starting";
+  hostLabel: string;
+  unavailability: "offline" | "plan-restricted" | null;
+}
+
+interface PinTestState {
+  activeHostId: string | null;
+  lastClientHostId: string | null;
+  reachability: PinTestReachability;
+  directory: Array<{ readonly hostId: string }>;
+}
+
+const pinTestState = vi.hoisted(
+  (): PinTestState => ({
+    activeHostId: "host-1",
+    lastClientHostId: null,
+    reachability: {
+      status: "reachable",
+      hostLabel: "Host One",
+      unavailability: null,
+    },
+    directory: [{ hostId: "host-1" }],
   }),
-  usePinnedSurfaceDead: () => ({ isDead: false, hostLabel: "host-1" }),
-  useSurfaceHostClient: () => null,
-  useWindowPaneSurfaceKey: () => "file-tree\u001ftest",
+);
+
+vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
+  useReactiveActiveHostId: () => pinTestState.activeHostId,
+}));
+
+vi.mock("@/hooks/agent/use-host-reachability", () => ({
+  useHostReachability: () => pinTestState.reachability,
+}));
+
+vi.mock("@/hooks/host/use-host-directory-list-query", () => ({
+  useHostDirectoryList: () => ({
+    data: pinTestState.directory,
+    fetchStatus: "idle",
+  }),
+}));
+
+vi.mock("@/hooks/host/use-host-client-for-host-id", () => ({
+  useHostClientForHostId: (hostId: string | null) => {
+    pinTestState.lastClientHostId = hostId;
+    return null;
+  },
 }));
 
 vi.mock("@/hooks/git/use-git-prefetch-worktree-status", () => ({
@@ -357,6 +392,15 @@ describe("<GitDiffPanelBodyLive /> workspace switcher integration", () => {
     testState.capabilities = new Map();
     window.localStorage.clear();
     useGitPanelStore.setState({ stateByEpicId: {} });
+    useSurfaceHostSelectionStore.getState().resetForTests();
+    pinTestState.activeHostId = "host-1";
+    pinTestState.lastClientHostId = null;
+    pinTestState.reachability = {
+      status: "reachable",
+      hostLabel: "Host One",
+      unavailability: null,
+    };
+    pinTestState.directory = [{ hostId: "host-1" }];
   });
 
   afterEach(() => {
@@ -918,5 +962,53 @@ describe("<GitDiffPanelBodyLive /> workspace switcher integration", () => {
       "git-diff-repo-switcher-root-notes",
     );
     expect(within(resolvedOption).getByText("not git")).toBeDefined();
+  });
+
+  it("latches the resolved host when the default root is already selected", () => {
+    renderPanel(rootSelected);
+
+    expect(
+      useSurfaceHostSelectionStore.getState().selections[
+        gitDiffPanelSurfaceKey(TAB_ID)
+      ],
+    ).toBe("host-1");
+    expect(pinTestState.lastClientHostId).toBe("host-1");
+  });
+
+  it("writes the pin when a repo is picked in the switcher", () => {
+    renderPanel(rootSelected);
+    useSurfaceHostSelectionStore.getState().setSelection(
+      gitDiffPanelSurfaceKey(TAB_ID),
+      null,
+    );
+
+    openSwitcher();
+    fireEvent.click(screen.getByTestId("git-diff-repo-switcher-root-other-repo"));
+
+    expect(
+      useSurfaceHostSelectionStore.getState().selections[
+        gitDiffPanelSurfaceKey(TAB_ID)
+      ],
+    ).toBe("host-1");
+  });
+
+  it("renders the D6 dead state instead of the changes list", () => {
+    useSurfaceHostSelectionStore.getState().setSelection(
+      gitDiffPanelSurfaceKey(TAB_ID),
+      "host-1",
+    );
+    pinTestState.reachability = {
+      status: "unreachable",
+      hostLabel: "Host One",
+      unavailability: "offline",
+    };
+
+    renderPanel(rootSelected);
+
+    expect(screen.getByTestId("git-diff-panel-pinned-host-dead")).toBeDefined();
+    expect(screen.getByText(/Host One is unreachable/)).toBeDefined();
+    expect(screen.getByTestId("git-diff-panel-pinned-host-dead-use-active")).toBeDefined();
+    expect(screen.queryByText("Loading workspaces…")).toBeNull();
+    expect(screen.queryByTestId("git-diff-repo-switcher-trigger")).toBeNull();
   });
 });

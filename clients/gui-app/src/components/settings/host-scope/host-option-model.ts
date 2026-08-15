@@ -9,15 +9,18 @@ import type { HostScopeOption } from "@/components/settings/host-scope/host-scop
  *   pick: the surface then says why it is empty, and picking it is how you get
  *   back to it when it returns.
  * - `bind`: make it the host this window RUNS on — where new work lands (the
- *   composer, the file tree, the git-diff panel, the terminal picker, the
- *   shell's Select host dialog). A host this client cannot dial is not a legal
- *   answer there, so its row is inert rather than a click that could only fail.
+ *   composer, the shell's Select host dialog). A host this client cannot dial
+ *   is not a legal answer there, so its row is inert rather than a click that
+ *   could only fail.
+ * - `pin`: scope this surface's RPCs; never rebinds the window (git-diff
+ *   panel, file tree, new-terminal picker). Undialable rows stay inert, and
+ *   there is no "Active" chip — same pick legality as `bind`, different write.
  *
- * Both intents draw the SAME row. Which hosts exist, what they are called and
+ * All intents draw the SAME row. Which hosts exist, what they are called and
  * whether they can be reached is one answer everywhere; only the consequence of
  * clicking differs.
  */
-export type HostPickIntent = "view" | "bind";
+export type HostPickIntent = "view" | "bind" | "pin";
 
 /**
  * Whether choosing this row is a legal answer for that intent.

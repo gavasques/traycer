@@ -871,9 +871,13 @@ export class DesktopRunnerHost implements IRunnerHost {
     code: string,
     approve: boolean,
   ): Promise<RespondLinkLoginFetchResult> {
-    return respondLinkLoginViaHttp(this.authnBaseUrl, bearerToken, code, approve);
+    return respondLinkLoginViaHttp(
+      this.authnBaseUrl,
+      bearerToken,
+      code,
+      approve,
+    );
   }
-
 
   mintHostCredential(
     bearerToken: string,

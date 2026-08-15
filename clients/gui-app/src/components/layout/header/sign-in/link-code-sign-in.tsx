@@ -199,8 +199,8 @@ export function LinkCodeSignIn(props: {
             data-testid="link-code-signin-panel"
           >
             <p className="text-center text-ui-sm opacity-80">
-              On your desktop, open Settings → Link a phone, then type the
-              code shown under the QR.
+              On your desktop, open Settings → Link a phone, then type the code
+              shown under the QR.
             </p>
             {codeEntryForm}
             {noticeLine}

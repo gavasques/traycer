@@ -2535,23 +2535,20 @@ export class AuthService {
   }
 
   /**
-   * Best-effort undo for a credential save whose attempt was superseded
-   * mid-write: remove the pair ONLY if the store still holds exactly the
-   * token this stale finalization wrote — a successor that has already
-   * written its own pair must never be deleted. Failures are logged and
-   * swallowed; the caller is already returning a silent no-op.
+   * Undo for a credential save whose attempt was superseded mid-write: an
+   * atomic compare-and-delete on the store's mutation chain removes the pair
+   * ONLY if the store still holds exactly the token this stale finalization
+   * wrote — a successor's `signIn` serializes wholly before or after the
+   * compare-and-delete, so its pair can never be destroyed by a stale
+   * comparison. A failed undo has a real consequence (the stale pair would
+   * rehydrate on a later launch if the successor fails), so it surfaces
+   * through the shared store-fault seam instead of being swallowed.
    */
   private async undoSupersededCredentialSave(token: string): Promise<void> {
     try {
-      const stored = await this.tokenStore.get();
-      if (stored !== null && stored.token === token) {
-        await this.tokenStore.delete();
-      }
+      await this.tokenStore.deleteIfToken(token);
     } catch (error) {
-      appLogger.warn(
-        "[auth] failed to undo a superseded credential save",
-        { error: describeLogError(error) },
-      );
+      this.markStoreUnavailable("undo-superseded-save", error);
     }
   }
 

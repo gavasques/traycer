@@ -8,10 +8,7 @@ export interface RespondLinkLoginInput {
 }
 
 export type RespondLinkLoginOutcome =
-  | "ok"
-  | "already-decided"
-  | "gone"
-  | "failed";
+  "ok" | "already-decided" | "gone" | "failed";
 
 /**
  * The Link-a-phone panel's approve/reject decision on a claimed code.

@@ -195,17 +195,15 @@ function ApprovedCard(props: { readonly onRestart: () => void }) {
   );
 }
 
-function ShowingCard(props: {
-  readonly minted: MintLinkLoginCodeResponse;
-}) {
+function ShowingCard(props: { readonly minted: MintLinkLoginCodeResponse }) {
   return (
     <>
       <LinkLoginQr code={props.minted.code} />
       <div className="flex w-full max-w-md flex-col items-center gap-2">
         <p className="text-ui-sm text-muted-foreground">
           In the mobile app, choose{" "}
-          <span className="font-medium text-foreground">Scan QR code</span> —
-          or type this code:
+          <span className="font-medium text-foreground">Scan QR code</span> — or
+          type this code:
         </p>
         <code className="w-full rounded-md border border-border/60 bg-muted/40 px-3 py-2 text-center font-mono text-ui-xs break-all select-all">
           {props.minted.code}

@@ -341,9 +341,13 @@ export class MockRunnerHost implements IRunnerHost {
     code: string,
     approve: boolean,
   ): Promise<RespondLinkLoginFetchResult> {
-    return respondLinkLoginViaHttp(this.authnBaseUrl, bearerToken, code, approve);
+    return respondLinkLoginViaHttp(
+      this.authnBaseUrl,
+      bearerToken,
+      code,
+      approve,
+    );
   }
-
 
   readonly linkCodeScanner = null;
 

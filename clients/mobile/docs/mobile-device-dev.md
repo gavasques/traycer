@@ -86,7 +86,7 @@ Link-a-phone panel (`Cmd-V` pastes the Mac clipboard into the Simulator).
 - **Phone shows "Couldn't reach the sign-in service"** — Mac firewall is
   blocking inbound `bun`/`node`, or phone and Mac are on isolated Wi-Fi
   networks (guest SSIDs often block peer traffic). `curl
-  http://<lan-ip>:<authn-port>/` from another LAN machine to check.
+http://<lan-ip>:<authn-port>/` from another LAN machine to check.
 - **White screen on launch** — the lane's Vite server isn't running (the app
   loads its bundle from it); re-run `make dev-ios-device`.
 - **Codes always "invalid or expired"** — codes are single-use with a 60 s

@@ -80,14 +80,13 @@ export const claimLinkLoginCodeResponseSchema: z.ZodType<ClaimLinkLoginCodeRespo
     })
     .strict();
 
-export const linkLoginTokenResponseSchema: z.ZodType<LinkLoginTokenResponse> =
-  z
-    .object({
-      token: z.string().min(1),
-      refreshToken: z.string().min(1),
-      familyId: z.string().min(1),
-    })
-    .strict();
+export const linkLoginTokenResponseSchema: z.ZodType<LinkLoginTokenResponse> = z
+  .object({
+    token: z.string().min(1),
+    refreshToken: z.string().min(1),
+    familyId: z.string().min(1),
+  })
+  .strict();
 
 export const linkLoginStatusResponseSchema: z.ZodType<LinkLoginStatusResponse> =
   z

@@ -30,7 +30,9 @@ export function PrimarySignInButton(props: {
       data-testid="signin-button"
       className={cn(
         "cursor-pointer",
-        props.isHero && props.emphasis === "primary" && HERO_PRIMARY_BUTTON_CLASS,
+        props.isHero &&
+          props.emphasis === "primary" &&
+          HERO_PRIMARY_BUTTON_CLASS,
         props.isHero && props.emphasis === "secondary" && "w-full",
       )}
     >

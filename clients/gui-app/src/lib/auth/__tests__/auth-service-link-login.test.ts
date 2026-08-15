@@ -12,7 +12,10 @@ import type {
   StoredCredentials,
   StoredCredentialsIdentity,
 } from "@traycer-clients/shared/platform/runner-host";
-import { AuthService } from "@/lib/auth/auth-service";
+import {
+  AUTH_ERROR_STORE_UNAVAILABLE,
+  AuthService,
+} from "@/lib/auth/auth-service";
 import { useAuthStore } from "@/stores/auth/auth-store";
 
 const CLAIM_URL = "http://localhost:5005/api/v3/auth/link/claim";
@@ -202,11 +205,11 @@ describe("link-login attempt fence", () => {
     }
   });
 
-  it("a supersession landing MID-SAVE undoes the durable credential write", async () => {
-    const { service, host } = makeService();
-    const { script, restore } = installLinkFetch();
-    // Pause the credential save at the durable-store boundary.
-    const realStore: ITokenStore = host.tokenStore;
+  /** Pauses the credential save at the durable-store boundary. */
+  function pauseStoreSignIn(realStore: ITokenStore): {
+    saveEnteredPromise: Promise<void>;
+    releaseSave: () => void;
+  } {
     let releaseSave: () => void = () => undefined;
     let saveEntered: () => void = () => undefined;
     const saveEnteredPromise = new Promise<void>((resolve) => {
@@ -227,11 +230,23 @@ describe("link-login attempt fence", () => {
         return originalSignIn(tokens, identity);
       },
     });
+    return { saveEnteredPromise, releaseSave };
+  }
+
+  it("a supersession landing MID-SAVE undoes the durable credential write", async () => {
+    const { service, host } = makeService();
+    const { script, restore } = installLinkFetch();
+    const realStore: ITokenStore = host.tokenStore;
+    const { saveEnteredPromise, releaseSave } = pauseStoreSignIn(realStore);
     try {
       script.validationResponse = () => json(PROFILE_BODY, 200);
       script.tokenResponse = () =>
         json(
-          { token: "attempt-a-token", refreshToken: "attempt-a-r", familyId: "f" },
+          {
+            token: "attempt-a-token",
+            refreshToken: "attempt-a-r",
+            familyId: "f",
+          },
           200,
         );
       const linkResult = service.signInWithLinkCode("ABCDE-FGHJK");
@@ -255,6 +270,52 @@ describe("link-login attempt fence", () => {
       const stored: StoredCredentials | null = await realStore.get();
       expect(stored).toBeNull();
       expect(useAuthStore.getState().status).not.toBe("signed-in");
+    } finally {
+      restore();
+    }
+  });
+
+  it("a FAILED undo of the superseded save is surfaced, never swallowed", async () => {
+    const { service, host } = makeService();
+    const { script, restore } = installLinkFetch();
+    const realStore: ITokenStore = host.tokenStore;
+    const { saveEnteredPromise, releaseSave } = pauseStoreSignIn(realStore);
+    // The undo's conditional delete faults — the stale pair stays on disk,
+    // where a failed successor's next launch would rehydrate it. That must
+    // fire the shared store-fault seam, not vanish into a debug log.
+    Object.defineProperty(realStore, "delete", {
+      configurable: true,
+      value: (): Promise<void> =>
+        Promise.reject(new Error("EIO: credentials file unwritable")),
+    });
+    try {
+      script.validationResponse = () => json(PROFILE_BODY, 200);
+      script.tokenResponse = () =>
+        json(
+          {
+            token: "attempt-a-token",
+            refreshToken: "attempt-a-r",
+            familyId: "f",
+          },
+          200,
+        );
+      const linkResult = service.signInWithLinkCode("ABCDE-FGHJK");
+      await vi.advanceTimersByTimeAsync(1_100);
+      await saveEnteredPromise;
+
+      Object.defineProperty(host.deviceFlow, "start", {
+        configurable: true,
+        value: () => Promise.resolve(null),
+      });
+      const deviceSignIn = service.signIn();
+      await vi.advanceTimersByTimeAsync(10);
+      await deviceSignIn;
+
+      releaseSave();
+      const result = await linkResult;
+      expect(result.kind).toBe("failed");
+      // Observable: the store-unavailable projection is the surfaced error.
+      expect(service.getLastError()).toBe(AUTH_ERROR_STORE_UNAVAILABLE);
     } finally {
       restore();
     }

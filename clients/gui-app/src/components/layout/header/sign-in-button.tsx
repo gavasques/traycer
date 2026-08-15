@@ -35,7 +35,10 @@ function SignInActions(props: {
 }) {
   if (props.deviceProgress !== null) {
     return (
-      <DeviceCodeProgress progress={props.deviceProgress} isHero={props.isHero} />
+      <DeviceCodeProgress
+        progress={props.deviceProgress}
+        isHero={props.isHero}
+      />
     );
   }
   if (isMobileApp() && props.isHero) {
@@ -61,7 +64,10 @@ function SignInActions(props: {
         isSigningIn={props.isSigningIn}
         emphasis="primary"
       />
-      <RetrySignInButton isHero={props.isHero} isSigningIn={props.isSigningIn} />
+      <RetrySignInButton
+        isHero={props.isHero}
+        isSigningIn={props.isSigningIn}
+      />
       {isMobileApp() ? (
         <LinkCodeSignIn isHero={props.isHero} presentation="link" />
       ) : null}

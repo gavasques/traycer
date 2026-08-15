@@ -400,7 +400,10 @@ function DrawerTaskList(props: DrawerTaskListProps): ReactNode {
       className="flex flex-col gap-1 pb-8"
       data-testid="mobile-nav-task-list"
     >
-      <div className="flex items-center justify-between px-3 py-1">
+      {/* Pinned while the rows scroll: the caption and the History entry
+          stay reachable at any scroll depth. Solid drawer background
+          (`bg-popover`) so rows slide under it rather than through it. */}
+      <div className="sticky top-0 z-10 flex items-center justify-between bg-popover px-3 py-1">
         <span className="text-overline text-muted-foreground">
           Recent tasks
         </span>

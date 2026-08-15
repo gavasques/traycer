@@ -18,8 +18,9 @@ export const LINK_LOGIN_REMINT_MS = 50_000;
 function linkLoginCodeQueryOptions(
   auth: AuthService | null,
   userId: string | null,
+  active: boolean,
 ) {
-  if (auth === null || userId === null) {
+  if (auth === null || userId === null || !active) {
     return queryOptions<MintLinkLoginCodeResponse | null>({
       queryKey: authQueryKeys.linkLoginCodeMissing(),
       queryFn: () => Promise.resolve(null),
@@ -59,15 +60,18 @@ function linkLoginCodeQueryOptions(
 }
 
 /**
- * Mints and auto-rotates the "Link a phone" one-time code while the consuming
- * surface is mounted. Rotation stops when the last consumer unmounts and the
- * final code falls out of cache immediately.
+ * Mints and auto-rotates the "Link a phone" public code while the consuming
+ * surface is mounted AND `active`. The panel deactivates the rotation the
+ * moment a phone claims the displayed code — a fresh QR must not replace the
+ * one whose claimant the user is being asked to approve.
  */
-export function useAuthLinkLoginCode(): UseQueryResult<MintLinkLoginCodeResponse | null> {
+export function useAuthLinkLoginCode(
+  active: boolean,
+): UseQueryResult<MintLinkLoginCodeResponse | null> {
   const binding = useHostBinding();
   const userId = useAuthStore((s) =>
     s.status === "signed-in" ? (s.contextMetadata?.userId ?? null) : null,
   );
   const auth = binding === null ? null : binding.auth;
-  return useQuery(linkLoginCodeQueryOptions(auth, userId));
+  return useQuery(linkLoginCodeQueryOptions(auth, userId, active));
 }

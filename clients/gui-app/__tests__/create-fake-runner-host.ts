@@ -31,6 +31,10 @@ export function createFakeRunnerHost(
       Promise.resolve({ kind: "network-error" as const }),
     mintLinkLoginCode: () =>
       Promise.resolve({ kind: "network-error" as const }),
+    linkLoginStatus: () =>
+      Promise.resolve({ kind: "network-error" as const }),
+    respondLinkLogin: () =>
+      Promise.resolve({ kind: "network-error" as const }),
     linkCodeScanner: null,
     updateHostVersionPolicy: () =>
       Promise.resolve({ kind: "network-error" as const }),

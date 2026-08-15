@@ -51,8 +51,12 @@ import {
   type StepUpChallengeFetchResult,
 } from "../../auth/devices-sessions-fetcher";
 import {
+  linkLoginStatusViaHttp,
   mintLinkLoginCodeViaHttp,
+  respondLinkLoginViaHttp,
+  type LinkLoginStatusFetchResult,
   type MintLinkLoginCodeFetchResult,
+  type RespondLinkLoginFetchResult,
 } from "../../auth/link-login";
 import type { MintHostCredentialRequest } from "@traycer/protocol/auth/devices-sessions";
 import {
@@ -324,6 +328,22 @@ export class MockRunnerHost implements IRunnerHost {
   ): Promise<MintLinkLoginCodeFetchResult> {
     return mintLinkLoginCodeViaHttp(this.authnBaseUrl, bearerToken, signal);
   }
+  linkLoginStatus(
+    bearerToken: string,
+    code: string,
+    signal: AbortSignal,
+  ): Promise<LinkLoginStatusFetchResult> {
+    return linkLoginStatusViaHttp(this.authnBaseUrl, bearerToken, code, signal);
+  }
+
+  respondLinkLogin(
+    bearerToken: string,
+    code: string,
+    approve: boolean,
+  ): Promise<RespondLinkLoginFetchResult> {
+    return respondLinkLoginViaHttp(this.authnBaseUrl, bearerToken, code, approve);
+  }
+
 
   readonly linkCodeScanner = null;
 

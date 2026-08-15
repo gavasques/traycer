@@ -227,6 +227,10 @@ function createBaseRunnerHost(): IRunnerHost {
       Promise.resolve({ kind: "network-error" as const }),
     mintLinkLoginCode: () =>
       Promise.resolve({ kind: "network-error" as const }),
+    linkLoginStatus: () =>
+      Promise.resolve({ kind: "network-error" as const }),
+    respondLinkLogin: () =>
+      Promise.resolve({ kind: "network-error" as const }),
     linkCodeScanner: null,
     openExternalLink: () => Promise.resolve(),
     getRegisteredUrlSchemes: () => Promise.resolve([]),

@@ -11,6 +11,8 @@ import { useRunnerHostOrNull } from "@/providers/use-runner-host";
 type EntryNotice =
   | "not-a-code"
   | "invalid-code"
+  | "denied"
+  | "timed-out"
   | "rate-limited"
   | "network-error"
   | "failed"
@@ -23,7 +25,11 @@ function noticeCopy(notice: Exclude<EntryNotice, null>): string {
     case "not-a-code":
       return "That doesn't look like a link code. Scan the QR, or copy the code shown under it.";
     case "invalid-code":
-      return "That code is invalid, expired, or already used. Mint a fresh one on the desktop and try again.";
+      return "That code is invalid, expired, or already used. Scan the fresh one on the desktop and try again.";
+    case "denied":
+      return "The sign-in was rejected on your computer.";
+    case "timed-out":
+      return "No approval arrived in time. Scan a fresh code and confirm on your computer.";
     case "rate-limited":
       return "Too many attempts from this network. Wait a minute and try again.";
     case "network-error":
@@ -118,7 +124,7 @@ export function LinkCodeSignIn(props: {
           setEntry(event.target.value);
           setNotice(null);
         }}
-        placeholder="Paste or type the code"
+        placeholder="XXXXX-XXXXX"
         autoCapitalize="none"
         autoCorrect="off"
         spellCheck={false}
@@ -179,6 +185,14 @@ export function LinkCodeSignIn(props: {
             />
           ) : null}
         </Button>
+        {redeem.isPending ? (
+          <p
+            className="text-center text-ui-sm opacity-80"
+            data-testid="link-code-signin-waiting"
+          >
+            Waiting for approval on your computer…
+          </p>
+        ) : null}
         {open ? (
           <div
             className="flex w-full flex-col gap-3"

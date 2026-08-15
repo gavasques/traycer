@@ -25,8 +25,11 @@ import type {
   StepUpChallengeFetchResult,
 } from "@traycer-clients/shared/auth/devices-sessions-fetcher";
 import {
-  redeemLinkLoginCodeViaHttp,
+  claimLinkLoginCodeViaHttp,
+  linkLoginTokenViaHttp,
+  type LinkLoginStatusFetchResult,
   type MintLinkLoginCodeFetchResult,
+  type RespondLinkLoginFetchResult,
 } from "@traycer-clients/shared/auth/link-login";
 import type {
   UpdateHostVersionPolicyFetchResult,
@@ -79,16 +82,26 @@ const LEGACY_REFRESH_TOKEN_KEY = "traycer.refresh-token";
 
 /**
  * Terminal outcome of {@link AuthService.signInWithLinkCode}. `invalid-code`
- * covers expired, used, and never-existed codes indistinguishably (the server
- * does not say which); `failed` is a local failure after a successful redeem
- * (validation, persistence, or a superseding transition).
+ * covers expired, claimed-elsewhere, and never-existed codes
+ * indistinguishably (the server does not say which); `denied` is the desktop
+ * explicitly rejecting the claim; `timed-out` means the approval window
+ * elapsed with no decision; `failed` is a local failure after an approved
+ * poll (validation, persistence, or a superseding transition).
  */
 export type LinkLoginSignInResult =
   | { readonly kind: "signed-in" }
   | { readonly kind: "invalid-code" }
+  | { readonly kind: "denied" }
+  | { readonly kind: "timed-out" }
   | { readonly kind: "rate-limited" }
   | { readonly kind: "network-error" }
   | { readonly kind: "failed" };
+
+/**
+ * How long the phone keeps polling for the desktop's decision before giving
+ * up locally. Matches the server's claim window; the record is gone by then.
+ */
+const LINK_LOGIN_APPROVAL_TIMEOUT_MS = 120_000;
 
 /**
  * Thrown when a read is asked for on behalf of a credential era that is no
@@ -2563,16 +2576,20 @@ export class AuthService {
   }
 
   /**
-   * Link-code sign-in: redeems a one-time code scanned from (or shown by) a
-   * signed-in desktop and lands the minted pair through the SAME validate →
-   * persist → signed-in tail as a device-flow authorization
-   * (`applyTokenInternal`), so the resulting session is indistinguishable from
-   * any other sign-in to the rest of the app.
+   * Link-code sign-in, confirm-gated: CLAIMS the scanned public code — which
+   * grants nothing beyond the private polling secret and a spot in front of
+   * the desktop's approve/reject prompt — then polls WITH THAT SECRET until
+   * the desktop decides. Session delivery is bound to the secret, so a
+   * bystander who also saw the QR can neither claim again nor poll. An approved poll lands the
+   * minted pair through the SAME validate → persist → signed-in tail as a
+   * device-flow authorization (`applyTokenInternal`), so the resulting
+   * session is indistinguishable from any other sign-in to the rest of the
+   * app.
    *
    * Any in-flight device attempt is discarded first: the shared tail is
-   * invoked with the cold-start epoch (`null`), which is only current while no
-   * attempt is live — and the user redeeming a code has visibly chosen this
-   * path over the one that was waiting.
+   * invoked with the cold-start epoch (`null`), which is only current while
+   * no attempt is live — and the user redeeming a code has visibly chosen
+   * this path over the one that was waiting.
    */
   async signInWithLinkCode(code: string): Promise<LinkLoginSignInResult> {
     if (this.isDisposed()) {
@@ -2580,29 +2597,95 @@ export class AuthService {
     }
     this.clearPendingTimeout();
     this.discardActiveAttempt();
-    const redeemed = await redeemLinkLoginCodeViaHttp(
-      this.runnerHost.authnBaseUrl,
-      code,
-    );
+    const authnBaseUrl = this.runnerHost.authnBaseUrl;
+    const claimed = await claimLinkLoginCodeViaHttp(authnBaseUrl, code);
     if (this.isDisposed()) {
       return { kind: "failed" };
     }
-    if (redeemed.kind !== "ok") {
-      // Terminal, user-visible failure — surface the retry CTA exactly like a
-      // failed device attempt. `invalid-code` deliberately reads the same for
-      // expired, used, and never-existed codes; the server does not say which.
+    if (claimed.kind !== "claimed") {
       this.applyFailure(AUTH_ERROR_SIGN_IN_FAILED);
-      return redeemed.kind === "invalid-code" ||
-        redeemed.kind === "rate-limited"
-        ? { kind: redeemed.kind }
+      return claimed.kind === "invalid-code" || claimed.kind === "rate-limited"
+        ? { kind: claimed.kind }
         : { kind: "network-error" };
     }
-    const applied = await this.applyTokenInternal(
-      redeemed.response.token,
-      redeemed.response.refreshToken,
-      null,
-    );
-    return applied ? { kind: "signed-in" } : { kind: "failed" };
+
+    // Poll at the server-directed pace until a terminal outcome or the
+    // approval window closes. Consecutive transport errors end the attempt —
+    // a phone that lost the desktop's network cannot be approved anyway.
+    const deadline = Date.now() + LINK_LOGIN_APPROVAL_TIMEOUT_MS;
+    let intervalMs = Math.max(1_000, claimed.pollIntervalSeconds * 1_000);
+    let transportFailures = 0;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      if (this.isDisposed()) {
+        return { kind: "failed" };
+      }
+      const polled = await linkLoginTokenViaHttp(authnBaseUrl, claimed.secret);
+      if (this.isDisposed()) {
+        return { kind: "failed" };
+      }
+      switch (polled.kind) {
+        case "authorized": {
+          const applied = await this.applyTokenInternal(
+            polled.response.token,
+            polled.response.refreshToken,
+            null,
+          );
+          return applied ? { kind: "signed-in" } : { kind: "failed" };
+        }
+        case "authorization-pending":
+          transportFailures = 0;
+          continue;
+        case "slow-down":
+          transportFailures = 0;
+          intervalMs = Math.max(
+            intervalMs,
+            (polled.retryAfterSeconds ?? claimed.pollIntervalSeconds) * 1_000,
+          );
+          continue;
+        case "access-denied":
+          this.applyFailure(AUTH_ERROR_SIGN_IN_FAILED);
+          return { kind: "denied" };
+        case "invalid-code":
+          this.applyFailure(AUTH_ERROR_SIGN_IN_FAILED);
+          return { kind: "invalid-code" };
+        case "network-error":
+          transportFailures += 1;
+          if (transportFailures >= 3) {
+            this.applyFailure(AUTH_ERROR_SIGN_IN_FAILED);
+            return { kind: "network-error" };
+          }
+          continue;
+      }
+    }
+    this.applyFailure(AUTH_ERROR_SIGN_IN_FAILED);
+    return { kind: "timed-out" };
+  }
+
+  /**
+   * The "Link a phone" panel's view of its current code — whether a phone
+   * has claimed it and the claimant metadata for the confirmation prompt.
+   * The raw bearer stays inside this auth boundary.
+   */
+  async fetchLinkLoginStatus(
+    code: string,
+    signal: AbortSignal,
+  ): Promise<LinkLoginStatusFetchResult> {
+    if (this.currentBearer === null) {
+      return { kind: "unauthorized" };
+    }
+    return this.runnerHost.linkLoginStatus(this.currentBearer, code, signal);
+  }
+
+  /** The panel's approve/reject decision on a claimed code. */
+  async respondLinkLogin(
+    code: string,
+    approve: boolean,
+  ): Promise<RespondLinkLoginFetchResult> {
+    if (this.currentBearer === null) {
+      return { kind: "unauthorized" };
+    }
+    return this.runnerHost.respondLinkLogin(this.currentBearer, code, approve);
   }
 
   /**

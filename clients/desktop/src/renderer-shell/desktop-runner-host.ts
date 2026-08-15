@@ -92,8 +92,12 @@ import type {
   RetainedStepUpVerifyFetchResult,
 } from "@traycer-clients/shared/auth/devices-sessions-fetcher";
 import {
+  linkLoginStatusViaHttp,
   mintLinkLoginCodeViaHttp,
+  respondLinkLoginViaHttp,
+  type LinkLoginStatusFetchResult,
   type MintLinkLoginCodeFetchResult,
+  type RespondLinkLoginFetchResult,
 } from "@traycer-clients/shared/auth/link-login";
 import type { MintHostCredentialRequest } from "@traycer/protocol/auth/devices-sessions";
 import type {
@@ -854,6 +858,22 @@ export class DesktopRunnerHost implements IRunnerHost {
     // `network-error`, never a broken auth state.
     return mintLinkLoginCodeViaHttp(this.authnBaseUrl, bearerToken, signal);
   }
+  linkLoginStatus(
+    bearerToken: string,
+    code: string,
+    signal: AbortSignal,
+  ): Promise<LinkLoginStatusFetchResult> {
+    return linkLoginStatusViaHttp(this.authnBaseUrl, bearerToken, code, signal);
+  }
+
+  respondLinkLogin(
+    bearerToken: string,
+    code: string,
+    approve: boolean,
+  ): Promise<RespondLinkLoginFetchResult> {
+    return respondLinkLoginViaHttp(this.authnBaseUrl, bearerToken, code, approve);
+  }
+
 
   mintHostCredential(
     bearerToken: string,

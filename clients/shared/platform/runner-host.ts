@@ -8,7 +8,11 @@ import type {
   StepUpChallengeFetchResult,
   RetainedStepUpVerifyFetchResult,
 } from "../auth/devices-sessions-fetcher";
-import type { MintLinkLoginCodeFetchResult } from "../auth/link-login";
+import type {
+  LinkLoginStatusFetchResult,
+  MintLinkLoginCodeFetchResult,
+  RespondLinkLoginFetchResult,
+} from "../auth/link-login";
 import type { MintHostCredentialRequest } from "@traycer/protocol/auth/devices-sessions";
 import type { HostListFetchResult } from "../host-client/remote-fetcher";
 import type { LiveHostAvailability } from "../host-client/host-directory";
@@ -175,6 +179,27 @@ export interface IRunnerHost {
     bearerToken: string,
     signal: AbortSignal,
   ): Promise<MintLinkLoginCodeFetchResult>;
+
+  /**
+   * The minting surface's view of its own code — whether a phone has claimed
+   * it, and the server-observed claimant metadata for the confirmation
+   * prompt. Owner-only on the server.
+   */
+  linkLoginStatus(
+    bearerToken: string,
+    code: string,
+    signal: AbortSignal,
+  ): Promise<LinkLoginStatusFetchResult>;
+
+  /**
+   * The minting surface's decision on a claimed code. Approval is the step
+   * that authorizes the phone's session; a scan alone never does.
+   */
+  respondLinkLogin(
+    bearerToken: string,
+    code: string,
+    approve: boolean,
+  ): Promise<RespondLinkLoginFetchResult>;
 
   /**
    * Native QR scanner for the link-login sign-in path, or `null` where no

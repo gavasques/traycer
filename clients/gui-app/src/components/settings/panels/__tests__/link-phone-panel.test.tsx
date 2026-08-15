@@ -10,11 +10,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   useAuthLinkLoginCode: vi.fn(),
+  useAuthLinkLoginStatus: vi.fn(),
+  useRespondLinkLoginMutation: vi.fn(),
 }));
 
 vi.mock("@/hooks/auth/use-link-login-code-query", () => ({
   LINK_LOGIN_REMINT_MS: 50_000,
   useAuthLinkLoginCode: mocks.useAuthLinkLoginCode,
+}));
+
+vi.mock("@/hooks/auth/use-link-login-status-query", () => ({
+  useAuthLinkLoginStatus: mocks.useAuthLinkLoginStatus,
+}));
+
+vi.mock("@/hooks/auth/use-respond-link-login-mutation", () => ({
+  useRespondLinkLoginMutation: mocks.useRespondLinkLoginMutation,
 }));
 
 vi.mock("@/stores/auth/auth-store", () => ({
@@ -32,15 +42,31 @@ function queryResultWithCode(nowMs: number) {
     error: null,
     refetch: vi.fn(),
     data: {
-      code: "A".repeat(43),
+      code: "ABCDE-FGHJK",
       expires_in: 60,
       expires_at: Math.floor(nowMs / 1000) + 60,
     },
   };
 }
 
+function statusResult(data: unknown) {
+  return {
+    isPending: false,
+    isError: false,
+    error: null,
+    refetch: vi.fn(),
+    data,
+  };
+}
+
+function respondIdle() {
+  return { isPending: false, mutate: vi.fn() };
+}
+
 beforeEach(() => {
   vi.useFakeTimers();
+  mocks.useAuthLinkLoginStatus.mockReturnValue(statusResult(null));
+  mocks.useRespondLinkLoginMutation.mockReturnValue(respondIdle());
 });
 
 afterEach(() => {
@@ -72,13 +98,43 @@ describe("LinkPhonePanel rotation affordances", () => {
     );
   });
 
+  it("swaps the QR for an Approve/Reject confirmation when the code is claimed", () => {
+    mocks.useAuthLinkLoginCode.mockReturnValue(queryResultWithCode(Date.now()));
+    mocks.useAuthLinkLoginStatus.mockReturnValue(
+      statusResult({
+        status: "claimed",
+        claimant: {
+          address: "192.168.29.87",
+          userAgent: "TraycerMobile/1.0 (iPhone)",
+          location: "Bengaluru, IN",
+          claimedAt: Date.now(),
+        },
+      }),
+    );
+    const respond = respondIdle();
+    mocks.useRespondLinkLoginMutation.mockReturnValue(respond);
+    render(<LinkPhonePanel />);
+    expect(screen.getByTestId("link-phone-confirm")).toBeTruthy();
+    expect(screen.getByTestId("link-phone-claimant").textContent).toContain(
+      "192.168.29.87",
+    );
+    expect(screen.queryByTestId("link-phone-countdown")).toBeNull();
+    act(() => {
+      screen.getByTestId("link-phone-approve").click();
+    });
+    expect(respond.mutate).toHaveBeenCalledWith(
+      { code: "ABCDE-FGHJK", approve: true },
+      expect.anything(),
+    );
+  });
+
   it("states that a code is single-use and short-lived", () => {
     mocks.useAuthLinkLoginCode.mockReturnValue(queryResultWithCode(Date.now()));
     render(<LinkPhonePanel />);
-    expect(
-      screen.getByTestId("link-phone-single-use-hint").textContent,
-    ).toBe("Each code signs in one phone and expires in a minute.");
+    expect(screen.getByTestId("link-phone-single-use-hint").textContent).toBe(
+      "Each code links one phone, expires in a minute, and needs your approval here.",
+    );
     // The raw code stays available for the manual-entry path.
-    expect(screen.getByText("A".repeat(43))).toBeTruthy();
+    expect(screen.getByText("ABCDE-FGHJK")).toBeTruthy();
   });
 });

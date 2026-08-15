@@ -58,4 +58,22 @@ export const authQueryKeys = {
     "link-login-code",
     "missing",
   ],
+  // The minter's watch on one displayed code — keyed by the code itself so
+  // rotation naturally starts a fresh watch.
+  linkLoginStatus: (
+    authService: object,
+    userId: string,
+    code: string,
+  ): readonly unknown[] => [
+    "auth",
+    "link-login-status",
+    authService,
+    userId,
+    code,
+  ],
+  linkLoginStatusMissing: (): readonly unknown[] => [
+    "auth",
+    "link-login-status",
+    "missing",
+  ],
 };

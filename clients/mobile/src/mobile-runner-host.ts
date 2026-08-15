@@ -36,8 +36,12 @@ import {
   type StepUpChallengeFetchResult,
 } from "@traycer-clients/shared/auth/devices-sessions-fetcher";
 import {
+  linkLoginStatusViaHttp,
   mintLinkLoginCodeViaHttp,
+  respondLinkLoginViaHttp,
+  type LinkLoginStatusFetchResult,
   type MintLinkLoginCodeFetchResult,
+  type RespondLinkLoginFetchResult,
 } from "@traycer-clients/shared/auth/link-login";
 import type { MintHostCredentialRequest } from "@traycer/protocol/auth/devices-sessions";
 import {
@@ -268,6 +272,22 @@ export class MobileRunnerHost implements IRunnerHost {
     // signal aborts the request for real.
     return mintLinkLoginCodeViaHttp(this.authnBaseUrl, bearerToken, signal);
   }
+  linkLoginStatus(
+    bearerToken: string,
+    code: string,
+    signal: AbortSignal,
+  ): Promise<LinkLoginStatusFetchResult> {
+    return linkLoginStatusViaHttp(this.authnBaseUrl, bearerToken, code, signal);
+  }
+
+  respondLinkLogin(
+    bearerToken: string,
+    code: string,
+    approve: boolean,
+  ): Promise<RespondLinkLoginFetchResult> {
+    return respondLinkLoginViaHttp(this.authnBaseUrl, bearerToken, code, approve);
+  }
+
 
   async verifyStepUpChallenge(
     bearerToken: string,

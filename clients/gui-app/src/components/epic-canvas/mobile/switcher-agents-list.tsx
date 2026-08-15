@@ -24,6 +24,9 @@ import {
   isOpenableEpicNodeKind,
   makeOpenableNodeRef,
 } from "@/stores/epics/canvas/types";
+import { NotificationIndicatorsProvider } from "@/components/notifications/notification-indicators-provider";
+import { useNotificationIndicators } from "@/hooks/notifications/use-notification-indicators-query";
+import { useEpicSessionHostId } from "@/hooks/epic/use-epic-session-host-id";
 
 interface SwitcherListProps {
   readonly epicId: string;
@@ -49,30 +52,52 @@ export function SwitcherAgentsList(props: SwitcherListProps) {
   );
   const agents = useOrderedSwitcherRecords(filtered);
   const canMutate = isEditableRole(useEpicPermissionRole());
+  // Sorted for a stable query key: the list itself re-sorts by recency on every
+  // turn, and an order-sensitive key would refetch each time without the set
+  // having changed.
+  const indicatorChatIds = useMemo(
+    () => filtered.map((record) => record.id).sort(),
+    [filtered],
+  );
+  // The rows' status glyphs read notification state out of this context. Mobile
+  // had no provider at all, so every host/cloud-derived flag resolved against
+  // the empty default and a failed or waiting agent read as plain idle. Scoped
+  // to the EPIC SESSION host for the same reason the desktop chat tree is: these
+  // agents are this session's, `chatId` is host-minted, and the app-wide active
+  // host would answer about agents it does not own.
+  const epicSessionHostId = useEpicSessionHostId();
+  const indicators = useNotificationIndicators({
+    hostId: epicSessionHostId,
+    epicIds: [],
+    chatIds: indicatorChatIds,
+    enabled: indicatorChatIds.length > 0,
+  });
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-x-hidden overflow-y-auto overscroll-contain p-1 pb-safe-bottom">
-      {/* Editor-gated: a viewer's create is server-rejected, so an ungated row
-          would only lead to a dead end. Inside the scroll region and above the
-          items, so it is the first thing in the list either way. */}
-      {canMutate ? (
-        <SwitcherNewChatRow epicId={epicId} tabId={tabId} onClose={onClose} />
-      ) : null}
-      {agents.length === 0 ? (
-        <SwitcherListEmpty message="No agents yet." />
-      ) : (
-        agents.map((record) => (
-          <SwitcherAgentRow
-            key={record.id}
-            record={record}
-            records={records}
-            epicId={epicId}
-            tabId={tabId}
-            onClose={onClose}
-          />
-        ))
-      )}
-    </div>
+    <NotificationIndicatorsProvider indicators={indicators}>
+      <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-x-hidden overflow-y-auto overscroll-contain p-1 pb-safe-bottom">
+        {/* Editor-gated: a viewer's create is server-rejected, so an ungated row
+            would only lead to a dead end. Inside the scroll region and above the
+            items, so it is the first thing in the list either way. */}
+        {canMutate ? (
+          <SwitcherNewChatRow epicId={epicId} tabId={tabId} onClose={onClose} />
+        ) : null}
+        {agents.length === 0 ? (
+          <SwitcherListEmpty message="No agents yet." />
+        ) : (
+          agents.map((record) => (
+            <SwitcherAgentRow
+              key={record.id}
+              record={record}
+              records={records}
+              epicId={epicId}
+              tabId={tabId}
+              onClose={onClose}
+            />
+          ))
+        )}
+      </div>
+    </NotificationIndicatorsProvider>
   );
 }
 
@@ -109,7 +134,14 @@ function SwitcherAgentRow(props: {
 
   return (
     <SwitcherListRow
-      icon={<SwitcherAgentIcon nodeId={record.id} type={agentType} />}
+      icon={
+        <SwitcherAgentIcon
+          epicId={epicId}
+          nodeId={record.id}
+          type={agentType}
+          hostId={record.hostId}
+        />
+      }
       label={record.name}
       active={isActive}
       onSelect={onSelect}

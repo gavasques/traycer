@@ -29,6 +29,23 @@ interface Holder {
   activeId: string | null;
   role: "owner" | "viewer";
   activateCalls: ActivateCall[];
+  workingAgentIds: ReadonlySet<string>;
+  activityTiers: ReadonlyMap<string, "turn" | "background">;
+  /** Chat ids the agents list subscribed indicator state for, per render. */
+  indicatorChatIdCalls: ReadonlyArray<string>[];
+  indicators: {
+    readonly epics: Record<string, never>;
+    readonly chats: Record<
+      string,
+      {
+        readonly unreadFailure: boolean;
+        readonly pendingFork: boolean;
+        readonly pendingApproval: boolean;
+        readonly pendingInterview: boolean;
+        readonly unreadDone: boolean;
+      }
+    >;
+  };
 }
 
 const holder = vi.hoisted((): Holder => ({
@@ -37,11 +54,16 @@ const holder = vi.hoisted((): Holder => ({
   activeId: null,
   role: "owner",
   activateCalls: [],
+  workingAgentIds: new Set<string>(),
+  activityTiers: new Map<string, "turn" | "background">(),
+  indicatorChatIdCalls: [],
+  indicators: { epics: {}, chats: {} },
 }));
 
 vi.mock("@/lib/epic-selectors", () => ({
   useEpicArtifactRecords: () => holder.records,
-  useEpicActiveAgentIds: () => new Set<string>(),
+  useEpicActiveAgentIds: () => holder.workingAgentIds,
+  useEpicAgentActivityTiers: () => holder.activityTiers,
   useEpicChatHarnessId: () => null,
   useMaybeEpicTuiAgentHarnessId: () => null,
   useEpicPermissionRole: () => holder.role,
@@ -107,6 +129,20 @@ vi.mock("@/hooks/terminal/use-terminal-kill-mutation", () => ({
 vi.mock("@/hooks/epic/use-epic-nested-focus-navigation", () => ({
   useEpicNestedFocusNavigation: () => vi.fn(),
 }));
+// The agents list owns the indicator subscription its rows read through
+// context; record what it asks for so the wiring is asserted rather than
+// assumed, and answer from the holder.
+vi.mock("@/hooks/epic/use-epic-session-host-id", () => ({
+  useEpicSessionHostId: () => "host-A",
+}));
+vi.mock("@/hooks/notifications/use-notification-indicators-query", () => ({
+  useNotificationIndicators: (args: {
+    readonly chatIds: readonly string[];
+  }) => {
+    holder.indicatorChatIdCalls.push(args.chatIds);
+    return holder.indicators;
+  },
+}));
 // Each category list renders its own create row/menu (Agents: New chat,
 // Terminals: New terminal, Artifacts: a "+" kind menu); stub all three to
 // markers so their own wiring (composer mode, the terminal picker dialog, the
@@ -132,6 +168,10 @@ beforeEach(() => {
   holder.activeId = null;
   holder.role = "owner";
   holder.activateCalls = [];
+  holder.workingAgentIds = new Set<string>();
+  holder.activityTiers = new Map<string, "turn" | "background">();
+  holder.indicatorChatIdCalls = [];
+  holder.indicators = { epics: {}, chats: {} };
 });
 afterEach(cleanup);
 
@@ -194,6 +234,76 @@ describe("<SwitcherAgentsList />", () => {
     expect(holder.activateCalls).toHaveLength(1);
     expect(holder.activateCalls[0].id).toBe("chat-1");
     expect(holder.activateCalls[0].ref.type).toBe("chat");
+  });
+
+  it("spins a row whose agent is mid-turn and leaves the idle rows alone", () => {
+    holder.workingAgentIds = new Set<string>(["chat-1"]);
+    holder.activityTiers = new Map<string, "turn" | "background">([
+      ["chat-1", "turn"],
+    ]);
+    render(<SwitcherAgentsList {...PROPS} />);
+    expect(screen.getByTestId("switcher-agent-activity-chat-1")).toBeTruthy();
+    expect(screen.queryByTestId("switcher-agent-activity-tui-1")).toBeNull();
+  });
+
+  it("updates a row's status live while the sheet stays open", () => {
+    const view = render(<SwitcherAgentsList {...PROPS} />);
+    expect(screen.queryByTestId("switcher-agent-activity-tui-1")).toBeNull();
+
+    holder.workingAgentIds = new Set<string>(["tui-1"]);
+    holder.activityTiers = new Map<string, "turn" | "background">([
+      ["tui-1", "turn"],
+    ]);
+    view.rerender(<SwitcherAgentsList {...PROPS} />);
+    expect(screen.getByTestId("switcher-agent-activity-tui-1")).toBeTruthy();
+
+    // …and back down when the turn ends.
+    holder.workingAgentIds = new Set<string>();
+    holder.activityTiers = new Map<string, "turn" | "background">();
+    view.rerender(<SwitcherAgentsList {...PROPS} />);
+    expect(screen.queryByTestId("switcher-agent-activity-tui-1")).toBeNull();
+  });
+
+  it("renders the desktop mapping's background glyph, not the busy spinner, for background-only work", () => {
+    holder.workingAgentIds = new Set<string>(["tui-1"]);
+    holder.activityTiers = new Map<string, "turn" | "background">([
+      ["tui-1", "background"],
+    ]);
+    render(<SwitcherAgentsList {...PROPS} />);
+    expect(
+      screen.getByTestId("switcher-agent-background-activity-tui-1"),
+    ).toBeTruthy();
+    expect(screen.queryByTestId("switcher-agent-activity-tui-1")).toBeNull();
+  });
+
+  it("surfaces notification status on a row, outranking a running turn", () => {
+    holder.workingAgentIds = new Set<string>(["chat-1"]);
+    holder.activityTiers = new Map<string, "turn" | "background">([
+      ["chat-1", "turn"],
+    ]);
+    holder.indicators = {
+      epics: {},
+      chats: {
+        "chat-1": {
+          unreadFailure: true,
+          pendingFork: false,
+          pendingApproval: false,
+          pendingInterview: false,
+          unreadDone: false,
+        },
+      },
+    };
+    render(<SwitcherAgentsList {...PROPS} />);
+    expect(screen.getByTestId("switcher-agent-failure-chat-1")).toBeTruthy();
+    expect(screen.queryByTestId("switcher-agent-activity-chat-1")).toBeNull();
+  });
+
+  it("subscribes indicator state for exactly the agent rows it lists", () => {
+    render(<SwitcherAgentsList {...PROPS} />);
+    const chatIds = holder.indicatorChatIdCalls.at(-1);
+    // Agents only - the spec artifact in the fixture is not a chat entity, and
+    // the ids are sorted so the query key does not churn on every re-sort.
+    expect(chatIds).toEqual(["chat-1", "tui-1"]);
   });
 
   it("shows the '…' menu for an editor and hides it entirely for a viewer", () => {

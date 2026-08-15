@@ -38,13 +38,21 @@ function noticeCopy(notice: Exclude<EntryNotice, null>): string {
 }
 
 /**
- * "Scan from desktop" sign-in: redeems a one-time link code minted by the
- * desktop's Settings → Link a phone panel. The camera is a capability
+ * QR link-code sign-in: redeems a one-time code minted by the desktop's
+ * Settings → Link a phone panel. The camera is a capability
  * (`runnerHost.linkCodeScanner`), not an assumption — where it is absent
- * (browser dev shell, simulator) or denied, the typed-code field IS the flow,
- * so every failure lands as an inline notice above a still-usable field.
+ * (browser dev shell) or denied, the typed-code field IS the flow, so every
+ * failure lands as an inline notice above a still-usable field.
+ *
+ * Two presentations, both mobile-app-only (the caller gates on the product
+ * signal): `cta` is the sign-in screen's emphasized full-width "Scan QR code"
+ * action with manual entry as a tertiary link beneath it; `link` is the
+ * compact header's quiet text entry that expands in place.
  */
-export function LinkCodeSignIn(props: { readonly isHero: boolean }) {
+export function LinkCodeSignIn(props: {
+  readonly isHero: boolean;
+  readonly presentation: "cta" | "link";
+}) {
   const runnerHost = useRunnerHostOrNull();
   const redeem = useLinkCodeSignInMutation();
   const [open, setOpen] = useState(false);
@@ -70,6 +78,139 @@ export function LinkCodeSignIn(props: { readonly isHero: boolean }) {
       },
     });
   };
+
+  const scan = () => {
+    if (scanner === null) {
+      // No camera on this shell: the "scan" gesture opens manual entry, the
+      // same flow minus the shortcut.
+      setOpen(true);
+      return;
+    }
+    void scanner.scan().then((result) => {
+      switch (result.kind) {
+        case "scanned":
+          submit(result.text);
+          return;
+        case "permission-denied":
+          setNotice("camera-denied");
+          setOpen(true);
+          return;
+        case "canceled":
+          return;
+        case "error":
+          setNotice("scan-error");
+          setOpen(true);
+      }
+    });
+  };
+
+  const codeEntryForm = (
+    <form
+      className="flex w-full items-center gap-2"
+      onSubmit={(event) => {
+        event.preventDefault();
+        submit(entry);
+      }}
+    >
+      <Input
+        value={entry}
+        onChange={(event) => {
+          setEntry(event.target.value);
+          setNotice(null);
+        }}
+        placeholder="Paste or type the code"
+        autoCapitalize="none"
+        autoCorrect="off"
+        spellCheck={false}
+        data-testid="link-code-signin-input"
+        className="flex-1 font-mono text-ui-sm"
+      />
+      <Button
+        type="submit"
+        size={props.isHero ? "default" : "sm"}
+        variant="outline"
+        disabled={redeem.isPending || entry.trim().length === 0}
+        data-testid="link-code-signin-submit"
+      >
+        Sign in
+        {redeem.isPending ? (
+          <AgentSpinningDots
+            variant="dots"
+            className="ml-1.5"
+            testId={undefined}
+          />
+        ) : null}
+      </Button>
+    </form>
+  );
+
+  const noticeLine =
+    notice !== null ? (
+      <p
+        className="text-center text-ui-sm text-destructive"
+        data-testid="link-code-signin-notice"
+      >
+        {noticeCopy(notice)}
+      </p>
+    ) : null;
+
+  if (props.presentation === "cta") {
+    return (
+      <div
+        className="flex w-full flex-col items-center gap-3"
+        data-testid="link-code-signin-cta"
+      >
+        <Button
+          type="button"
+          size="lg"
+          variant="default"
+          disabled={redeem.isPending}
+          data-testid="link-code-signin-open"
+          onClick={scan}
+          className="w-full cursor-pointer"
+        >
+          <QrCode aria-hidden="true" />
+          Scan QR code
+          {redeem.isPending ? (
+            <AgentSpinningDots
+              variant="dots"
+              className="ml-1.5"
+              testId={undefined}
+            />
+          ) : null}
+        </Button>
+        {open ? (
+          <div
+            className="flex w-full flex-col gap-3"
+            data-testid="link-code-signin-panel"
+          >
+            <p className="text-center text-ui-sm opacity-80">
+              On your desktop, open Settings → Link a phone, then type the
+              code shown under the QR.
+            </p>
+            {codeEntryForm}
+            {noticeLine}
+          </div>
+        ) : (
+          <>
+            {noticeLine}
+            <Button
+              type="button"
+              size="default"
+              variant="link"
+              data-testid="link-code-signin-manual"
+              onClick={() => {
+                setOpen(true);
+              }}
+              className="h-auto justify-center px-0 py-0 text-ui-sm"
+            >
+              Enter code manually
+            </Button>
+          </>
+        )}
+      </div>
+    );
+  }
 
   if (!open) {
     return (
@@ -107,71 +248,13 @@ export function LinkCodeSignIn(props: { readonly isHero: boolean }) {
           variant={props.isHero ? "default" : "outline"}
           disabled={redeem.isPending}
           data-testid="link-code-signin-scan"
-          onClick={() => {
-            void scanner.scan().then((result) => {
-              switch (result.kind) {
-                case "scanned":
-                  submit(result.text);
-                  return;
-                case "permission-denied":
-                  setNotice("camera-denied");
-                  return;
-                case "canceled":
-                  return;
-                case "error":
-                  setNotice("scan-error");
-              }
-            });
-          }}
+          onClick={scan}
         >
           Open camera
         </Button>
       ) : null}
-      <form
-        className="flex w-full items-center gap-2"
-        onSubmit={(event) => {
-          event.preventDefault();
-          submit(entry);
-        }}
-      >
-        <Input
-          value={entry}
-          onChange={(event) => {
-            setEntry(event.target.value);
-            setNotice(null);
-          }}
-          placeholder="Paste or type the code"
-          autoCapitalize="none"
-          autoCorrect="off"
-          spellCheck={false}
-          data-testid="link-code-signin-input"
-          className="flex-1 font-mono text-ui-sm"
-        />
-        <Button
-          type="submit"
-          size={props.isHero ? "default" : "sm"}
-          variant="outline"
-          disabled={redeem.isPending || entry.trim().length === 0}
-          data-testid="link-code-signin-submit"
-        >
-          Sign in
-          {redeem.isPending ? (
-            <AgentSpinningDots
-              variant="dots"
-              className="ml-1.5"
-              testId={undefined}
-            />
-          ) : null}
-        </Button>
-      </form>
-      {notice !== null ? (
-        <p
-          className="text-center text-ui-sm text-destructive"
-          data-testid="link-code-signin-notice"
-        >
-          {noticeCopy(notice)}
-        </p>
-      ) : null}
+      {codeEntryForm}
+      {noticeLine}
     </div>
   );
 }

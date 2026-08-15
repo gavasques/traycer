@@ -66,15 +66,33 @@ export function SignInButton(props: SignInButtonProps) {
       />
       {deviceProgress !== null ? (
         <DeviceCodeProgress progress={deviceProgress} isHero={isHero} />
+      ) : isMobileApp() && isHero ? (
+        // The mobile app's sign-in screen leads with the scan-to-link path:
+        // a full-width primary "Scan QR code" with the browser device flow
+        // as a same-width secondary beneath it, and manual code entry as a
+        // tertiary link inside the CTA block. Product-gated, not
+        // capability-gated: typing the code is the same flow where the
+        // camera is absent (simulator) or denied.
+        <>
+          <LinkCodeSignIn isHero={isHero} presentation="cta" />
+          <PrimarySignInButton
+            isHero={isHero}
+            isSigningIn={isSigningIn}
+            emphasis="secondary"
+          />
+          <RetrySignInButton isHero={isHero} isSigningIn={isSigningIn} />
+        </>
       ) : (
         <>
-          <PrimarySignInButton isHero={isHero} isSigningIn={isSigningIn} />
+          <PrimarySignInButton
+            isHero={isHero}
+            isSigningIn={isSigningIn}
+            emphasis="primary"
+          />
           <RetrySignInButton isHero={isHero} isSigningIn={isSigningIn} />
-          {/* Product-gated, not capability-gated: the mobile APP offers the
-              link-code path even where the camera capability is absent (the
-              simulator, the dev web entry) because typing the code is the
-              same flow without the scan shortcut. */}
-          {isMobileApp() ? <LinkCodeSignIn isHero={isHero} /> : null}
+          {isMobileApp() ? (
+            <LinkCodeSignIn isHero={isHero} presentation="link" />
+          ) : null}
         </>
       )}
     </div>

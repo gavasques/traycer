@@ -137,7 +137,10 @@ interface MountResult {
   readonly waitForAuthService: () => Promise<AuthService>;
 }
 
-function mountSignInButton(host: MockRunnerHost): MountResult {
+function mountSignInButton(
+  host: MockRunnerHost,
+  layout: "compact" | "hero",
+): MountResult {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -160,7 +163,7 @@ function mountSignInButton(host: MockRunnerHost): MountResult {
               authService = auth;
             }}
           />
-          <SignInButton layout="compact" />
+          <SignInButton layout={layout} />
         </HostRuntimeProvider>
       </QueryClientProvider>
     </RunnerHostProvider>,
@@ -266,20 +269,37 @@ describe("link-code entry is gated on the mobile-app PRODUCT signal", () => {
     restoreFetch();
   });
 
-  it("shows 'Scan from desktop' only in the mobile app", async () => {
+  it("mobile hero leads with a primary Scan CTA above a secondary Sign in", async () => {
     setMobileApp(true);
-    const mobile = mountSignInButton(buildHost());
+    const mobile = mountSignInButton(buildHost(), "hero");
+    await mobile.waitForAuthService();
+    const scan = screen.getByTestId("link-code-signin-open");
+    const signIn = screen.getByTestId("signin-button");
+    expect(scan.textContent).toContain("Scan QR code");
+    // Scan is the emphasized action and renders ABOVE the device-flow button.
+    expect(
+      scan.compareDocumentPosition(signIn) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    // Manual code entry stays reachable as a tertiary link.
+    expect(screen.getByTestId("link-code-signin-manual")).toBeTruthy();
+    mobile.cleanupClient();
+  });
+
+  it("shows the link-code entry only in the mobile app", async () => {
+    setMobileApp(true);
+    const mobile = mountSignInButton(buildHost(), "compact");
     await mobile.waitForAuthService();
     expect(screen.getByTestId("link-code-signin-open")).toBeTruthy();
     cleanup();
     mobile.cleanupClient();
 
     setMobileApp(false);
-    const desktop = mountSignInButton(buildHost());
-    await desktop.waitForAuthService();
+    const desktopHero = mountSignInButton(buildHost(), "hero");
+    await desktopHero.waitForAuthService();
     expect(screen.getByTestId("signin-button")).toBeTruthy();
     expect(screen.queryByTestId("link-code-signin-open")).toBeNull();
-    desktop.cleanupClient();
+    expect(screen.queryByTestId("link-code-signin-manual")).toBeNull();
+    desktopHero.cleanupClient();
   });
 });
 
@@ -315,7 +335,7 @@ describe("<SignInButton />", () => {
   });
 
   it("renders 'Sign-in failed - please try again.' when lastError is sign-in-failed", async () => {
-    const result = mountSignInButton(buildHost());
+    const result = mountSignInButton(buildHost(), "compact");
 
     await waitFor(() => {
       expect(screen.queryByTestId("runtime-fallback")).toBeNull();
@@ -360,7 +380,7 @@ describe("<SignInButton />", () => {
   });
 
   it("offers a Retry affordance during signing-in that re-triggers the browser sign-in", async () => {
-    const result = mountSignInButton(buildHost());
+    const result = mountSignInButton(buildHost(), "compact");
 
     await waitFor(() => {
       expect(screen.queryByTestId("runtime-fallback")).toBeNull();
@@ -409,7 +429,7 @@ describe("<SignInButton />", () => {
       },
       { id: "user-1", email: "test@example.com", name: "Test User" },
     );
-    const result = mountSignInButton(host);
+    const result = mountSignInButton(host, "compact");
 
     // The HostRuntimeProvider auto-starts the AuthService, which calls
     // validateToken() against the pre-installed 401 fetch; the stored-token
@@ -437,7 +457,7 @@ describe("<SignInButton />", () => {
       },
       { id: "user-1", email: "test@example.com", name: "Test User" },
     );
-    const result = mountSignInButton(host);
+    const result = mountSignInButton(host, "compact");
 
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith(
@@ -462,7 +482,7 @@ describe("<SignInButton />", () => {
   it("toasts and clears session-expired after active-session revalidation rejects", async () => {
     restoreFetch();
     restoreFetch = installFetch(() => okWithProfile());
-    const result = mountSignInButton(buildHost());
+    const result = mountSignInButton(buildHost(), "compact");
 
     await waitFor(() => {
       expect(screen.queryByTestId("runtime-fallback")).toBeNull();
@@ -503,7 +523,7 @@ describe("<SignInButton />", () => {
   it("starts the device flow and surfaces the user code on the single Sign in", async () => {
     restoreFetch();
     restoreFetch = installFetch(() => okWithProfile());
-    const result = mountSignInButton(buildHost());
+    const result = mountSignInButton(buildHost(), "compact");
 
     await waitFor(() => {
       expect(screen.queryByTestId("runtime-fallback")).toBeNull();

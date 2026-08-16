@@ -419,7 +419,7 @@ describe("local-boot intent", () => {
     //
     // THE ACTOR MOVED, and this test moved with it. It used to assert that
     // the renderer ran the ensure and drew the install card, because
-    // `local-host-gate.tsx` fired a once-per-mount `convergeReady`. P1.3
+    // the local-host gate fired a once-per-mount `convergeReady`. P1.3
     // retired that - two process actors for one host is what made the ∅
     // definition undecidable - so the renderer must now install NOTHING, and
     // asserting otherwise would be pinning the defect the retirement removed.

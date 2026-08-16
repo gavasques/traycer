@@ -29,15 +29,32 @@ import {
  * the cold start it exists for) and inside the router, which is what lets the
  * `/settings` bypass below be a route question.
  *
- * P3.4's re-parent seam, stated so the move is mechanical: today the recovery
- * actions come from the readiness controller's presentation, which is where
- * `HostProvisioningController` currently projects them. When that controller
- * moves here, wrap this component's body in it and read `lifecycle.provisioning`
- * in place of `presentation` - the fields consumed below (`retryProvisioning`,
- * `forceProvisioning`, `canManageHost`, `configureShell`, `refreshDirectory`,
- * `openSettings`, `provisioning`) are already exactly the shape it hands back,
- * so nothing here has to be rewritten to accept it. Progress deliberately does
- * NOT come through that presentation even now: see `useHostProvisioningProgress`.
+ * WHY THE LIFECYCLE IS NOT MOUNTED HERE (P3.4, ruled after measuring). An
+ * earlier draft of this comment promised the opposite - that P3.4 would wrap
+ * this component's body in `HostProvisioningController` and read its lifecycle
+ * in place of `presentation`, "since the fields are already exactly the shape
+ * it hands back". That was wrong three ways, and the note survives so nobody
+ * re-derives it:
+ *
+ *  1. Of the fields read below, only `retryProvisioning`/`forceProvisioning`/
+ *     `provisioning` come from that controller. `configureShell`,
+ *     `refreshDirectory` and `openSettings` are the readiness provider's own
+ *     props; `canManageHost` and `presentsLocalHostLifecycle` need
+ *     `targetKind` + `localBootIntent`, derived up there from the binding, the
+ *     directory and the authority's effective host.
+ *  2. The readiness projection CONSUMES that lifecycle while the controller's
+ *     own `enabled`/`isReady` come from the projection's inputs. Mounting it
+ *     below closes the loop.
+ *  3. This component is CONDITIONAL - silent is its normal state. The
+ *     busy-keep and removed latches live in that hook, and its per-`mutate`
+ *     callbacks are dropped when their component unmounts, so hanging the
+ *     lifecycle off a surface that comes and goes would lose the busy verdict
+ *     and the "where the install died" stage precisely when a wait resolves.
+ *
+ * So the lifecycle stays mounted above the router and this stays its reader.
+ * Progress does not come through the presentation at all: see
+ * `useHostProvisioningProgress`, which reads the mutation lane so a first
+ * launch driven by the desktop's own reconciler still narrates here.
  */
 export function WindowHostModalHost(props: {
   /**
@@ -162,14 +179,17 @@ function resolveUpdateHost(
  * "Configure shell…" button would be diagnostics for a failure that did not
  * happen.
  *
- * `LocalHostLoadingContent` is rendered at `stage="loading"` on purpose - its
- * slow-stage branch draws its own Retry, and a modal states its actions in one
- * row rather than two places. The spawn diagnostics that branch also carries
- * are NOT dropped with it: they are drawn beside it by `LocalBootstrapAttempts`
- * below, on the arm where they are true. That the bootstrap.log path survives
- * this move is the whole point - it is the one thing that lets a user take a
- * stuck startup somewhere else, and it has been orphaned by a surface move
- * once already.
+ * `LocalHostLoadingContent` has ONE face now, and this is why. It used to take
+ * a `stage` and grow a second one on `"slow"`: its own Retry, and the
+ * failed-attempt diagnostics. The Retry was a second place for this modal to
+ * state an action it already states in one row, and the diagnostics belong on
+ * the arm below where they are TRUE, not under a healthy spinner - so this
+ * call site passed `"loading"` unconditionally, and once P3.2 deleted the
+ * gate's fallbacks it was the only caller left. P3.4 deleted the branch it
+ * had already stopped reaching. That the bootstrap.log path survives all of
+ * this is the whole point - it is the one thing that lets a user take a stuck
+ * startup somewhere else, and it has been orphaned by a surface move once
+ * already.
  */
 function buildLocalBootstrapBody(args: {
   readonly variant: WindowNarrationVariant;
@@ -183,11 +203,8 @@ function buildLocalBootstrapBody(args: {
   return (
     <>
       <LocalHostLoadingContent
-        stage="loading"
         progress={args.progress}
         onConfigureShell={args.presentation.configureShell}
-        onRetry={args.presentation.requestRespawn}
-        retryPending={args.presentation.respawnPending}
       />
       {/* Only once nothing can serve the window. Under a cold start that is
           still progressing there is no failed attempt to explain, and shell

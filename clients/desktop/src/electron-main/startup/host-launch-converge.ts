@@ -152,8 +152,8 @@ export async function refreshHostRegistryIfNotRemoved(
  *
  * ## Why main performs it at all
  *
- * The RENDERER used to: a once-per-mount `convergeReady` in
- * `local-host-gate.tsx`. Redesign P1.3 retired that - correctly, because two
+ * The RENDERER used to: a once-per-mount `convergeReady` in the local-host
+ * gate (deleted in P3.4). Redesign P1.3 retired that - correctly, because two
  * process actors for one host is what made the ∅ definition undecidable - and
  * moved boot-time provisioning intent to the selection authority. But the
  * authority asks through `LocalHostEnsurePort` keyed on a hostId it reads from

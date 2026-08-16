@@ -3,7 +3,7 @@ import { Outlet, useRouterState } from "@tanstack/react-router";
 import { HostTrayCommandListener } from "@/components/layout/bridges/host-tray-command-listener";
 import { DesktopDialogHost } from "@/components/layout/dialogs/desktop-dialog-host";
 import { HostReadyGate } from "@/components/layout/host-ready-gate";
-import { GATE_BYPASS_PATH_PREFIX } from "@/components/local-host-gate";
+import { GATE_BYPASS_PATH_PREFIX } from "@/lib/host/gate-bypass-path";
 import { HostScopeReady } from "@/components/layout/host-readiness-controller";
 import { AppShell } from "@/components/layout/app-shell";
 import { WindowsMenuBar } from "@/components/layout/header/windows-menu-bar";

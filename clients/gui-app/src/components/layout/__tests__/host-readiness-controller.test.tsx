@@ -22,8 +22,6 @@ const DEFAULT_PRESENTATION: DefaultHostReadinessPresentation = {
   configureShell: () => undefined,
   refreshDirectory: () => undefined,
   openSettings: () => undefined,
-  requestRespawn: () => undefined,
-  respawnPending: false,
   compatibility: {
     status: "compatible",
     degraded: false,

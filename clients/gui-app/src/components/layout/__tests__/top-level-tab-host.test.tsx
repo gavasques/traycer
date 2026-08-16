@@ -179,8 +179,6 @@ const UNAVAILABLE_DEFAULT_HOST_CONTROLLER: HostReadinessController = {
     configureShell: () => undefined,
     refreshDirectory: () => undefined,
     openSettings: () => undefined,
-    requestRespawn: () => undefined,
-    respawnPending: false,
     compatibility: {
       status: "compatible",
       degraded: false,

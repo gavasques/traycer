@@ -71,8 +71,6 @@ export const RunnerHostInvoke = {
   notificationShow: "runnerHost:notifications:show",
   traySetEpics: "runnerHost:tray:setEpics",
   traySetIndicator: "runnerHost:tray:setIndicator",
-  hostPickerRequestOpen: "runnerHost:hostPicker:requestOpen",
-  hostPickerRequestClose: "runnerHost:hostPicker:requestClose",
   workspaceFoldersPick: "runnerHost:workspaceFolders:pick",
   fileDropWriteTemporary: "runnerHost:fileDrops:writeTemporary",
   fileDropCopyTemporary: "runnerHost:fileDrops:copyTemporary",
@@ -307,7 +305,6 @@ export const RunnerHostEvent = {
   notificationForegroundDisplay:
     "runnerHost:event:notificationForegroundDisplay",
   trayEpicSelected: "runnerHost:event:trayEpicSelected",
-  hostPickerChange: "runnerHost:event:hostPickerChange",
   quitRequested: "runnerHost:event:quitRequested",
   getFreshUnsyncedSnapshot: "runnerHost:event:getFreshUnsyncedSnapshot",
   windowsChange: "runnerHost:event:windows:change",

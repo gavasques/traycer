@@ -140,8 +140,8 @@ export function HostOverviewPanel(props: {
   // route may still resolve, and offering Start against a host that is about
   // to answer would race the very process it spawns. This is what remains of
   // the recovery console's Start/doctor half (its uninstall half lives on the
-  // empty-account path); `LocalHostGate` no longer renders in production, so
-  // Settings cannot delegate this state upstream.
+  // empty-account path); the app-level gate draws no recovery card of its own
+  // any more, so Settings cannot delegate this state upstream.
   const localRecovery =
     scope.status === "unreachable" &&
     (host?.isLocalMachine ?? false) &&

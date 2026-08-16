@@ -30,10 +30,10 @@ import {
   type HostTargetKind,
 } from "@/components/layout/host-readiness-controller-context";
 import {
-  GATE_BYPASS_PATH_PREFIX,
   HostProvisioningController,
   type HostProvisioningLifecycle,
-} from "@/components/local-host-gate";
+} from "@/components/host/host-provisioning-controller";
+import { GATE_BYPASS_PATH_PREFIX } from "@/lib/host/gate-bypass-path";
 import { useReactiveHostReadiness } from "@/hooks/host/use-reactive-host-readiness";
 import { useRemoteSessionsPollReadiness } from "@/hooks/host/use-remote-sessions-poll-readiness";
 import { useHostBinding } from "@/lib/host";
@@ -42,7 +42,6 @@ import {
   useHostCompatibility,
   type HostCompatibility,
 } from "@/lib/host/compatibility-state";
-import { useRunnerRequestHostRespawn } from "@/hooks/runner/use-runner-request-host-respawn-mutation";
 import { useRunnerHost } from "@/providers/use-runner-host";
 import { requestAppQuit } from "@/lib/desktop-app-lifecycle";
 import { appLogger, describeLogError } from "@/lib/logger";
@@ -57,10 +56,6 @@ export function HostReadinessControllerProvider(props: {
   const binding = useHostBinding();
   const runnerHost = useRunnerHost();
   const authStatus = useAuthStore((state) => state.status);
-  // The single readiness owner also owns the slow-host respawn mutation, so all
-  // default-host slots share one request/pending lock (see the presentation's
-  // requestRespawn/respawnPending).
-  const respawn = useRunnerRequestHostRespawn();
   const client = binding?.hostClient ?? null;
   const readiness = useReactiveHostReadiness(client);
   const directoryEntries = useHostDirectoryEntries(
@@ -156,8 +151,6 @@ export function HostReadinessControllerProvider(props: {
           onConfigureShell={props.onConfigureShell}
           onRefreshDirectory={refreshDirectory}
           onOpenSettings={props.onOpenSettings}
-          onRequestRespawn={respawn.mutate}
-          respawnPending={respawn.isPending}
         >
           {props.children}
         </HostReadinessControllerContents>
@@ -181,8 +174,6 @@ function HostReadinessControllerContents(props: {
   readonly onConfigureShell: () => void;
   readonly onRefreshDirectory: () => void;
   readonly onOpenSettings: () => void;
-  readonly onRequestRespawn: () => void;
-  readonly respawnPending: boolean;
   readonly children: ReactNode;
 }): ReactNode {
   const defaultHostPresentation = useMemo(
@@ -195,8 +186,6 @@ function HostReadinessControllerContents(props: {
         configureShell: props.onConfigureShell,
         refreshDirectory: props.onRefreshDirectory,
         openSettings: props.onOpenSettings,
-        requestRespawn: props.onRequestRespawn,
-        respawnPending: props.respawnPending,
       }),
     [
       props.compatibility,
@@ -206,8 +195,6 @@ function HostReadinessControllerContents(props: {
       props.onConfigureShell,
       props.onRefreshDirectory,
       props.onOpenSettings,
-      props.onRequestRespawn,
-      props.respawnPending,
     ],
   );
   const controller = useMemo<HostReadinessController>(() => {
@@ -327,8 +314,6 @@ function presentationFromLifecycle(args: {
   readonly configureShell: () => void;
   readonly refreshDirectory: () => void;
   readonly openSettings: () => void;
-  readonly requestRespawn: () => void;
-  readonly respawnPending: boolean;
 }): DefaultHostReadinessPresentation {
   return {
     targetKind: args.targetKind,
@@ -350,8 +335,6 @@ function presentationFromLifecycle(args: {
     configureShell: args.configureShell,
     refreshDirectory: args.refreshDirectory,
     openSettings: args.openSettings,
-    requestRespawn: args.requestRespawn,
-    respawnPending: args.respawnPending,
     compatibility: compatibilityPresentation(args.compatibility),
   };
 }
@@ -531,9 +514,10 @@ export function DefaultHostReadyGate(props: {
 }
 
 /**
- * The full-screen host-boot card, exactly as the standalone `LocalHostLoading`
- * drew it (max-w-md, shadow-sm, gap-4/py-6) before the gate took over rendering
- * it - that view predates the split work and must not drift.
+ * The full-screen host-boot card, drawn (max-w-md, shadow-sm, gap-4/py-6) the
+ * way the standalone host-boot splash drew it before the gate took over - that
+ * view predates the split work and must not drift. The splash component itself
+ * was deleted in P3.4; this frame is where its shape lives now.
  *
  * It took a `variant` until P3.2: `slot` was the bounded in-surface form, drawn
  * without a card because it sat inside a tab's frame. P2.2 deleted the per-pane

@@ -46,9 +46,6 @@ export type { StoredCredentials } from "@traycer/protocol/config/credentials";
  *   local host. The handler is invoked synchronously on subscribe with
  *   the current snapshot (or `null` when no host is running), and again
  *   on every subsequent transition. There is no separate `getLocalHost()`.
- * - `hostPicker` lets `gui-app` request shell-owned picker UX
- *   (e.g. a menu-bar popover on desktop, a sheet on mobile) without the
- *   shell leaking implementation details.
  * - `workspaceFolders` lets `gui-app` ask the shell for native folder-picker
  *   UX. Shells without native folder access return an empty selection.
  *
@@ -281,7 +278,6 @@ export interface IRunnerHost {
   readonly secureStorage: ISecureStorage;
   readonly notifications: INotificationHost;
   readonly tray: ITrayState;
-  readonly hostPicker: IHostPicker;
   readonly workspaceFolders: IWorkspaceFoldersHost;
   readonly fileDrops: IFileDropHost;
   /**
@@ -304,8 +300,8 @@ export interface IRunnerHost {
    *
    * `true` on shells that bundle and spawn a local host (desktop). `false`
    * on shells that have no local-host concept at all (mobile, web). The
-   * LocalHostGate keys off this so the signed-in host-wait UX only drives
-   * on shells that actually have a local host to wait for; shells that
+   * local-host lifecycle keys off this so the signed-in host-wait UX only
+   * drives on shells that actually have a local host to wait for; shells that
    * set this to `false` pass through to shell-specific UX
    * (e.g. `<MobileHostGate />`) without seeing the desktop "Retry" card.
    *
@@ -1049,18 +1045,6 @@ export interface TrayEpic {
   readonly epicId: string;
   readonly title: string;
   readonly subtitle: string;
-}
-
-/**
- * Shell-owned host-picker UX controller. `gui-app` asks the shell to open
- * or close the picker and observes the resulting open/closed transitions;
- * the shell owns layout and dismissal affordances.
- */
-export interface IHostPicker {
-  readonly isOpen: boolean;
-  requestOpen(): void;
-  requestClose(): void;
-  onChange(handler: (isOpen: boolean) => void): Disposable;
 }
 
 export interface IWorkspaceFoldersHost {

@@ -106,8 +106,8 @@ export interface TraycerAppProps {
  * Mounts the documented provider stack - outer to inner -
  *   RunnerHostProvider → QueryClientProvider → ThemeProvider →
  *   TooltipProvider → HostRuntimeProvider → HostCompatibilityProvider →
- *   auth-scoped lifecycle providers → RunnerHostBridges → LocalHostGate →
- *   RouterProvider → Toaster.
+ *   auth-scoped lifecycle providers → RunnerHostBridges →
+ *   HostReadinessControllerProvider → RouterProvider → Toaster.
  *
  * Concrete shells (Electron, Capacitor, gui-app-dev preview) construct a
  * `IRunnerHost` at bootstrap and pass it alongside the shared

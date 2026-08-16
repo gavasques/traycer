@@ -28,7 +28,6 @@ import type {
   TraycerUninstallResult,
   FreePortAndRestartInput,
   IHostManagement,
-  IHostPicker,
   IHostTray,
   IFileDropHost,
   IMigrationHost,
@@ -216,11 +215,6 @@ export interface DesktopPreloadBridge {
     onEpicSelected(handler: (epicId: string) => void): {
       dispose: () => void;
     };
-  };
-  hostPicker: {
-    requestOpen(): Promise<void>;
-    requestClose(): Promise<void>;
-    onChange(handler: (isOpen: boolean) => void): { dispose: () => void };
   };
   workspaceFolders: {
     pickFolders(): Promise<readonly string[]>;
@@ -586,7 +580,6 @@ export class DesktopRunnerHost implements IRunnerHost {
   readonly tokenStore: ITokenStore;
   readonly notifications: INotificationHost;
   readonly tray: ITrayState;
-  readonly hostPicker: IHostPicker;
   readonly workspaceFolders: IWorkspaceFoldersHost;
   readonly fileDrops: IFileDropHost;
   readonly windows: DesktopWindowsBridge;
@@ -712,7 +705,6 @@ export class DesktopRunnerHost implements IRunnerHost {
         toDisposable(this.bridge.trayState.onEpicSelected(handler)),
     };
 
-    this.hostPicker = this.buildHostPicker();
     this.workspaceFolders = {
       canPickNatively: true,
       pickFolders: () => this.bridge.workspaceFolders.pickFolders(),
@@ -936,38 +928,6 @@ export class DesktopRunnerHost implements IRunnerHost {
     this.systemResumedHandlers.clear();
   }
 
-  private buildHostPicker(): IHostPicker {
-    const state: { open: boolean } = { open: false };
-    const handlers = new Set<(isOpen: boolean) => void>();
-    this.bridgeSubscriptions.push(
-      this.bridge.hostPicker.onChange((next) => {
-        state.open = next;
-        for (const handler of handlers) {
-          handler(next);
-        }
-      }),
-    );
-    const bridge = this.bridge;
-    return {
-      get isOpen(): boolean {
-        return state.open;
-      },
-      requestOpen(): void {
-        void bridge.hostPicker.requestOpen();
-      },
-      requestClose(): void {
-        void bridge.hostPicker.requestClose();
-      },
-      onChange(handler: (isOpen: boolean) => void): Disposable {
-        handlers.add(handler);
-        return {
-          dispose: () => {
-            handlers.delete(handler);
-          },
-        };
-      },
-    };
-  }
 }
 
 /**

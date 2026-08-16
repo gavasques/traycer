@@ -15,10 +15,7 @@ import {
   settledBusySessionCount,
   type HostPresenceView,
   type LiveBusySessionCountOptions,
-  type ViewerReachabilityCheckLike,
 } from "@/components/settings/panels/my-hosts-model";
-
-const NOW = Date.parse("2026-07-03T12:00:00.000Z");
 
 function statusDto(overrides: Partial<HostStatusDTO>): HostStatusDTO {
   return {
@@ -33,18 +30,11 @@ function statusDto(overrides: Partial<HostStatusDTO>): HostStatusDTO {
 }
 
 /**
- * Wraps `deriveHostPresence` for the "core DTO-driven logic, host identity
- * irrelevant" tests below — always the LOCAL branch (no relay sub-states, no
- * live-session override, no viewer check).
+ * Wraps `deriveHostPresence` for the "core DTO-driven logic" tests below — no
+ * live session, so every answer comes from the DTO itself.
  */
 function deriveLocal(status: HostStatusDTO): HostPresenceView {
-  return deriveHostPresence({
-    status,
-    isViewerLocalHost: true,
-    hasLiveSession: false,
-    viewerCheck: null,
-    nowMs: NOW,
-  });
+  return deriveHostPresence({ status, hasLiveSession: false });
 }
 
 describe("deriveHostPresence", () => {
@@ -105,69 +95,20 @@ describe("deriveHostPresence", () => {
     });
   });
 
-  describe("remote-host connection-issue sub-state (R4-B5)", () => {
-    it("renders connection-issue with a timestamped provenance when the viewer's own check failed", () => {
-      const check: ViewerReachabilityCheckLike = {
-        result: "failing",
-        checkedAtMs: NOW - 2 * 60_000,
-      };
-      const view = deriveHostPresence({
-        status: statusDto({ connectivity: "connectable" }),
-        isViewerLocalHost: false,
-        hasLiveSession: false,
-        viewerCheck: check,
-        nowMs: NOW,
-      });
-      expect(view.tone).toBe("connection-issue");
-      expect(view.label).toBe("Reachable, connection issue (checked 2m ago)");
-      // Still a live signal — the host itself is reachable, only this
-      // viewer's path is degraded.
-      expect(view.showLiveDot).toBe(true);
-    });
-
-    it("ignores a stale-ok viewer check and renders plain Online", () => {
-      const check: ViewerReachabilityCheckLike = {
-        result: "ok",
-        checkedAtMs: NOW - 60_000,
-      };
-      const view = deriveHostPresence({
-        status: statusDto({ connectivity: "connectable" }),
-        isViewerLocalHost: false,
-        hasLiveSession: false,
-        viewerCheck: check,
-        nowMs: NOW,
-      });
-      expect(view.tone).toBe("online");
-    });
-
-    it("never applies the connection-issue sub-state to a local host, even with a failing viewer check", () => {
-      const check: ViewerReachabilityCheckLike = {
-        result: "failing",
-        checkedAtMs: NOW,
-      };
-      const view = deriveHostPresence({
-        status: statusDto({ connectivity: "connectable" }),
-        isViewerLocalHost: true,
-        hasLiveSession: false,
-        viewerCheck: check,
-        nowMs: NOW,
-      });
-      expect(view.tone).toBe("online");
-    });
-  });
+  // The "remote-host connection-issue sub-state (R4-B5)" suite lived here: a
+  // `connectable` host whose per-viewer probe reported `failing` rendered
+  // "Reachable, connection issue (checked 2m ago)". Deleted with its subject
+  // in P3.4 — the probe that would have written that verdict was never built
+  // (audit F9: a store with a getter and no writer), so the arm was
+  // unreachable and these three tests only ever proved that a hand-supplied
+  // input produced a hand-written label. Nothing user-visible is uncovered by
+  // their removal, because nothing user-visible could reach the state.
 
   describe("live-session-evidence override (R4-B5)", () => {
-    it("renders Online regardless of an offline connectivity or a failing viewer check", () => {
-      const check: ViewerReachabilityCheckLike = {
-        result: "failing",
-        checkedAtMs: NOW,
-      };
+    it("renders Online regardless of an offline connectivity", () => {
       const view = deriveHostPresence({
         status: statusDto({ connectivity: "offline" }),
-        isViewerLocalHost: false,
         hasLiveSession: true,
-        viewerCheck: check,
-        nowMs: NOW,
       });
       expect(view.tone).toBe("online");
       expect(view.label).toBe("Online");
@@ -178,10 +119,7 @@ describe("deriveHostPresence", () => {
       for (const connectivity of ["local-only", "unknown"] as const) {
         const view = deriveHostPresence({
           status: statusDto({ connectivity }),
-          isViewerLocalHost: false,
           hasLiveSession: true,
-          viewerCheck: null,
-          nowMs: NOW,
         });
         expect(view.tone).toBe("online");
       }
@@ -190,10 +128,7 @@ describe("deriveHostPresence", () => {
     it("does not override You're offline (the client itself has no path to claim anything)", () => {
       const view = deriveHostPresence({
         status: statusDto({ connectivity: "connectable", clientCloud: "down" }),
-        isViewerLocalHost: false,
         hasLiveSession: true,
-        viewerCheck: null,
-        nowMs: NOW,
       });
       expect(view.tone).toBe("client-offline");
     });

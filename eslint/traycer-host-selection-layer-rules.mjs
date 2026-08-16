@@ -169,7 +169,6 @@ export const hostSelectionReadAllowlist = [
   // App chrome (layout, settings, providers, palette, sidebar lists, canvas shell)
   "src/components/layout/**/*.{ts,tsx}",
   "src/components/settings/**/*.{ts,tsx}",
-  "src/components/local-host-gate.tsx",
   "src/providers/**/*.{ts,tsx}",
   "src/lib/commands/**/*.{ts,tsx}",
   "src/components/epic-canvas/sidebar/**/*.{ts,tsx}",

@@ -1997,8 +1997,9 @@ aria-live="polite"` carrying the equivalent text for
   the `emptyAccountLocalRecovery` carve-out, so Settings no longer has a
   bridge-backed surface at all and every pane on this page describes its host by
   asking that host. Getting a machine that has no host process back into a
-  usable state is `local-host-gate.tsx`'s job, upstream of Settings — the gate a
-  person passes before they can reach this page.
+  usable state is the host-readiness gate's job, upstream of Settings — the gate
+  a person passes before they can reach this page, with the window narrator
+  explaining the wait.
   - The legacy `/settings/service` redirect (so any bookmark, remembered tab
     path, or tray command lands on this same pane) is unchanged. Shells without
     the Traycer CLI (web, mobile) never got a reduced page and still do not:

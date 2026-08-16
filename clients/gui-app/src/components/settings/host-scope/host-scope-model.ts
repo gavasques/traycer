@@ -10,7 +10,6 @@ import {
   deriveHostHealth,
   type HostHealth,
 } from "@/components/settings/host-scope/host-health";
-import type { ViewerReachabilityCheckLike } from "@/components/settings/panels/my-hosts-model";
 
 /**
  * ONE host, as every settings surface should see it.
@@ -83,7 +82,6 @@ export interface BuildHostScopeOptionsInput {
   /** Local service truth, used only for the local machine's row. */
   readonly localService: ServiceStatusSnapshot | undefined;
   readonly hasLiveSession: (hostId: string) => boolean;
-  readonly viewerCheck: (hostId: string) => ViewerReachabilityCheckLike | null;
   /**
    * The account's plan does not include remote hosts. Their relay URLs still
    * appear in the directory, but attaching is refused server-side, so the route
@@ -134,7 +132,6 @@ export function buildHostScopeOptions(
         item,
         isLocalMachine,
         hasLiveSession: input.hasLiveSession(hostId),
-        viewerCheck: input.viewerCheck(hostId),
         service: isLocalMachine ? input.localService : undefined,
         nowMs: input.nowMs,
       }),

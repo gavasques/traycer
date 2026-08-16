@@ -166,13 +166,6 @@ function buildFakeBridge(
         dispose: () => undefined,
       }),
     },
-    hostPicker: {
-      requestOpen: async () => undefined,
-      requestClose: async () => undefined,
-      onChange: (_handler: (isOpen: boolean) => void) => ({
-        dispose: () => undefined,
-      }),
-    },
     workspaceFolders: {
       pickFolders: async () => ["/tmp/project-a", "/tmp/project-b"],
     },

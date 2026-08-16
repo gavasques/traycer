@@ -6,7 +6,6 @@ import type {
   DeviceFlowSession,
   HostRestartRequestResult,
   IDeviceFlowHost,
-  IHostPicker,
   IHostManagement,
   INotificationHost,
   NotificationFeedSource,
@@ -225,7 +224,6 @@ export class MockRunnerHost implements IRunnerHost {
   }
 
   readonly tray: MockTrayState = new MockTrayState();
-  readonly hostPicker: MockHostPicker = new MockHostPicker();
   readonly workspaceFolders: IWorkspaceFoldersHost = {
     // The mock stands in for a desktop-style shell with a native dialog.
     canPickNatively: true,
@@ -1189,47 +1187,3 @@ export class MockDeviceFlowSession implements DeviceFlowSession {
   }
 }
 
-/**
- * In-memory `IHostPicker`. Tracks open/closed state and fires `onChange`
- * on every transition; `gui-app` tests drive open/close via the public
- * request methods, mirroring the real shell contract.
- */
-export class MockHostPicker implements IHostPicker {
-  private open = false;
-  private readonly handlers = new Set<(isOpen: boolean) => void>();
-
-  get isOpen(): boolean {
-    return this.open;
-  }
-
-  requestOpen(): void {
-    if (this.open) {
-      return;
-    }
-    this.open = true;
-    this.emit();
-  }
-
-  requestClose(): void {
-    if (!this.open) {
-      return;
-    }
-    this.open = false;
-    this.emit();
-  }
-
-  onChange(handler: (isOpen: boolean) => void): Disposable {
-    this.handlers.add(handler);
-    return {
-      dispose: () => {
-        this.handlers.delete(handler);
-      },
-    };
-  }
-
-  private emit(): void {
-    for (const handler of this.handlers) {
-      handler(this.open);
-    }
-  }
-}

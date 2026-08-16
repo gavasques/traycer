@@ -80,8 +80,6 @@ const PRESENTATION: DefaultHostReadinessPresentation = {
   configureShell: () => undefined,
   refreshDirectory: () => undefined,
   openSettings: () => undefined,
-  requestRespawn: () => undefined,
-  respawnPending: false,
   compatibility: {
     status: "compatible",
     degraded: false,
@@ -284,8 +282,8 @@ describe("<HostReadyGate />", () => {
 
   it("defers loading-host to the window modal: draws the frame, no card", () => {
     // The window narrator (D10) now speaks for this kind. The gate used to
-    // draw the setup card itself (the view `LocalHostLoading` drew, wrapped
-    // in a max-w-md shadowed Card); it now draws only the shared frame
+    // draw the setup card itself (the host-boot view, wrapped in a max-w-md
+    // shadowed Card); it now draws only the shared frame
     // (header + background) and leaves the card to the modal, so the two
     // surfaces never describe the same fact twice.
     renderGate({ kind: "loading-host" }, PRESENTATION);

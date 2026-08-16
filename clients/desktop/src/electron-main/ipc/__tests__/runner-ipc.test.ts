@@ -625,8 +625,6 @@ describe("RunnerIpcBridge", () => {
     const channels = Array.from(ipcMainState.handlers.keys()).sort();
     expect(channels).toEqual(
       [
-        RunnerHostInvoke.hostPickerRequestClose,
-        RunnerHostInvoke.hostPickerRequestOpen,
         RunnerHostInvoke.workspaceFoldersPick,
         RunnerHostInvoke.validateAuthTokenIdentity,
         RunnerHostInvoke.deviceFlowStart,
@@ -2764,48 +2762,6 @@ describe("RunnerIpcBridge", () => {
     ]);
     expect(bridge.hasUnsyncedEdits()).toBe(false);
 
-    bridge.dispose();
-  });
-
-  it("debounces host-picker state and only emits on transitions", async () => {
-    const mod = await import("../register-runner-ipc");
-    const host = new FakeHost();
-    const bridge = new mod.RunnerIpcBridge({
-      host,
-      hostController: new FakeHostController(),
-      authnBaseUrl: "http://localhost:5005",
-      authRedirectUri: null,
-      tray: null,
-      zoomController: undefined,
-      authTokenStore: undefined,
-      window: buildWindow(),
-    });
-    bridge.install();
-
-    sentMessages.length = 0;
-    const openHandler = ipcMainState.handlers.get(
-      RunnerHostInvoke.hostPickerRequestOpen,
-    );
-    const closeHandler = ipcMainState.handlers.get(
-      RunnerHostInvoke.hostPickerRequestClose,
-    );
-    expect(openHandler).toBeDefined();
-    expect(closeHandler).toBeDefined();
-    if (openHandler === undefined || closeHandler === undefined) {
-      return;
-    }
-
-    await openHandler(bareEvent());
-    await openHandler(bareEvent());
-    await closeHandler(bareEvent());
-
-    const pickerEvents = sentMessages.filter(
-      (m) => m.channel === RunnerHostEvent.hostPickerChange,
-    );
-    expect(pickerEvents).toEqual([
-      { channel: RunnerHostEvent.hostPickerChange, payload: true },
-      { channel: RunnerHostEvent.hostPickerChange, payload: false },
-    ]);
     bridge.dispose();
   });
 

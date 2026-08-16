@@ -11,7 +11,6 @@ import { useNowMs } from "@/components/settings/panels/host-settings-panel-hooks
 import { useRunnerHost } from "@/providers/use-runner-host";
 import { useLocalHostSnapshot } from "@/components/settings/panels/host-settings-panel-hooks";
 import { deriveStatus } from "@/components/settings/panels/host-settings-panel-model";
-import { getViewerReachabilityCheck } from "@/lib/host/viewer-reachability-store";
 import { useHostBinding } from "@/lib/host";
 import { runnerQueryKeys } from "@/lib/query-keys/runner-mutation-keys";
 import {
@@ -185,7 +184,6 @@ export function useHostOptions(): HostOptions {
         activeHostId,
         localService,
         hasLiveSession,
-        viewerCheck: getViewerReachabilityCheck,
         remoteHostsPlanRestricted,
         localHostSettingUp,
         nowMs,

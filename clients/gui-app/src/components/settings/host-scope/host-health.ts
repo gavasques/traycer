@@ -3,7 +3,6 @@ import type { ServiceStatusSnapshot } from "@traycer-clients/shared/platform/run
 import {
   deriveHostPresence,
   formatLastSeen,
-  type ViewerReachabilityCheckLike,
 } from "@/components/settings/panels/my-hosts-model";
 
 /**
@@ -38,7 +37,6 @@ import {
  */
 export type HostHealthState =
   | "online"
-  | "connection-issue"
   | "local-only"
   | "unknown"
   | "offline"
@@ -65,7 +63,6 @@ export interface HostHealth {
 
 export const HOST_HEALTH_TONE: Record<HostHealthState, HostHealthTone> = {
   online: "live",
-  "connection-issue": "warn",
   // Not a fault, so not a warning: the host is exactly as reachable as the
   // plan says it should be. `idle` keeps it visually alongside a host that is
   // simply not running rather than alongside one that is failing.
@@ -82,7 +79,6 @@ export interface DeriveHostHealthOptions {
   readonly item: HostListItem | null;
   readonly isLocalMachine: boolean;
   readonly hasLiveSession: boolean;
-  readonly viewerCheck: ViewerReachabilityCheckLike | null;
   /**
    * The local service snapshot, for THIS machine only. It outranks every
    * cloud-derived signal for a local host — `connectivity` describes whether
@@ -160,10 +156,7 @@ function registryHealth(options: DeriveHostHealthOptions): HostHealth {
   }
   const presence = deriveHostPresence({
     status: item.status,
-    isViewerLocalHost: isLocalMachine,
     hasLiveSession,
-    viewerCheck: options.viewerCheck,
-    nowMs,
   });
   switch (presence.tone) {
     case "online":
@@ -172,16 +165,6 @@ function registryHealth(options: DeriveHostHealthOptions): HostHealth {
         label: "Online",
         detail: null,
         tone: HOST_HEALTH_TONE.online,
-        live: presence.showLiveDot,
-      };
-    case "connection-issue":
-      return {
-        state: "connection-issue",
-        label: "Connection issue",
-        // `deriveHostPresence` folds the "checked Xm ago" stamp into its own
-        // label; keep it, as a detail rather than a competing status word.
-        detail: stripLeadingClause(presence.label),
-        tone: HOST_HEALTH_TONE["connection-issue"],
         live: presence.showLiveDot,
       };
     case "local-only":
@@ -230,18 +213,6 @@ function registryHealth(options: DeriveHostHealthOptions): HostHealth {
         live: false,
       };
   }
-}
-
-/**
- * `deriveHostPresence` returns "Reachable, connection issue (checked 2m ago)".
- * The status word is now the label, so the detail keeps only what follows it.
- */
-function stripLeadingClause(label: string): string {
-  const open = label.indexOf("(");
-  const close = label.lastIndexOf(")");
-  if (open === -1 || close <= open) return label;
-  const inner = label.slice(open + 1, close).trim();
-  return inner.length === 0 ? label : capitalizeString(inner);
 }
 
 function capitalize(value: string | null): string | null {

@@ -103,11 +103,6 @@ export interface HostBridgeSurface {
   onSystemResumed(handler: () => void): Disposable;
   requestHostRespawn(): Promise<HostRestartRequestResult>;
   getLastKnownLocalHostId(): Promise<string | null>;
-  hostPicker: {
-    requestOpen(): Promise<void>;
-    requestClose(): Promise<void>;
-    onChange(handler: Listener<boolean>): Disposable;
-  };
 }
 
 export function buildHostBridge(): HostBridgeSurface {
@@ -129,14 +124,5 @@ export function buildHostBridge(): HostBridgeSurface {
       ipcRenderer.invoke(RunnerHostInvoke.lastKnownLocalHostId) as Promise<
         string | null
       >,
-
-    hostPicker: {
-      requestOpen: () =>
-        ipcRenderer.invoke(RunnerHostInvoke.hostPickerRequestOpen),
-      requestClose: () =>
-        ipcRenderer.invoke(RunnerHostInvoke.hostPickerRequestClose),
-      onChange: (handler) =>
-        subscribe<boolean>(RunnerHostEvent.hostPickerChange, handler),
-    },
   };
 }

@@ -4,30 +4,10 @@ import {
   HOST_PROGRESS_IDLE_HEADING,
   type HostProgressView,
 } from "@/lib/host/host-progress-copy";
-import { AppHeader } from "@/components/layout/header/app-header";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
 import { useRunnerHost } from "@/providers/use-runner-host";
-import { useRunnerRequestHostRespawn } from "@/hooks/runner/use-runner-request-host-respawn-mutation";
 import { useRunnerTraycerHostStatusQuery } from "@/hooks/runner/use-runner-traycer-host-status-query";
-import { BootstrapAttemptDetails } from "@/components/host/bootstrap-attempt-details";
-import { summariseBootstrapAttempts } from "@/components/host/bootstrap-attempt-summary";
-
-export type LocalHostLoadingStage = "loading" | "slow";
-
-export interface LocalHostLoadingProps {
-  readonly stage: LocalHostLoadingStage;
-  readonly progress: HostProgressView | null;
-  /**
-   * Called when the user clicks "Configure shell…". The caller drives
-   * router navigation directly because the loading card is rendered
-   * alongside the (unmounted) RouterProvider, so `<Link>` would not have
-   * router context. Once navigation completes, the gate observes the
-   * `/settings/shell` path and unmounts this card in favour of children.
-   */
-  readonly onConfigureShell: () => void;
-}
 
 /**
  * Poll cadence for the bootstrap.log tail while details are open. Tight
@@ -36,48 +16,7 @@ export interface LocalHostLoadingProps {
  */
 const BOOTSTRAP_TAIL_POLL_MS = 1500;
 
-/**
- * Full-screen host-boot splash. Owns the outer app chrome (header + centered
- * card) and its own respawn mutation, then delegates everything inside the
- * card to `LocalHostLoadingContent`.
- *
- * NOT RENDERED IN PRODUCTION. `DefaultHostReadyGate` now supplies the
- * full-screen chrome and drives the body through `fallbackContent`, which
- * covers all eleven readiness kinds WITH their recovery actions - this wrapper
- * only ever expressed three. It is retained because `local-host-loading.test.tsx`
- * exercises the still-live `LocalHostLoadingContent` through it (identity badge,
- * slow-start Retry, download progress, setup copy). Re-point those at
- * `LocalHostLoadingContent` directly, then remove this.
- */
-export function LocalHostLoading(props: LocalHostLoadingProps): ReactNode {
-  const respawn = useRunnerRequestHostRespawn();
-
-  return (
-    <div
-      data-testid="local-host-loading"
-      data-stage={props.stage}
-      className="flex min-h-svh w-full flex-col bg-background text-foreground"
-    >
-      <AppHeader variant="host-loading" />
-      <div className="flex flex-1 items-center justify-center p-6">
-        <Card className="w-full max-w-md shadow-sm">
-          <CardContent className="flex flex-col items-center gap-4 py-6 text-center text-ui-sm">
-            <LocalHostLoadingContent
-              stage={props.stage}
-              progress={props.progress}
-              onConfigureShell={props.onConfigureShell}
-              onRetry={() => respawn.mutate()}
-              retryPending={respawn.isPending}
-            />
-          </CardContent>
-        </Card>
-      </div>
-    </div>
-  );
-}
-
 export interface LocalHostLoadingContentProps {
-  readonly stage: LocalHostLoadingStage;
   /**
    * The shared host-progress view (F19's one copy table), not a raw lane
    * event. Built by the caller so this body and Settings ▸ Host read the same
@@ -86,25 +25,22 @@ export interface LocalHostLoadingContentProps {
    */
   readonly progress: HostProgressView | null;
   readonly onConfigureShell: () => void;
-  /**
-   * Drives the slow-stage Retry button. Injected rather than reading
-   * `useRunnerRequestHostRespawn()` directly so callers control who owns
-   * the respawn mutation - the full-screen `LocalHostLoading` splash owns
-   * its own, while the slot-sized readiness-controller fallback routes
-   * through the controller's single shared respawn lock.
-   */
-  readonly onRetry: () => void;
-  readonly retryPending: boolean;
 }
 
 /**
- * Slot-friendly loading body: spinner, progress heading/detail, the
- * download progress bar, slow-stage copy + Retry, and the bootstrap-log
- * disclosure (with the "Configure shell…" shortcut). Deliberately has no
- * outer full-screen chrome (no `min-h-svh` wrapper, no `<AppHeader>`, no
- * `<Card>`) so it can be reused both by the full-screen `LocalHostLoading`
- * splash and by a slot-sized fallback that already provides its own
- * bounded, centered layout.
+ * The host-boot body: spinner, progress heading/detail, the download progress
+ * bar, and the bootstrap-log disclosure (with the "Configure shell…"
+ * shortcut). Deliberately has no outer chrome (no `min-h-svh` wrapper, no
+ * `<AppHeader>`, no `<Card>`) so its caller provides its own bounded layout.
+ *
+ * ONE PURPOSE, since P3.4: this describes a start that is still in progress,
+ * and nothing else. It used to take a `stage` and grow a second face on
+ * `"slow"` - its own "taking longer than expected" copy, its own Retry, and
+ * the failed-attempt summary. Every caller of that arm is gone: the modal
+ * (now the only caller) passes a start that is progressing and states its
+ * actions in one row of its own, drawing the attempt diagnostics beside this
+ * body on the arm where they are true. A body with no branch cannot disagree
+ * with the surface it sits in about what is happening.
  */
 export function LocalHostLoadingContent(
   props: LocalHostLoadingContentProps,
@@ -119,14 +55,6 @@ export function LocalHostLoadingContent(
   });
   const tail = status.data?.bootstrapLogTail ?? "";
   const progressView = props.progress;
-  // Only on the slow stage: while a start is progressing normally there is no
-  // failed attempt to explain, and showing spawn diagnostics under a healthy
-  // spinner reads as an error. Recomputed per render rather than memoised -
-  // it is a scan of a short marker list behind a 30s-stale query.
-  const attemptSummary =
-    props.stage === "slow" && status.data !== undefined
-      ? summariseBootstrapAttempts(status.data.bootstrapMarkers)
-      : null;
 
   return (
     <>
@@ -139,41 +67,6 @@ export function LocalHostLoadingContent(
         {progressView?.heading ?? HOST_PROGRESS_IDLE_HEADING}
       </p>
       <ProgressLines view={progressView} />
-      {props.stage === "slow" ? (
-        <div
-          data-testid="local-host-loading-slow-copy"
-          className="flex flex-col items-center gap-3"
-        >
-          <p className="text-ui-sm text-muted-foreground">
-            Local host is taking longer than expected.
-          </p>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={props.retryPending}
-            onClick={props.onRetry}
-            data-testid="local-host-retry"
-          >
-            <span className="inline-flex items-center gap-1.5">
-              <span>Retry</span>
-              {props.retryPending ? (
-                <AgentSpinningDots
-                  className={undefined}
-                  testId="local-host-retry-spinner"
-                  variant={undefined}
-                />
-              ) : null}
-            </span>
-          </Button>
-        </div>
-      ) : null}
-      {attemptSummary !== null ? (
-        <BootstrapAttemptDetails
-          summary={attemptSummary}
-          bootstrapLogPath={status.data?.bootstrapLogPath ?? null}
-        />
-      ) : null}
       {hasCli ? (
         <DetailsDisclosure
           open={showDetails}

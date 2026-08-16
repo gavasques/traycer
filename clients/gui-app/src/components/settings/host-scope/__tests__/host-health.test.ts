@@ -42,7 +42,6 @@ function registryItem(connectivity: HostConnectivity): HostListItem {
 const BASE = {
   item: registryItem("offline"),
   hasLiveSession: false,
-  viewerCheck: null,
   nowMs: NOW_MS,
 };
 

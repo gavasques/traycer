@@ -41,7 +41,6 @@ import type {
 
 export type HostPresenceTone =
   | "online"
-  | "connection-issue"
   | "local-only"
   | "offline"
   | "unknown"
@@ -56,17 +55,13 @@ export interface HostPresenceView {
 
 export interface DeriveHostPresenceOptions {
   readonly status: HostStatusDTO;
-  readonly isViewerLocalHost: boolean;
   readonly hasLiveSession: boolean;
-  readonly viewerCheck: ViewerReachabilityCheckLike | null;
-  readonly nowMs: number;
 }
 
 export function deriveHostPresence(
   options: DeriveHostPresenceOptions,
 ): HostPresenceView {
-  const { status, isViewerLocalHost, hasLiveSession, viewerCheck, nowMs } =
-    options;
+  const { status, hasLiveSession } = options;
   // This client is offline: we cannot claim anything about the host's liveness.
   if (status.clientCloud === "down") {
     return {
@@ -81,26 +76,14 @@ export function deriveHostPresence(
     return { tone: "online", label: "Online", showLiveDot: true };
   }
   switch (status.connectivity) {
-    case "connectable": {
-      // The host's leg is up and this client's own probe says the path to it is
-      // not. Only a REMOTE row can be in this state — a local host is not
-      // reached over a relay — and the distinction is worth keeping because the
-      // remedy differs: this is the viewer's network, not the host's.
-      if (
-        !isViewerLocalHost &&
-        viewerCheck !== null &&
-        viewerCheck.result === "failing"
-      ) {
-        return {
-          tone: "connection-issue",
-          label: `Reachable, connection issue (checked ${formatElapsed(
-            Math.max(0, Math.round((nowMs - viewerCheck.checkedAtMs) / 1000)),
-          )})`,
-          showLiveDot: true,
-        };
-      }
+    // The host's own leg is up. There was a second arm here - "reachable, but
+    // THIS viewer's path to it is failing" - keyed on a per-viewer probe that
+    // was never built (F9): the store behind it had a getter and no writer, so
+    // the arm was unreachable code and the pill it drew had never once
+    // rendered. Deleted with that machinery in P3.4; if a real viewer-path
+    // probe is ever built, it comes back with a producer this time.
+    case "connectable":
       return { tone: "online", label: "Online", showLiveDot: true };
-    }
     case "local-only":
       // Not an outage: this host never attaches to a relay because the plan
       // does not include remote hosts. Rendering it "Offline" would put a
@@ -112,12 +95,6 @@ export function deriveHostPresence(
     case "offline":
       return { tone: "offline", label: "Offline", showLiveDot: false };
   }
-}
-
-/** Structural subset of `ViewerReachabilityCheck` so this module stays UI-free. */
-export interface ViewerReachabilityCheckLike {
-  readonly result: "ok" | "failing";
-  readonly checkedAtMs: number;
 }
 
 export type HostUpdatePillTone = "info" | "warn" | "danger";

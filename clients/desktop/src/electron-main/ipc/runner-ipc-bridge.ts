@@ -452,7 +452,6 @@ export class RunnerIpcBridge {
     channel: string;
     listener: (event: IpcMainEvent, ...args: unknown[]) => void;
   }> = [];
-  private hostPickerOpen = false;
   // Set when a browser-return deep link arrives before any renderer window
   // exists; drained to the MRU window once one registers. Coalesced to a single
   // flag - the signal is a payload-free nudge, so repeated arrivals collapse.
@@ -801,18 +800,6 @@ export class RunnerIpcBridge {
     this.rejectAllQuitDecisionWaiters(
       new Error("Runner IPC bridge disposed before quit decision resolved"),
     );
-  }
-
-  getHostPickerOpen(): boolean {
-    return this.hostPickerOpen;
-  }
-
-  setHostPickerOpen(next: boolean): void {
-    if (this.hostPickerOpen === next) {
-      return;
-    }
-    this.hostPickerOpen = next;
-    this.fanOut(RunnerHostEvent.hostPickerChange, next);
   }
 
   handleInvoke(

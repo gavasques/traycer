@@ -123,11 +123,12 @@ export interface DefaultHostReadinessPresentation {
    */
   readonly refreshDirectory: () => void;
   readonly openSettings: () => void;
-  // Owned once by the readiness controller, not per slot: two default-host
-  // members in a split must share one respawn mutation so a single click issues
-  // exactly one request and locks the action in every slot.
-  readonly requestRespawn: () => void;
-  readonly respawnPending: boolean;
+  // `requestRespawn`/`respawnPending` sat here too, owned once so two
+  // default-host slots in a split shared one respawn lock. Their last renderer
+  // was the host-boot body's slow-stage Retry, which P3.4 deleted along with
+  // the wrappers - respawn is the desktop MENU command's job now (and the
+  // health monitor's), both of which the window narrator already narrates
+  // through the shared mutation lane.
   /**
    * The compat probe's last answer, kept for ONE consumer: the pre-filled
    * report's health line (`describeCompatHealth`).
@@ -197,8 +198,6 @@ const EMPTY_DEFAULT_HOST_PRESENTATION: DefaultHostReadinessPresentation = {
   configureShell: () => undefined,
   refreshDirectory: () => undefined,
   openSettings: () => undefined,
-  requestRespawn: () => undefined,
-  respawnPending: false,
   compatibility: {
     status: "compatible",
     degraded: false,

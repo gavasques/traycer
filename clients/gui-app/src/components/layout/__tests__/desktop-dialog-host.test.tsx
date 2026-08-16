@@ -340,14 +340,6 @@ function createBaseRunnerHost(): IRunnerHost {
       setIndicator: () => Promise.resolve(),
       onEpicSelected: () => ({ dispose: () => undefined }),
     },
-    hostPicker: {
-      get isOpen() {
-        return false;
-      },
-      requestOpen: () => undefined,
-      requestClose: () => undefined,
-      onChange: () => ({ dispose: () => undefined }),
-    },
     workspaceFolders: {
       canPickNatively: true,
       pickFolders: () => Promise.resolve([]),

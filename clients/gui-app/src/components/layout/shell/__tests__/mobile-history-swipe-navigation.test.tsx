@@ -37,6 +37,7 @@ import { useAuthStore } from "@/stores/auth/auth-store";
 import { setMobileApp } from "@/lib/mobile-app";
 import { useMobileNavStore } from "@/stores/layout/mobile-nav-store";
 import { useMobileHistorySwipes } from "@/components/layout/shell/use-mobile-history-swipes";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { TabNavigationRouteBridge } from "@/components/layout/bridges/tab-navigation-route-bridge";
 import {
   __resetTabNavigationControllerForTesting,
@@ -316,5 +317,84 @@ describe("useMobileHistorySwipes", () => {
     swipeFromEdge("leading");
 
     expect(backSpy).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Driven through a REAL sheet rather than by writing the barrier style
+   * directly, because the claim is that the signal the hook reads is the one
+   * the app's modal surfaces actually raise. Setting the style by hand would
+   * pass against a signal no surface ever produces.
+   */
+  describe("with a modal layer covering the app", () => {
+    function SwipeUnderSheet(props: { readonly sheetOpen: boolean }) {
+      useMobileHistorySwipes();
+      return (
+        <Sheet open={props.sheetOpen}>
+          <SheetContent side="bottom">
+            <SheetTitle>Confirm</SheetTitle>
+          </SheetContent>
+        </Sheet>
+      );
+    }
+
+    function renderUnderSheet(
+      history: RouterHistory,
+      sheetOpen: boolean,
+    ): { rerender: (open: boolean) => void } {
+      const router = makeRouter(history);
+      const view = render(
+        <RouterContextProvider router={router}>
+          <SwipeUnderSheet sheetOpen={sheetOpen} />
+        </RouterContextProvider>,
+      );
+      return {
+        rerender: (open: boolean) => {
+          view.rerender(
+            <RouterContextProvider router={router}>
+              <SwipeUnderSheet sheetOpen={open} />
+            </RouterContextProvider>,
+          );
+        },
+      };
+    }
+
+    // Navigating the surface beneath an open sheet would take the user
+    // somewhere they cannot see while the sheet is still on top of it.
+    it("fires neither action while a sheet is open", async () => {
+      const history = createMemoryHistory({ initialEntries: ["/", "/epics"] });
+      const backSpy = vi.spyOn(history, "back");
+      const forwardSpy = vi.spyOn(history, "forward");
+      renderUnderSheet(history, true);
+      await waitFor(() => {
+        expect(document.body.style.pointerEvents).toBe("none");
+      });
+
+      swipeFromEdge("leading");
+      swipeFromEdge("trailing");
+
+      expect(backSpy).not.toHaveBeenCalled();
+      expect(forwardSpy).not.toHaveBeenCalled();
+    });
+
+    // The novelty guard for the case above: a stand-down that never lifted
+    // would satisfy it just as well as one that keys off the sheet.
+    it("navigates again once the sheet closes", async () => {
+      const history = createMemoryHistory({ initialEntries: ["/", "/epics"] });
+      const backSpy = vi.spyOn(history, "back");
+      const view = renderUnderSheet(history, true);
+      await waitFor(() => {
+        expect(document.body.style.pointerEvents).toBe("none");
+      });
+
+      act(() => {
+        view.rerender(false);
+      });
+      await waitFor(() => {
+        expect(document.body.style.pointerEvents).not.toBe("none");
+      });
+      swipeFromEdge("leading");
+
+      expect(backSpy).toHaveBeenCalledTimes(1);
+    });
   });
 });

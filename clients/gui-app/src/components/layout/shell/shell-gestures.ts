@@ -258,6 +258,26 @@ export function withinTextEntry(target: EventTarget | null): boolean {
   return false;
 }
 
+/**
+ * Whether a modal layer is covering the app - a dialog, a sheet, an alert, a
+ * modal menu, any of them.
+ *
+ * Read off `body`'s inline `pointer-events`, which the dismissable-layer
+ * primitive sets to `none` for as long as at least one layer has outside
+ * pointer events disabled, and restores when the last one unmounts. That is
+ * not a proxy for the question: it IS the question. "A modal layer is up"
+ * matters here only because it means the surface underneath is not the user's
+ * to interact with, and this is the app declaring exactly that. Every modal
+ * surface in the app funnels through that primitive, so nothing has to be
+ * enumerated and nothing new has to be remembered when a surface is added.
+ *
+ * Cheap enough to ask per gesture: an inline style read on one element, no
+ * query and no layout.
+ */
+export function modalLayerCoversApp(): boolean {
+  return document.body.style.pointerEvents === "none";
+}
+
 /** Blurs the focused text entry, which is what closes the soft keyboard. */
 export function blurTextEntry(): void {
   const active = document.activeElement;

@@ -183,10 +183,31 @@ import { TraycerSpecReference } from "@/markdown/components/traycer-spec-referen
 import { TraycerTicketReference } from "@/markdown/components/traycer-ticket-reference";
 import { TraycerChatReference } from "@/markdown/components/traycer-chat-reference";
 import { TraycerEpicReference } from "@/markdown/components/traycer-epic-reference";
+import { useSelectionAuthorityStore } from "@/stores/host/selection-authority-store";
+
+/**
+ * Naming the effective host is part of building an app-wide host fixture
+ * (P2.1's sweep convention). These references resolve through
+ * `useCanvasHostId()` -> `useEffectiveHostId()` -> the selection authority
+ * store, so the STORE is the seam that must carry the host. Seeding it here
+ * rather than mocking the hook keeps the fixture indifferent to which hook
+ * the component reaches for next.
+ */
+function setEffectiveHostId(hostId: string | null): void {
+  useSelectionAuthorityStore.getState().applyKernelSnapshot({
+    attached: true,
+    preferredHostId: hostId,
+    targetHostId: hostId,
+    effectiveHostId: hostId,
+    leases: [],
+    selectionRevision: 1,
+  });
+}
 
 beforeEach(() => {
   mockHandle = { epicId: OPEN_EPIC_ID, store: { getState: () => ({}) } };
   mockActiveHostId = "active-host-1";
+  setEffectiveHostId(mockActiveHostId);
   navigate.mockClear();
   epicNodeRefForNodeId.mockClear();
   openTilePreviewInEpic.mockClear();
@@ -199,7 +220,10 @@ beforeEach(() => {
   setNodeRefSpy.mockClear();
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  useSelectionAuthorityStore.getState().reset();
+});
 
 function clickRef(label: string): void {
   fireEvent.click(screen.getByRole("button", { name: label }));

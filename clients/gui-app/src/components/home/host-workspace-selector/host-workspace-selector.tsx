@@ -37,6 +37,7 @@ import { useComposerSurfaceHostPin } from "@/hooks/host/use-composer-surface-hos
 import { useRefreshHostDirectoryOnOpen } from "@/hooks/host/use-refresh-host-directory-on-open";
 import { useRemoteHostsPlanRestricted } from "@/hooks/host/use-remote-hosts-plan-gate";
 import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
+import { useEffectiveHostId } from "@/hooks/host/use-effective-host-id";
 import { useHostClientFor } from "@/hooks/host/use-host-client-for";
 import { useHostDirectoryList } from "@/hooks/host/use-host-directory-list-query";
 import { useWorktreeListByWorkspacePathsForClient } from "@/hooks/worktree/use-worktree-list-by-workspace-paths-query";
@@ -1760,15 +1761,25 @@ interface InEpicSurfaceProps {
 function InEpicSurface(props: InEpicSurfaceProps) {
   const { surface } = props;
   const binding = useHostBinding();
+  const appEffectiveHostId = useEffectiveHostId();
   const sourceChatRecord = useChatById(
     surface.kind === "chat" ? surface.ownerId : null,
   );
   // Ticket 37: the owner this surface is showing for the chat it would clone,
   // resolved through the same hook the dead-tile banner uses. Read off the
-  // app-wide binding rather than `props.hostClient` so it shares the cloud
-  // list already fetched elsewhere in the app.
+  // app-wide HOST rather than `props.hostClient` so it shares the cloud list
+  // already fetched elsewhere in the app - and resolved from the effective
+  // host id, because the binding's spine stopped naming a host when P4.2
+  // deleted the active slot.
+  const appHostClient = useMemo(
+    () =>
+      binding === null
+        ? null
+        : binding.hostClient.createRequesterForHostId(appEffectiveHostId),
+    [binding, appEffectiveHostId],
+  );
   const sourceOwnerUserId = useCloneSourceOwnerUserId({
-    client: binding?.hostClient ?? null,
+    client: appHostClient,
     epicId: surface.epicId,
     chatId: surface.kind === "chat" ? surface.ownerId : null,
   });

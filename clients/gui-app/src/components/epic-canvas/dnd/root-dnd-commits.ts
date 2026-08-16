@@ -59,7 +59,7 @@ import { getOpenEpicRegistry } from "@/lib/registries/epic-session-registry";
 import { canReparent } from "@/lib/epic-y-mutations";
 import { resolveReparentNode } from "@/lib/reparent-rules";
 import { epicNodeRefForNodeId } from "@/lib/epic-selectors";
-import { getHostBindingSnapshot } from "@/lib/host/runtime";
+import { getAppHostClientSnapshot } from "@/lib/host/runtime";
 import { UNKNOWN_HOST_PLACEHOLDER } from "@/lib/host/constants";
 import { copyEpicSidebarTabState } from "@/lib/epics/copy-epic-sidebar-tab-state";
 import { useEpicSidebarExpansionStore } from "@/stores/epics/epic-sidebar-expansion-store";
@@ -126,8 +126,7 @@ export function canDropOnHeaderStrip(
 
 function activeHostIdOrPlaceholder(): string {
   return (
-    getHostBindingSnapshot()?.hostClient.getActiveHostId() ??
-    UNKNOWN_HOST_PLACEHOLDER
+    getAppHostClientSnapshot()?.getActiveHostId() ?? UNKNOWN_HOST_PLACEHOLDER
   );
 }
 

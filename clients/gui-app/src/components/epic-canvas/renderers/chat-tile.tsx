@@ -99,6 +99,7 @@ import {
 import { useAuthStore } from "@/stores/auth/auth-store";
 import { useTabHostId } from "@/components/epic-canvas/hooks/use-tab-host-id";
 import { useHostBinding } from "@/lib/host";
+import { useEffectiveHostId } from "@/hooks/host/use-effective-host-id";
 import {
   useHostReachability,
   resolvedHostLabel,
@@ -313,13 +314,24 @@ export function ChatTile(props: ChatTileProps) {
   // never a reactive active-host read - tabs are bound to a host for life
   // and must not change behavior when the active host swaps).
   const hostBinding = useHostBinding();
+  const effectiveHostId = useEffectiveHostId();
   const [isCrossHostOpen] = useState(() => {
     // A null active host id is ignorance (binding still resolving), not
     // evidence of a cross-host open - exempting on it would reopen the
     // subscribe-first race for every chat mounted during bootstrap. Only a
     // KNOWN, different active host earns the exemption.
-    const activeHostId = hostBinding?.hostClient.getActiveHostId() ?? null;
-    return activeHostId !== null && activeHostId !== tabHostId;
+    //
+    // RESOLVED against the directory, not the derived id alone, because that
+    // is what the active slot answered before P4.2 deleted it: an effective
+    // host whose row has not arrived was `null` here, and the ignorance arm
+    // above is written for exactly that state. Reading the bare
+    // `effectiveHostId` would promote "derived but unresolved" into KNOWN and
+    // start exempting chats a beat earlier than this gate was measured for.
+    const activeEntry =
+      hostBinding === null || effectiveHostId === null
+        ? null
+        : hostBinding.hostClient.resolveHostById(effectiveHostId);
+    return activeEntry !== null && activeEntry.hostId !== tabHostId;
   });
   // The record-less same-host case (ticket 49): a published cloud row is
   // existence evidence too, and it is the ONLY evidence a swept chat has
@@ -492,6 +504,19 @@ export function ChatDeadTileBannerContainer(
 ): ReactNode {
   const chatRecord = useChatById(props.chatId);
   const bannerBinding = useHostBinding();
+  const bannerEffectiveHostId = useEffectiveHostId();
+  // The cloud lookup below runs against the app-wide host (it shares the list
+  // already fetched elsewhere), so it needs the client for that host - not the
+  // spine, which named no host once P4.2 deleted the active slot.
+  const bannerAppHostClient = useMemo(
+    () =>
+      bannerBinding === null
+        ? null
+        : bannerBinding.hostClient.createRequesterForHostId(
+            bannerEffectiveHostId,
+          ),
+    [bannerBinding, bannerEffectiveHostId],
+  );
   const providedOwnerUserId =
     props.sourceOwnerUserId !== undefined && props.sourceOwnerUserId.length > 0
       ? props.sourceOwnerUserId
@@ -503,7 +528,7 @@ export function ChatDeadTileBannerContainer(
   // it) passes it instead, and a `null` chatId keeps the hook's cloud query
   // disabled - no lookup runs for an answer the caller already had.
   const lookedUpOwnerUserId = useCloneSourceOwnerUserId({
-    client: bannerBinding?.hostClient ?? null,
+    client: bannerAppHostClient,
     epicId: props.epicId,
     chatId: providedOwnerUserId === null ? props.chatId : null,
   });

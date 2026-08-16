@@ -1,6 +1,8 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useHostBinding } from "@/lib/host";
+import { useEffectiveHostId } from "@/hooks/host/use-effective-host-id";
+import { readEffectiveHostIdSnapshot } from "@/stores/host/selection-authority-store";
 import {
   routeNotificationForHost,
   type NotificationNavigate,
@@ -97,11 +99,28 @@ export function useNotificationActivationWithNavigate(
   navigate: NotificationNavigate,
 ): NotificationActivationController {
   const binding = useHostBinding();
-  const client = binding?.hostClient ?? null;
+  const effectiveHostId = useEffectiveHostId();
+  // The app-wide client. `beforeRouteHostId`/`afterRouteHostId` below record
+  // which host the window was addressing across an activation (D7: it must
+  // not move); reading that off the spine stopped meaning anything when P4.2
+  // deleted the active slot, so it resolves the effective host id instead.
+  const client = useMemo(
+    () =>
+      binding === null
+        ? null
+        : binding.hostClient.createRequesterForHostId(effectiveHostId),
+    [binding, effectiveHostId],
+  );
 
   const activate = useCallback(
     (input: NotificationActivationInput) => {
-      const beforeRouteHostId = client?.getActiveHostId() ?? null;
+      // BOTH sides of the comparison are the POINTER, not a resolved row.
+      // Mixing the two terms would fire this guard whenever the effective
+      // host's directory row had not landed yet (`getActiveHostId()` answers
+      // `null` there while the pointer names a host) - a routing failure
+      // reported for a window that never moved. `null` when there is no host
+      // runtime at all, which keeps the no-runtime case reporting success.
+      const beforeRouteHostId = client === null ? null : effectiveHostId;
       routeNotificationForHost(
         navigate,
         input.payload,
@@ -112,7 +131,29 @@ export function useNotificationActivationWithNavigate(
         !hostFeedStayedOnOrigin({
           feedId: input.feedId,
           beforeRouteHostId,
-          afterRouteHostId: client?.getActiveHostId() ?? null,
+          // READ LIVE, and that is the whole point of this line.
+          //
+          // The guard asks "did the app-wide pointer move while we were
+          // routing" (D7: a notification activation must not switch the
+          // window's host). It used to ask the client twice, which worked
+          // only because `bind()` mutated one shared object between the two
+          // reads. `client` above is an id-pinned requester and CANNOT
+          // observe movement - both reads would return the id it was pinned
+          // to, so the comparison would be true by construction and this
+          // guard could never fire again on a user-visible failure mode.
+          //
+          // Read from the STORE, not through `getAppHostClientSnapshot()`,
+          // and the reason is FIXTURE REACHABILITY rather than layering. The
+          // one-blessed-read-path argument for the accessor is real; it loses
+          // here because the accessor lives in a module the activation suites
+          // do not mock, so every suite that exercises this guard would have
+          // to stub the accessor - and then the guard's second read comes
+          // from the stub, and no activation test could ever again catch a
+          // real pointer move. Seeding the store keeps this read REAL in
+          // every test: the fixture seeds what the guard asks about instead
+          // of stubbing what reads it.
+          afterRouteHostId:
+            client === null ? null : readEffectiveHostIdSnapshot(),
         })
       ) {
         input.onResult?.("failure");
@@ -120,7 +161,7 @@ export function useNotificationActivationWithNavigate(
       }
       input.onResult?.("success");
     },
-    [client, navigate],
+    [client, effectiveHostId, navigate],
   );
 
   return { activate };

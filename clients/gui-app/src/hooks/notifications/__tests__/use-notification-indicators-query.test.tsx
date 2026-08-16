@@ -99,6 +99,15 @@ vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
   useReactiveActiveHostId: () => mockLocalHostEntry.hostId,
 }));
 
+// The fixture used to say "which host" by binding one into the client's slot.
+// P4.2 deleted the slot, so the app-wide host is the SELECTION layer's answer
+// and a fixture that never seeds it resolves a requester addressing no host -
+// which fails as a silent no-op (an action that marks nothing read), not as a
+// missing method.
+vi.mock("@/hooks/host/use-effective-host-id", () => ({
+  useEffectiveHostId: () => mockLocalHostEntry.hostId,
+}));
+
 vi.mock("sonner", () => ({
   toast: { error: vi.fn(), success: vi.fn() },
 }));

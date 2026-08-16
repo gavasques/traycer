@@ -22,6 +22,7 @@ import {
 } from "@tanstack/react-router";
 import { MockRunnerHost } from "@traycer-clients/shared/host-client/mock/mock-runner-host";
 import { mockLocalHostEntry } from "@traycer-clients/shared/host-client/mock/mock-host-directory";
+import { createHostReconnectEngine } from "@traycer-clients/shared/host-client/host-connection-reconnect-engine";
 import { NotificationsBell } from "@/components/notifications/notifications-bell";
 import { NotificationsPopover } from "@/components/notifications/notifications-popover";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -52,15 +53,25 @@ import {
 import type { HostNotificationEntry } from "@traycer/protocol/host/notifications/contracts";
 import { ALL_NOTIFICATION_CATEGORIES } from "@/lib/notifications/notification-category";
 
+const reconnectEngine = createHostReconnectEngine();
+
 const hostRequestMock = vi.hoisted(() => vi.fn());
 
+/**
+ * `createRequesterForHostId` is not optional decoration: production resolves
+ * the app-wide host through the spine's id-pinned requester (redesign P4.2),
+ * so a stub without it takes the subject down at first render rather than
+ * failing an assertion. One host per fixture means the requester IS the
+ * client, which is what makes the self-return honest here.
+ */
+interface StubHostClient {
+  readonly request: typeof hostRequestMock;
+  readonly getActiveHostId: () => string | null;
+  readonly createRequesterForHostId: (hostId: string | null) => StubHostClient;
+}
+
 const hostBindingState = vi.hoisted(() => ({
-  current: null as {
-    readonly hostClient: {
-      readonly request: typeof hostRequestMock;
-      readonly getActiveHostId: () => string | null;
-    };
-  } | null,
+  current: null as { readonly hostClient: StubHostClient } | null,
 }));
 
 const activeHostIdRef = vi.hoisted(() => ({
@@ -134,7 +145,7 @@ function openGlobalStream(): {
   readonly seed: (entries: ReadonlyArray<NotificationEntry>) => void;
 } {
   let current: NotificationsStreamCallbacks | null = null;
-  openNotificationsStream((callbacks) => {
+  openNotificationsStream(reconnectEngine, (callbacks) => {
     current = callbacks;
     return {
       applyUpdate: () => {},
@@ -473,12 +484,12 @@ function resetStores(): void {
     }
     return Promise.resolve({});
   });
-  hostBindingState.current = {
-    hostClient: {
-      request: hostRequestMock,
-      getActiveHostId: () => mockLocalHostEntry.hostId,
-    },
+  const hostClient: StubHostClient = {
+    request: hostRequestMock,
+    getActiveHostId: () => mockLocalHostEntry.hostId,
+    createRequesterForHostId: () => hostClient,
   };
+  hostBindingState.current = { hostClient };
   __resetNotificationsStoreForTests();
   __resetHostNotificationsStoreForTests();
   __resetAppLocalNotificationsStoreForTests();

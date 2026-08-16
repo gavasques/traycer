@@ -22,7 +22,7 @@ import { useDurableStreamTransportFactory } from "@/lib/host/use-durable-stream-
 import { openOwnedDurableStreamClient } from "@/lib/host/owned-durable-stream-client";
 import { useAuthStore } from "@/stores/auth/auth-store";
 import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
-import { useAuthService, useHostBinding } from "@/lib/host";
+import { useAuthService } from "@/lib/host";
 import { useEffectiveHostId } from "@/hooks/host/use-effective-host-id";
 import { useSelectionAuthorityAttached } from "@/hooks/host/use-selection-authority-attached";
 import { useReactiveOwnerIdentityKey } from "@/hooks/host/use-reactive-owner-identity-key";
@@ -83,10 +83,6 @@ export function EpicSessionProvider(
   // recovery), since the hostId is unchanged. Folded into the rebuild
   // decision below alongside the existing hostId/user checks, not in place
   // of them.
-  const binding = useHostBinding();
-  const ownerIdentityKey = useReactiveOwnerIdentityKey(
-    binding === null ? null : binding.hostClient,
-  );
   // One explicit-host resolver per retained Epic surface. Sidebar rows share
   // the result through context instead of each mounting a directory listener,
   // query observer, and transient client for this same host.
@@ -175,6 +171,24 @@ export function EpicSessionProvider(
   const targetHostId = requestedHostId ?? effectiveHostId;
   const resolvedSessionHostClient = useHostClientForHostId(
     session?.hostId ?? targetHostId,
+  );
+  // Owner-identity discriminator (R-1), read off THE SESSION'S host - the same
+  // client the stream runs on, not the app-wide one.
+  //
+  // It used to be read off the spine, which answered from the active slot, so
+  // it always described whichever host was effective. That is only the same
+  // host while the session is UNPINNED: `targetHostId` is
+  // `requestedHostId ?? effectiveHostId`, so a retried or cloned session runs
+  // against a host the effective pointer is not naming. There the old read was
+  // wrong in both directions - a key rotation on the session's own host went
+  // unseen (the one thing this discriminator exists to catch, since `hostId`
+  // is unchanged), while a rotation on an unrelated effective host tripped the
+  // comparison below, which discards a live stream. Sessions are
+  // placement-bound, and this file's own rule decides it: identity changes are
+  // security boundaries, not re-points. P4.2 deleted the slot, so the read had
+  // to move; it moves to the host whose identity it is describing.
+  const ownerIdentityKey = useReactiveOwnerIdentityKey(
+    resolvedSessionHostClient,
   );
 
   // Presentation writes are IDEMPOTENT by value. The acquire effect re-runs

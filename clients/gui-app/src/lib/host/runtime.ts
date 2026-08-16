@@ -7,6 +7,7 @@ import {
 } from "@/providers/host-runtime-provider";
 import type { HostRpcRegistry } from "@traycer/protocol/host/index";
 import { useEffectiveHostId } from "@/hooks/host/use-effective-host-id";
+import { readEffectiveHostIdSnapshot } from "@/stores/host/selection-authority-store";
 import { hostRpcSchedulingPolicy } from "@/lib/host-rpc-policy/host-method-policy-table";
 
 type AppHostRuntimeState = HostRuntimeState<HostRpcRegistry>;
@@ -96,6 +97,26 @@ export function useHostClient(): HostClient<HostRpcRegistry> {
     () => spine.createRequesterForHostId(effectiveHostId),
     [spine, effectiveHostId],
   );
+}
+
+/**
+ * {@link useHostClient} for a caller that has no render to hang a hook on -
+ * router context, a command action, anything reading the app-wide host once at
+ * an event edge.
+ *
+ * Resolves the effective host id and the client to address it in ONE read, so
+ * a caller that needs both cannot be handed a client for a host whose id it
+ * read a moment earlier (`client.getActiveHostId()` is the id, and it answers
+ * `null` on the same conditions the id-pinned requester always has). Before
+ * P4.2 these callers took the spine and asked it which host was bound; the
+ * spine no longer holds an identity, so asking it would return `null` forever.
+ */
+export function getAppHostClientSnapshot(): HostClient<HostRpcRegistry> | null {
+  const spine = runtime.getBindingSnapshot()?.hostClient ?? null;
+  if (spine === null) {
+    return null;
+  }
+  return spine.createRequesterForHostId(readEffectiveHostIdSnapshot());
 }
 
 export const useHostDirectory = runtime.useHostDirectory;

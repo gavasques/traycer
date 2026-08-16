@@ -12,44 +12,31 @@ export interface ReactiveHostReadiness {
 const SNAPSHOT_SEPARATOR = "\u0000";
 
 /**
- * TWO SUBSCRIPTIONS, one of which is on its way out (redesign P4.1 / P4.2).
+ * ONE SUBSCRIPTION, and it is a fact about HOSTS (redesign P4.2).
  *
- * `client.onChange` is the active slot's change event. It is what tells this
- * hook to look again today, and P4.2 deletes it along with the slot.
+ * This hook used to carry a second arm - `client.onChange`, the active slot's
+ * change event - which is what told it to look again while a privileged
+ * binding existed. P4.2 deleted the slot, and the deletion was a deletion
+ * rather than a migration precisely because the arm below was already wired
+ * and already carrying the same wake (P4.1 measured that: the probe neutering
+ * `bind()`'s emitters was CAUGHT before the registry landed and SURVIVED
+ * after).
  *
- * `subscribeAnyHostRowChanged` is the registry's replacement: a host's
- * directory row landing (or its lease moving) is a fact about that HOST, not
- * about a privileged binding, so it outlives the slot. The COARSE registry
- * signal is the right one here precisely because this hook cannot name its
- * host at subscribe time - it reads the id off whatever client it was handed,
- * and a pinned requester answers `null` until the row exists. Naming the host
- * would mean naming the very thing that has not arrived yet.
- *
- * Both arms are wired at once on purpose. Today's behavior is unchanged (the
- * slot event still fires; the registry arm is redundant), and after P4.2
- * removes the first arm the second already carries it - so that deletion is a
- * deletion, not a migration. The `useSyncExternalStore` snapshot is a string
- * compared by value, so a redundant wake re-renders nothing.
+ * A host's directory row landing (or its lease moving) is a fact about that
+ * HOST, not about which host is effective, so the registry reports it whether
+ * or not anything re-points. The COARSE signal is the right one here precisely
+ * because this hook cannot name its host at subscribe time - it reads the id
+ * off whatever client it was handed, and a pinned requester answers `null`
+ * until the row exists. Naming the host would mean naming the very thing it is
+ * waiting on. The `useSyncExternalStore` snapshot is a string compared by
+ * value, so a wake that changes nothing re-renders nothing.
  */
 export function useReactiveHostReadiness<Registry extends VersionedRpcRegistry>(
   client: HostRequester<Registry> | null,
 ): ReactiveHostReadiness {
-  const subscribe = useCallback(
-    (callback: () => void) => {
-      const unsubscribeRegistry = subscribeAnyHostRowChanged(callback);
-      if (client === null) {
-        return unsubscribeRegistry;
-      }
-      const unsubscribe = client.onChange(() => {
-        callback();
-      });
-      return () => {
-        unsubscribe();
-        unsubscribeRegistry();
-      };
-    },
-    [client],
-  );
+  const subscribe = useCallback((callback: () => void) => {
+    return subscribeAnyHostRowChanged(callback);
+  }, []);
   const getSnapshot = useCallback(
     () => readHostReadinessSnapshot(client),
     [client],

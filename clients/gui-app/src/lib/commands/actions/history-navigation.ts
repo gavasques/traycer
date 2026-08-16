@@ -16,7 +16,7 @@ import {
 import { isTileRefRecordLive } from "@/stores/epics/canvas/canvas-selectors";
 import { findPaneById } from "@/stores/epics/canvas/tile-tree";
 import { getOpenEpicRegistry } from "@/lib/registries/epic-session-registry";
-import { getHostBindingSnapshot } from "@/lib/host/runtime";
+import { getAppHostClientSnapshot } from "@/lib/host/runtime";
 import { queryClient } from "@/lib/query-client";
 import {
   cloudChatViewerIdSnapshot,
@@ -138,8 +138,7 @@ function preservedTileRecordIsLive(
       ? (id: string) =>
           Object.hasOwn(epicHandle.store.getState().tree.nodeById, id)
       : () => true;
-  const activeHostId =
-    getHostBindingSnapshot()?.hostClient.getActiveHostId() ?? null;
+  const activeHostId = getAppHostClientSnapshot()?.getActiveHostId() ?? null;
   const recordListAuthorizesChatAbsence =
     epicHandle?.store.getState().chatRecordListAuthoritative ?? false;
   return isTileRefRecordLive(

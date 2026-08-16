@@ -13,6 +13,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
 import { AppHeader } from "@/components/layout/header/app-header";
 import { hostFailureReportIssueAction } from "@/components/layout/host-failure-report";
+import { compatibilityPresentation } from "@/components/layout/host-compatibility-presentation";
 import {
   HostReadinessControllerContext,
   isHostDialable,
@@ -56,7 +57,23 @@ export function HostReadinessControllerProvider(props: {
   const binding = useHostBinding();
   const runnerHost = useRunnerHost();
   const authStatus = useAuthStore((state) => state.status);
-  const client = binding?.hostClient ?? null;
+  // Read every render off LIVE in-memory state, never from storage: while the
+  // target is UNRESOLVED this is the only thing that separates a cold local
+  // start from a remote host whose directory row has not arrived. The intent
+  // is the AUTHORITY's derived effective host (redesign P1.2) - the directory
+  // no longer holds one - and it changes the instant Activate re-derives,
+  // which re-renders this controller.
+  const effectiveHostId = useEffectiveHostId();
+  // The app-wide client, resolved from that id. It used to be the spine, whose
+  // answer came from the active slot; P4.2 deleted the slot, so the id-pinned
+  // requester is what reports "the effective host, once its row exists".
+  const client = useMemo(
+    () =>
+      binding === null
+        ? null
+        : binding.hostClient.createRequesterForHostId(effectiveHostId),
+    [binding, effectiveHostId],
+  );
   const readiness = useReactiveHostReadiness(client);
   const directoryEntries = useHostDirectoryEntries(
     binding === null ? null : binding.directory,
@@ -79,18 +96,10 @@ export function HostReadinessControllerProvider(props: {
     activeEntry,
     activeEntry !== undefined && hasReadySessionFor(activeEntry.hostId),
   );
-  const selectedEntry =
-    binding === null ? null : binding.hostClient.getActiveHost();
+  const selectedEntry = client === null ? null : client.getActiveHost();
   const targetEntry = selectedEntry ?? activeEntry;
   const targetKind = resolveHostTargetKind(targetEntry);
   const compatibility = useHostCompatibility();
-  // Read every render off LIVE in-memory state, never from storage: while the
-  // target is UNRESOLVED this is the only thing that separates a cold local
-  // start from a remote host whose directory row has not arrived. The intent
-  // is the AUTHORITY's derived effective host now (redesign P1.2) - the
-  // directory no longer holds one - and it changes the instant Activate
-  // re-derives, which re-renders this controller.
-  const effectiveHostId = useEffectiveHostId();
   const selectionIntent: LocalBootSelection | null =
     binding === null
       ? null
@@ -336,50 +345,6 @@ function presentationFromLifecycle(args: {
     refreshDirectory: args.refreshDirectory,
     openSettings: args.openSettings,
     compatibility: compatibilityPresentation(args.compatibility),
-  };
-}
-
-/**
- * The probe verdict, reduced to what a pre-filled REPORT needs (D13, P3.2).
- *
- * It used to carry the copy and the recovery action too - `errorMessage`,
- * `retry`, `retrying` - because two surfaces narrated compatibility from it.
- * Both are gone: the verdict reaches the user through the lease's
- * `incompatible` arm now, and the probe's own `retry` stays where it always
- * lived, on the compat context, for whoever genuinely needs to re-ask.
- */
-function compatibilityPresentation(
-  compatibility: HostCompatibility,
-): DefaultHostReadinessPresentation["compatibility"] {
-  if (compatibility.status === "failed") {
-    return {
-      status: "failed",
-      degraded: false,
-      unreachable: compatibility.unreachable,
-      hostStatus: null,
-    };
-  }
-  if (compatibility.status === "incompatible") {
-    return {
-      status: "incompatible",
-      degraded: false,
-      unreachable: false,
-      hostStatus: null,
-    };
-  }
-  if (compatibility.status === "checking") {
-    return {
-      status: "checking",
-      degraded: false,
-      unreachable: false,
-      hostStatus: null,
-    };
-  }
-  return {
-    status: "compatible",
-    degraded: compatibility.degraded,
-    unreachable: false,
-    hostStatus: compatibility.hostStatus,
   };
 }
 

@@ -51,6 +51,11 @@ vi.mock("@/lib/host/runtime", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/host/runtime")>();
   return {
     ...actual,
+    // The app-wide client for a non-React caller (P4.2). The subject reached
+    // it through `getHostBindingSnapshot()?.hostClient` - the SPINE, answering
+    // from the active slot - until the slot was deleted; this is the same
+    // question asked of the effective host's own requester.
+    getAppHostClientSnapshot: () => boundHostClient.value,
     getHostBindingSnapshot: () =>
       boundHostClient.value === null
         ? null
@@ -67,9 +72,15 @@ function bindActiveHost(): string {
       requestId: () => "request-1",
       handlers: {},
     }),
+    // Resolves the row the requester below is pinned to. Supplied explicitly
+    // rather than relying on the client's own slot-reading fallback, which is
+    // what `bind()` used to populate here.
+    findHostById: (hostId) =>
+      hostId === mockLocalHostEntry.hostId ? mockLocalHostEntry : null,
   });
-  client.bind(mockLocalHostEntry);
-  boundHostClient.value = client;
+  boundHostClient.value = client.createRequesterForHostId(
+    mockLocalHostEntry.hostId,
+  );
   useAuthStore.setState({
     contextMetadata: { userId: VIEWER_USER_ID, username: VIEWER_USER_ID },
   });

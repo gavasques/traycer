@@ -21,29 +21,33 @@ import { MockHostMessenger } from "@traycer-clients/shared/host-client/mock/mock
 import { useReactiveHostReadiness } from "@/hooks/host/use-reactive-host-readiness";
 
 /**
- * THE P4.2 HANDOFF INSTRUMENT (redesign P4.1).
+ * THE P4.2 HANDOFF INSTRUMENT (redesign P4.1), now discharged.
  *
  * P4.2 deletes `HostClient.bind()` and the active slot. The only thing that
- * currently tells a React consumer pinned by host id to look again when its
- * row lands is that slot's change event, so the deletion is safe only if a
- * replacement signal already carries it. This file is where that claim is
- * measured rather than asserted.
+ * told a React consumer pinned by host id to look again when its row landed
+ * was that slot's change event, so the deletion was safe only if a
+ * replacement signal already carried it. This file is where that claim was
+ * measured rather than asserted, and the measurement came out: the registry
+ * carries it.
  *
- * The two cases are deliberately the SAME scenario under the two wirings:
+ * IT USED TO HOLD A SECOND CASE, and its deletion is part of the same commit
+ * that removed the arm it measured. `slot event only` reproduced the PRE-P4.1
+ * world - no registry source installed, so the registry arm was inert by
+ * construction and the landed row could only reach the consumer through
+ * `bind()`. That case's entire subject was the slot event. Once
+ * `useReactiveHostReadiness` stopped subscribing to `client.onChange` there
+ * was no honest version of it left: kept as-is it fails, and any rewrite that
+ * makes it pass is asserting something else while wearing its name. Deleted
+ * rather than kept green, because a test whose subject no longer exists is
+ * the vacuity class this epic keeps paying for.
  *
- *  - `slot event only` reproduces the PRE-P4.1 world. No registry source is
- *    installed, so the registry arm in `useReactiveHostReadiness` is inert by
- *    construction (nothing ever calls `reconcileAllRows`), and the landed row
- *    can only reach the consumer through `bind()`.
- *  - `registry signal only` is the POST-P4.1 world, and it never calls
- *    `bind()` at all - the row lands, the directory emits, and the consumer
- *    has to re-read off the registry alone.
- *
- * Neutering `bind()`'s two `emitChange` calls (probe K15) must therefore fail
- * the first case and leave the second passing. A run where BOTH still pass
- * means the first case stopped depending on the slot event and has quietly
- * become vacuous; a run where BOTH fail means the registry arm is not wired.
- * Read the two together - either one alone proves nothing.
+ * What remains is the assertion the deletion was allowed on - the row lands,
+ * the directory emits, `bind()` is never called, and the consumer re-reads
+ * off the registry alone - plus the render-suppression pin that keeps the
+ * coarse arm's unconditional wake from churning the tree. The pair that made
+ * the original flip readable is now history: it lives in the execution log
+ * and in P4.1's K15 result, not in a case that can no longer fail for the
+ * reason it was written for.
  */
 
 const pingV10 = defineRpcContract({
@@ -154,28 +158,6 @@ describe("the registry's row-changed signal (P4.2 handoff)", () => {
   afterEach(() => {
     cleanup();
     resetHostConnectionRegistryForTest();
-  });
-
-  it("reaches the consumer through the SLOT EVENT when no registry source is installed (the pre-P4.1 world)", () => {
-    const directory = new LateArrivingDirectory();
-    const { client, pinned } = buildPinnedRequester(directory);
-
-    const { result } = renderHook(() => useReactiveHostReadiness(pinned));
-    expect(result.current.hostId).toBeNull();
-    expect(result.current.isReady).toBe(false);
-
-    // The row lands. With no registry source installed, the directory emit
-    // reaches nobody - `bind()` is the only notifier left.
-    act(() => {
-      directory.publishLateHost();
-    });
-    expect(result.current.hostId).toBeNull();
-
-    act(() => {
-      client.bind(LATE_HOST);
-    });
-    expect(result.current.hostId).toBe(LATE_HOST_ID);
-    expect(result.current.isReady).toBe(true);
   });
 
   it("reaches the consumer through the REGISTRY with bind() never called (the post-P4.1 world)", () => {

@@ -13,6 +13,7 @@ import {
 import { createRequestContextFixture } from "@traycer-clients/shared/test-fixtures/request-context";
 import { hostRpcRegistry, type HostRpcRegistry } from "@traycer/protocol/host";
 import { createHostQueryInvalidator } from "@/lib/host/query-invalidator";
+import { useSelectionAuthorityStore } from "@/stores/host/selection-authority-store";
 import type { NotificationNavigate } from "@/lib/notifications";
 
 type CapturedNavigate = {
@@ -41,11 +42,23 @@ const explicitNavigate: NotificationNavigate = (options) => {
 const activeHostIdStub: { value: string | null } = vi.hoisted(() => ({
   value: "stub-host",
 }));
+/**
+ * `createRequesterForHostId` is not optional decoration: production resolves
+ * the app-wide host through the spine's id-pinned requester (redesign P4.2),
+ * so a stub without it takes the subject down at first render rather than
+ * failing an assertion. One host per fixture means the requester IS the
+ * client, which is what makes the self-return honest here.
+ */
+interface StubActivationHostClient {
+  readonly getActiveHostId: () => string | null;
+  readonly createRequesterForHostId: (
+    hostId: string | null,
+  ) => StubActivationHostClient;
+}
+
 const bindingState = vi.hoisted<{
   current: {
-    readonly hostClient: {
-      readonly getActiveHostId: () => string | null;
-    };
+    readonly hostClient: StubActivationHostClient;
     readonly directory: IHostDirectoryService;
   } | null;
 }>(() => ({ current: null }));
@@ -61,6 +74,7 @@ vi.mock("@tanstack/react-router", async (importActual) => {
 vi.mock("@/lib/host", () => ({
   useHostBinding: () => bindingState.current,
 }));
+
 
 vi.mock("@/lib/host-error-toast", () => ({
   toastFromHostError: vi.fn(),
@@ -95,11 +109,33 @@ function createWrapper(): (props: {
   };
 }
 
+/**
+ * Moves the app-wide pointer the way the authority does.
+ *
+ * SEEDED, not stubbed: the origin-host guard reads this store live, and a
+ * fixture that mocked the reader instead would leave the guard comparing the
+ * mock against itself - it could never catch a real pointer move again. This
+ * is the one thing the guard asks about, so it is the one thing the fixture
+ * supplies.
+ */
+function setEffectiveHost(hostId: string | null): void {
+  useSelectionAuthorityStore.getState().applyKernelSnapshot({
+    attached: true,
+    preferredHostId: hostId,
+    targetHostId: hostId,
+    effectiveHostId: hostId,
+    leases: [],
+    selectionRevision: 1,
+  });
+}
+
 function bindStubClient(): void {
+  const hostClient: StubActivationHostClient = {
+    getActiveHostId: () => activeHostIdStub.value,
+    createRequesterForHostId: () => hostClient,
+  };
   bindingState.current = {
-    hostClient: {
-      getActiveHostId: () => activeHostIdStub.value,
-    },
+    hostClient,
     directory: createTestDirectory([], () => undefined),
   };
 }
@@ -135,6 +171,10 @@ describe("useNotificationActivation", () => {
     navigateSpy.mockImplementation(() => undefined);
     explicitNavigateCalls.mockReset();
     activeHostIdStub.value = "stub-host";
+    // The guard compares the client's captured id against the LIVE pointer;
+    // a fixture that seeds only one of them reports a host move on every
+    // activation. These cases are not about moving, so they agree.
+    setEffectiveHost("stub-host");
     bindStubClient();
     useEpicCanvasStore.setState({
       tabsById: {},
@@ -764,8 +804,11 @@ describe("useNotificationActivation origin-host guard (P0-1)", () => {
       registry: hostRpcRegistry,
       invalidator: createHostQueryInvalidator(queryClient),
       messenger,
+      // Resolves whichever host the pointer names; there is no bound host to
+      // fall back on since P4.2 deleted the slot.
+      findHostById: (hostId) => (hostId === hostA.hostId ? hostA : hostB),
     });
-    client.bind(hostA);
+    setEffectiveHost(hostA.hostId);
     client.setRequestContext(
       createRequestContextFixture({
         origin: "renderer",
@@ -775,8 +818,7 @@ describe("useNotificationActivation origin-host guard (P0-1)", () => {
     bindingState.current = {
       hostClient: client,
       directory: createTestDirectory([hostA, hostB], (hostId) => {
-        const entry = hostId === hostA.hostId ? hostA : hostB;
-        client.bind(entry);
+        setEffectiveHost(hostId);
       }),
     };
     useEpicCanvasStore.setState({
@@ -789,16 +831,18 @@ describe("useNotificationActivation origin-host guard (P0-1)", () => {
 
   it("reports failure when the active host rebinds during routing for a host feed", () => {
     const onResult = vi.fn();
-    // Capture-before-route / check-after-route: rebind as a side effect of
-    // navigate so the post-route active-host check sees host B.
+    // Capture-before-route / check-after-route: move the APP-WIDE POINTER as
+    // a side effect of navigate, so the post-route check sees host B. Before
+    // P4.2 this drove `client.bind(hostB)` - the same event expressed against
+    // the slot that used to carry it.
     navigateSpy.mockImplementation(() => {
-      client.bind(hostB);
+      setEffectiveHost(hostB.hostId);
     });
     const hook = renderHook(() => useNotificationActivation(), {
       wrapper: createWrapper(),
     });
 
-    expect(client.getActiveHostId()).toBe(hostA.hostId);
+    expect(useSelectionAuthorityStore.getState().effectiveHostId).toBe(hostA.hostId);
 
     act(() => {
       hook.result.current.activate({
@@ -809,7 +853,7 @@ describe("useNotificationActivation origin-host guard (P0-1)", () => {
       });
     });
 
-    expect(client.getActiveHostId()).toBe(hostB.hostId);
+    expect(useSelectionAuthorityStore.getState().effectiveHostId).toBe(hostB.hostId);
     expect(navigateSpy).toHaveBeenCalledTimes(1);
     expect(onResult).toHaveBeenCalledTimes(1);
     expect(onResult).toHaveBeenCalledWith("failure");
@@ -836,7 +880,7 @@ describe("useNotificationActivation origin-host guard (P0-1)", () => {
       });
     });
 
-    expect(client.getActiveHostId()).toBe(hostA.hostId);
+    expect(useSelectionAuthorityStore.getState().effectiveHostId).toBe(hostA.hostId);
     expect(navigateSpy).toHaveBeenCalledTimes(1);
     expect(onResult).toHaveBeenCalledTimes(1);
     expect(onResult).toHaveBeenCalledWith("success");
@@ -890,7 +934,7 @@ describe("useNotificationActivation origin-host guard (P0-1)", () => {
       });
     });
 
-    expect(client.getActiveHostId()).toBe(hostA.hostId);
+    expect(useSelectionAuthorityStore.getState().effectiveHostId).toBe(hostA.hostId);
     expect(navigateSpy).toHaveBeenCalledTimes(1);
     const search = navigateSpy.mock.calls.at(0)?.at(0)?.search;
     if (search === undefined) {

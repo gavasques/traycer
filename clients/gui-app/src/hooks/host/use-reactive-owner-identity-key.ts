@@ -9,35 +9,23 @@ import { remoteAwareOwnerIdentityKey } from "@/lib/host/transport-key";
  * "default host" scope from a `HostClient`'s live active host + signed-in
  * user - `null` until both are known.
  *
- * Subscribes via `client.onChange`, so a same-`hostId` public-key rotation -
- * which `HostClient.bind`'s `sameHostTransport` check now treats as a
- * `host-updated` transition - is observed the same way a genuine host swap
- * is, instead of requiring an unrelated re-render to pick up the fresh key.
+ * Subscribes through the connection registry, on the same schedule and for the
+ * same reason as `useReactiveHostReadiness`: a same-`hostId` public-key
+ * rotation (re-enrollment / corruption recovery - R-1) is a ROW change, so it
+ * is observed the same way a genuine host move is instead of waiting for an
+ * unrelated re-render to pick up the fresh key.
  *
- * ALSO via the connection registry, for the same reason and on the same
- * schedule as `useReactiveHostReadiness`: the slot event dies with P4.2, and
- * a public-key rotation is a ROW change the registry reports whether or not
- * anything re-binds. Note that this makes the registry arm load-bearing here
- * even before P4.2 - a rotation on a host that is not the bound one never
- * reached `bind()` at all.
+ * The registry arm was load-bearing here even BEFORE P4.2 deleted the slot,
+ * which is why this hook lost its `client.onChange` arm without losing any
+ * coverage: a rotation on a host that was not the bound one never reached
+ * `bind()` at all, so the slot event was always the narrower of the two.
  */
 export function useReactiveOwnerIdentityKey<
   Registry extends VersionedRpcRegistry,
 >(client: HostClient<Registry> | null): string | null {
-  const subscribe = useCallback(
-    (callback: () => void) => {
-      const unsubscribeRegistry = subscribeAnyHostRowChanged(callback);
-      if (client === null) {
-        return unsubscribeRegistry;
-      }
-      const unsubscribe = client.onChange(callback);
-      return () => {
-        unsubscribe();
-        unsubscribeRegistry();
-      };
-    },
-    [client],
-  );
+  const subscribe = useCallback((callback: () => void) => {
+    return subscribeAnyHostRowChanged(callback);
+  }, []);
   const getSnapshot = useCallback(() => readOwnerIdentityKey(client), [client]);
   return useSyncExternalStore(subscribe, getSnapshot, () => null);
 }

@@ -1,6 +1,14 @@
 import { use, useEffect } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+  type Mock,
+} from "vitest";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import type {
   ListTasksResponse,
@@ -8,6 +16,10 @@ import type {
 } from "@traycer/protocol/host/epic/unary-schemas";
 import { HostClient } from "@traycer-clients/shared/host-client/host-client";
 import { MockHostMessenger } from "@traycer-clients/shared/host-client/mock/mock-host-messenger";
+import {
+  installHostConnectionRegistrySource,
+  resetHostConnectionRegistryForTest,
+} from "@traycer-clients/shared/host-client/host-connection-registry";
 import { createRequestContextFixture } from "@traycer-clients/shared/test-fixtures/request-context";
 import type { RemoteHostDirectoryEntry } from "@traycer-clients/shared/host-client/remote-fetcher";
 import {
@@ -40,7 +52,51 @@ const hostBindingRef = vi.hoisted(
     value: null,
   }),
 );
-const sessionHostClient = vi.hoisted(() => ({ request: vi.fn() }));
+/**
+ * The rows `useHostClientForHostId` resolves against, keyed by host id.
+ *
+ * The provider reads its owner-identity discriminator off THE SESSION'S client
+ * (redesign P4.2), so a rotation is now expressed the way production expresses
+ * it - the host's directory row changes - rather than by binding a new entry
+ * into a slot that no longer exists.
+ */
+const sessionHostRows = vi.hoisted(
+  (): { byHostId: Map<string, unknown>; userId: string | null } => ({
+    byHostId: new Map(),
+    userId: null,
+  }),
+);
+interface StubSessionHostClient {
+  readonly request: Mock;
+  readonly getActiveHost: () => unknown;
+  readonly getRequestContextUserId: () => string | null;
+}
+const sessionHostClients = vi.hoisted(
+  (): { byHostId: Map<string, StubSessionHostClient> } => ({
+    byHostId: new Map(),
+  }),
+);
+/**
+ * One stable client object per host id - stable because a consumer-identity
+ * assertion below ("shares one resolved host client") is about the resolver
+ * handing every consumer the SAME object, and a fresh stub per call would
+ * pass that test for the wrong reason.
+ */
+const resolveSessionHostClient = vi.hoisted(
+  () =>
+    (hostId: string | null): unknown => {
+      if (hostId === null) return null;
+      const existing = sessionHostClients.byHostId.get(hostId);
+      if (existing !== undefined) return existing;
+      const created = {
+        request: vi.fn(),
+        getActiveHost: () => sessionHostRows.byHostId.get(hostId) ?? null,
+        getRequestContextUserId: () => sessionHostRows.userId,
+      };
+      sessionHostClients.byHostId.set(hostId, created);
+      return created;
+    },
+);
 
 // The provider now opens its own durable transport via this factory, but every
 // test installs an `__setEpicStreamClientFactoryForTests` override that
@@ -68,7 +124,8 @@ vi.mock("@/hooks/host/use-selection-authority-attached", () => ({
 }));
 
 vi.mock("@/hooks/host/use-host-client-for-host-id", () => ({
-  useHostClientForHostId: () => sessionHostClient,
+  useHostClientForHostId: (hostId: string | null) =>
+    resolveSessionHostClient(hostId),
 }));
 
 vi.mock("@/lib/host", () => ({
@@ -369,12 +426,59 @@ function ownerIdentityRemoteTarget(
   };
 }
 
+/**
+ * Publishes `hostId`'s directory row and returns a rotate function.
+ *
+ * The connection registry is installed for real rather than mocked, because
+ * the wake path is the subject: `useReactiveOwnerIdentityKey` subscribes to
+ * `subscribeAnyHostRowChanged`, and a rotation that changed the row without
+ * emitting would leave the projection reading a stale key and every assertion
+ * below would pass for the wrong reason (or fail for an unrelated one). The
+ * emit is what `bind()` used to do and what the registry does now.
+ */
+function installOwnerIdentityRows(): (
+  hostId: string,
+  publicKey: string,
+) => void {
+  const listeners = new Set<() => void>();
+  sessionHostRows.userId = OWNER_IDENTITY_FIXTURE_USER_ID;
+  installHostConnectionRegistrySource({
+    directory: {
+      findById: (candidate) =>
+        (sessionHostRows.byHostId.get(candidate) ?? null) as never,
+      onDirectoryChanged: (listener) => {
+        listeners.add(listener);
+        return {
+          dispose: () => {
+            listeners.delete(listener);
+          },
+        };
+      },
+    },
+    leases: null,
+  });
+  return (hostId, publicKey) => {
+    sessionHostRows.byHostId.set(hostId, {
+      ...ownerIdentityRemoteTarget(publicKey),
+      hostId,
+      label: hostId,
+    });
+    for (const listener of [...listeners]) {
+      listener();
+    }
+  };
+}
+
 describe("<EpicSessionProvider />", () => {
   beforeEach(() => {
     window.localStorage.clear();
     hostState.id = "host-a";
     hostState.attached = true;
     hostBindingRef.value = null;
+    sessionHostRows.byHostId.clear();
+    sessionHostRows.userId = null;
+    sessionHostClients.byHostId.clear();
+    resetHostConnectionRegistryForTest();
     navigateMock.mockClear();
     resetCanvasStore();
     __getOpenEpicRegistryForTests().disposeAll();
@@ -391,6 +495,7 @@ describe("<EpicSessionProvider />", () => {
     resetCanvasStore();
     resetAuth("signed-out", null);
     hostBindingRef.value = null;
+    resetHostConnectionRegistryForTest();
   });
 
   it("shares one resolved host client with every session consumer", async () => {
@@ -420,9 +525,14 @@ describe("<EpicSessionProvider />", () => {
     );
 
     await waitFor(() => {
-      expect(
-        seenClients.filter((client) => client === sessionHostClient),
-      ).toHaveLength(2);
+      // The SAME object, not merely two truthy clients: the point of the
+      // shared resolver is that every consumer addresses one client for one
+      // host, so an identity compare is the only assertion that can fail when
+      // the resolver starts minting per-consumer clients.
+      const resolved = resolveSessionHostClient(hostState.id);
+      expect(seenClients.filter((client) => client === resolved)).toHaveLength(
+        2,
+      );
     });
   });
 
@@ -677,6 +787,100 @@ describe("<EpicSessionProvider />", () => {
     }
   });
 
+  it("(R-1, PINNED) keys owner identity on the SESSION's host, not the effective one", async () => {
+    // THE DISCRIMINATOR for reading `ownerIdentityKey` off
+    // `resolvedSessionHostClient` instead of the app-wide client (redesign
+    // P4.2). Every other R-1 case leaves the session UNPINNED, where the two
+    // hosts coincide and both readings pass - so this is the only case that
+    // can tell them apart, and without it the change would be uncovered.
+    //
+    // Both directions are asserted, because the old reading was wrong in both:
+    // a rotation on the session's own host was invisible (the one thing this
+    // discriminator exists to catch), and a rotation on an unrelated effective
+    // host tore a live session down.
+    vi.useFakeTimers();
+    try {
+      const streams: ControlledEpicStream[] = [];
+      const seenHandles: OpenEpicStoreHandle[] = [];
+      const presentations: Array<EpicSessionPresentation | null> = [];
+      __setEpicStreamClientFactoryForTests((_epicId, callbacks) => {
+        const stream: ControlledEpicStream = { closeCount: 0, callbacks };
+        streams.push(stream);
+        return {
+          applyUpdate: () => undefined,
+          awareness: () => undefined,
+          applyArtifactRoomUpdate: () => undefined,
+          artifactRoomAwareness: () => undefined,
+          retryMigration: () => undefined,
+          close: () => {
+            stream.closeCount += 1;
+          },
+        };
+      });
+      const rotateRow = installOwnerIdentityRows();
+      rotateRow("host-a", "pubkey-a0");
+      rotateRow("host-b", "pubkey-b0");
+
+      const body = () => (
+        <EpicSessionProvider epicId="epic-session-test" tabId="epic-session-test">
+          <HandleProbe onHandle={(handle) => seenHandles.push(handle)} />
+          <PresentationProbe
+            onPresentation={(presentation) => presentations.push(presentation)}
+          />
+        </EpicSessionProvider>
+      );
+      const view = render(body());
+      await act(() => Promise.resolve());
+      expect(streams).toHaveLength(1);
+
+      // PIN the session to host-a while the effective host moves to host-b:
+      // the re-point never snapshots, fails at the deadline, and
+      // `openOnOriginalHost()` sets `requestedHostId` back to host-a.
+      act(() => {
+        hostState.id = "host-b";
+        view.rerender(body());
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15_000);
+      });
+      const failed = presentations.at(-1);
+      expect(failed?.kind).toBe("failed");
+      act(() => {
+        failed?.openOnOriginalHost();
+      });
+      // Synchronous, NOT `waitFor`: this block runs under fake timers, and
+      // `waitFor` polls on a real timer that never advances here - it hangs to
+      // its timeout instead of failing, which reports as nothing at all.
+      expect(presentations.at(-1)?.kind).toBe("ready");
+      await act(() => Promise.resolve());
+      const pinnedHandle = seenHandles.at(-1);
+      expect(pinnedHandle).toBeDefined();
+      const streamsWhilePinned = streams.length;
+
+      // DIRECTION 1: the EFFECTIVE host rotates. It is not this session's
+      // host, so nothing may be torn down. Under the old reading this
+      // discarded a live stream.
+      act(() => {
+        rotateRow("host-b", "pubkey-b1");
+      });
+      await act(() => Promise.resolve());
+      expect(seenHandles.at(-1)).toBe(pinnedHandle);
+      expect(streams).toHaveLength(streamsWhilePinned);
+
+      // DIRECTION 2: the SESSION's own host rotates. Same hostId, same user -
+      // only the key moved, which is exactly the re-enrollment this
+      // discriminator exists for. Under the old reading this was invisible.
+      act(() => {
+        rotateRow("host-a", "pubkey-a1");
+      });
+      await act(() => Promise.resolve());
+      expect(seenHandles.at(-1)).not.toBe(pinnedHandle);
+      expect(__getOpenEpicRegistryForTests().size()).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("absorbs a churning effect dependency instead of re-presenting", async () => {
     const presentations: Array<EpicSessionPresentation | null> = [];
     __setEpicStreamClientFactoryForTests(() => ({
@@ -834,9 +1038,8 @@ describe("<EpicSessionProvider />", () => {
     );
     hostBindingRef.value = { hostClient };
     hostState.id = OWNER_IDENTITY_HOST_ID;
-    act(() => {
-      hostClient.bind(ownerIdentityRemoteTarget("pubkey-a"));
-    });
+    const rotateRow = installOwnerIdentityRows();
+    rotateRow(OWNER_IDENTITY_HOST_ID, "pubkey-a");
 
     render(
       <EpicSessionProvider epicId="epic-session-test" tabId="epic-session-test">
@@ -862,7 +1065,7 @@ describe("<EpicSessionProvider />", () => {
     // this, so a pass here proves `ownerIdentityKey` alone drives the
     // release+reacquire, not a coincident `sessionKey`/hostId churn.
     act(() => {
-      hostClient.bind(ownerIdentityRemoteTarget("pubkey-b"));
+      rotateRow(OWNER_IDENTITY_HOST_ID, "pubkey-b");
     });
 
     await waitFor(() => {

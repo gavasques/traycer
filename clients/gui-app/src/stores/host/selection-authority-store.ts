@@ -64,3 +64,18 @@ export const useSelectionAuthorityStore = create<SelectionAuthorityStoreState>()
     },
   }),
 );
+
+/**
+ * The app-wide pointer for a caller with no render to hang a hook on.
+ *
+ * Named and single-homed rather than left as an inline `getState()` at each
+ * call site, because the non-React reads of this value are exactly the ones
+ * that must stay greppable: they are how event-edge code (a router loader, a
+ * guard checking whether the pointer moved mid-route) asks the same question
+ * `useEffectiveHostId()` asks in render. `null` means ∅ here too - nothing
+ * usable - and a caller that needs "is it addressable yet" resolves it
+ * through a requester instead.
+ */
+export function readEffectiveHostIdSnapshot(): string | null {
+  return useSelectionAuthorityStore.getState().effectiveHostId;
+}

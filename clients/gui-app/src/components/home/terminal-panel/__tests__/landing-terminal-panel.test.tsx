@@ -63,6 +63,13 @@ const mocks = vi.hoisted(() => ({
       readonly reason: string;
     }) => void
   >,
+  // The connection registry's per-host row signal. The panel used to be told
+  // "this host's transport moved" by the active slot's `host-updated` event;
+  // P4.2 deleted the slot, and the registry reports the same move per host.
+  rowChangedListeners: [] as Array<{
+    readonly hostId: string;
+    readonly listener: () => void;
+  }>,
   defaultClient: {
     getActiveHostId: () => mocks.clientActiveHostId,
     onChange: (
@@ -101,6 +108,30 @@ vi.mock("@tanstack/react-query", async (importOriginal) => {
 vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
   useReactiveActiveHostId: () => mocks.activeHostId,
 }));
+// Partial, not whole-module: the registry also owns `acquireHostConnection`
+// and the equality helpers, and replacing the module wholesale would strand
+// whatever else in this graph reaches for them.
+vi.mock(
+  "@traycer-clients/shared/host-client/host-connection-registry",
+  async (importOriginal) => {
+    const actual =
+      await importOriginal<
+        typeof import("@traycer-clients/shared/host-client/host-connection-registry")
+      >();
+    return {
+      ...actual,
+      subscribeHostRowChanged: (hostId: string, listener: () => void) => {
+        const entry = { hostId, listener };
+        mocks.rowChangedListeners.push(entry);
+        return () => {
+          mocks.rowChangedListeners = mocks.rowChangedListeners.filter(
+            (candidate) => candidate !== entry,
+          );
+        };
+      },
+    };
+  },
+);
 vi.mock("@/hooks/terminal/use-terminal-list-for-query", () => ({
   useTerminalListFor: () => ({
     data: mocks.probeData,
@@ -326,6 +357,7 @@ describe("<LandingTerminalPanel />", () => {
     mocks.activeHostId = null;
     mocks.clientActiveHostId = null;
     mocks.onChangeListeners = [];
+    mocks.rowChangedListeners = [];
     mocks.probeData = undefined;
     mocks.freshProbeData = undefined;
     mocks.probeError = null;
@@ -2654,17 +2686,20 @@ describe("<LandingTerminalPanel />", () => {
     const hostATab = useLandingTerminalStore.getState().tabs[0];
     expect(hostATab.hostId).toBe("host-a");
     expect(hostATab.cwd).toBe("/Users/host-a");
-    expect(mocks.onChangeListeners.length).toBeGreaterThan(0);
+    // Subscribed BY HOST since P4.2: the panel is told "host-a's row moved",
+    // not "the bound host changed". Asserted rather than assumed, because a
+    // registry arm that never subscribed would make the drive below a no-op
+    // and this whole case would pass without ever starting a generation.
+    const hostARowListeners = mocks.rowChangedListeners.filter(
+      (entry) => entry.hostId === "host-a",
+    );
+    expect(hostARowListeners.length).toBeGreaterThan(0);
 
     // Start a fresh Host-A list generation that stays pending (no React host change).
     deferFetches = true;
     act(() => {
-      for (const listener of mocks.onChangeListeners) {
-        listener({
-          previousHostId: "host-a",
-          currentHostId: "host-a",
-          reason: "host-updated",
-        });
+      for (const entry of hostARowListeners) {
+        entry.listener();
       }
     });
     await waitFor(() => {

@@ -279,32 +279,26 @@ export function createHostRuntime<Registry extends VersionedRpcRegistry>(
               requestId,
               // Un-strands queries that errored while this binding's remote
               // session was still dialing (a Settings host-picker selection
-              // has no other session holder). A non-active host takes the
-              // announcing notify; an active one is invalidated directly,
-              // because the active variant emits a host-change event - which
-              // the `onChange` subscription below answers with
-              // `runtimeMessenger.reset()`, tearing this very binding down as
-              // a side effect of its own good news. Steady state for an active
-              // host is still owned by the stream-runtime wiring over the SAME
-              // shared session; this path only covers the promoted-mid-dial
-              // window, before that wiring exists to hear anything.
+              // has no other session holder). ALWAYS the silent form: the
+              // announcement's one subscriber here answers it with
+              // `runtimeMessenger.reset()`, which would tear this very binding
+              // down as a side effect of its own good news. Steady state for
+              // the effective host is still owned by the stream-runtime wiring
+              // over the SAME shared session; this path only covers the
+              // dialing window, before that wiring exists to hear anything.
+              //
+              // This used to branch on whether the recovering host was the
+              // bound one, and the branch was VACUOUS: the active arm called
+              // the silent form directly, and the other arm reached
+              // `notifyHostAvailabilityRecovered`, whose non-active path is
+              // that same silent delivery. Both arms produced one host-scope
+              // invalidation and no event. P4.2 deletes the slot the branch
+              // read; the single call below is what it always did.
               onRemoteAvailabilityRecovered: (hostId) => {
                 if (runtime === null) {
                   return;
                 }
-                const active = runtime.hostClient.getActiveHost();
-                if (active !== null && active.hostId === hostId) {
-                  // Promoted to active while this dial was still in flight, so
-                  // the active stream-runtime wiring may not have attached yet
-                  // - and it never replays, so waiting for it to own this
-                  // boundary can strand the queries forever. Deliver the
-                  // invalidation directly instead: same un-stranding, minus the
-                  // active-change announcement that would reset this binding as
-                  // a side effect of its own good news.
-                  runtime.hostClient.invalidateHostScopeForAvailability(hostId);
-                  return;
-                }
-                runtime.hostClient.notifyHostAvailabilityRecovered(hostId);
+                runtime.hostClient.invalidateHostScopeForAvailability(hostId);
               },
             })).messenger;
       // Closes the unary-RPC auth-recovery loop: a mid-call 401 from

@@ -42,7 +42,7 @@ import {
 import { displayTitle } from "@/lib/display-title";
 import { isEditableRole } from "@/lib/epic-permissions";
 import { getOpenEpicRegistry } from "@/lib/registries/epic-session-registry";
-import { getHostBindingSnapshot } from "@/lib/host/runtime";
+import { getAppHostClientSnapshot } from "@/lib/host/runtime";
 import { HostRpcError } from "@traycer-clients/shared/host-transport/host-messenger";
 import { toastFromHostError } from "@/lib/host-error-toast";
 import { useInlineRename } from "@/hooks/ui/use-inline-rename";
@@ -203,10 +203,15 @@ export const TabItem = memo(function TabItem(props: TabItemProps) {
         handle?.store.getState().setEpicTitle(previousTitle);
       };
       // The header strip is app-global and not guaranteed to sit inside a
-      // HostRuntimeProvider, so reach the host client through the binding
-      // snapshot rather than a render-time hook.
-      const binding = getHostBindingSnapshot();
-      if (binding === null) {
+      // HostRuntimeProvider, so reach the host client through the snapshot
+      // rather than a render-time hook. It is the app-wide client, already
+      // pinned to the effective host: this rename used to be issued on the
+      // SPINE, which answered from the active slot, so the call landed on
+      // whichever host was bound at the instant it was dispatched. Post-P4.2
+      // the client addresses the host it resolved, and `hostId` below is that
+      // same resolution rather than a second, independently-timed read.
+      const client = getAppHostClientSnapshot();
+      if (client === null) {
         rollback();
         reportableErrorToast(
           "Couldn't reach the host to rename the epic.",
@@ -220,9 +225,9 @@ export const TabItem = memo(function TabItem(props: TabItemProps) {
         );
         return;
       }
-      const hostId = binding.hostClient.getActiveHostId();
-      const userId = binding.hostClient.getRequestContextUserId();
-      void binding.hostClient
+      const hostId = client.getActiveHostId();
+      const userId = client.getRequestContextUserId();
+      void client
         .request("epic.updateTitle", {
           epicDelta: { id: epicId, title: next, updatedAt: Date.now() },
         })

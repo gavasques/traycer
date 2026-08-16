@@ -11,6 +11,7 @@ import {
 import { useHostMutation } from "@/hooks/host/use-host-query";
 import { useHostDirectoryEntry } from "@/hooks/host/use-host-directory-entry";
 import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
+import { useEffectiveHostId } from "@/hooks/host/use-effective-host-id";
 import { notificationsMutationKeys } from "@/lib/query-keys";
 import { toastFromHostError } from "@/lib/host-error-toast";
 import {
@@ -584,7 +585,17 @@ export function useNotificationCenterHostState(): NotificationCenterHostState {
 export function useMergedNotificationsActions(): MergedNotificationsActions {
   const feedMode = useNotificationFeedMode();
   const binding = useHostBinding();
-  const client = binding?.hostClient ?? null;
+  const effectiveHostId = useEffectiveHostId();
+  // Resolved from the effective host, not read off the spine: these actions
+  // mark notifications read ON a host, and the spine stopped naming one when
+  // P4.2 deleted the active slot.
+  const client = useMemo(
+    () =>
+      binding === null
+        ? null
+        : binding.hostClient.createRequesterForHostId(effectiveHostId),
+    [binding, effectiveHostId],
+  );
   const queryClient = useQueryClient();
   const globalMarkAsRead = useNotificationsStore((state) => state.markAsRead);
   const globalMarkAllAsRead = useNotificationsStore(

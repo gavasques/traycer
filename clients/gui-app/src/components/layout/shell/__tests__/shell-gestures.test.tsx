@@ -1,6 +1,6 @@
 import "../../../../../__tests__/test-browser-apis";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHook } from "@testing-library/react";
 import {
   classifyDirectionalIntent,
@@ -1610,6 +1610,258 @@ describe("useEdgeNavSwipe", () => {
     swipe({ from: 8, to: 60, target: field, dropY: 0 });
 
     expect(probe.navigations).toEqual([]);
+  });
+
+  /**
+   * The touch layer, whose only job is to stop the browser taking the drag
+   * before the recognizer can read it. What jsdom can honestly pin is the
+   * DECISION - which touches are cancelled, which are let go, and when the
+   * per-move listener exists at all. Whether cancelling is enough to keep a
+   * real web view's scroll view off the gesture is a device question and is
+   * stated as one; no simulator reproduces it either, since synthesized
+   * touches drive no such arbitration.
+   */
+  describe("reserving the gesture from the browser", () => {
+    interface TouchPoint {
+      readonly clientX: number;
+      readonly clientY: number;
+    }
+
+    function touchList(
+      points: ReadonlyArray<TouchPoint>,
+    ): ReadonlyArray<TouchPoint> & { item(index: number): TouchPoint | null } {
+      return Object.assign([...points], {
+        item: (index: number): TouchPoint | null => points[index] ?? null,
+      });
+    }
+
+    /**
+     * Dispatches and hands the event back, so a case can read whether the
+     * browser's own handling was cancelled.
+     */
+    function fireTouch(
+      type: "touchstart" | "touchmove" | "touchend",
+      options: {
+        readonly points: ReadonlyArray<TouchPoint>;
+        readonly target: EventTarget;
+      },
+    ): Event {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "touches", {
+        value: touchList(options.points),
+        configurable: true,
+      });
+      Object.defineProperty(event, "target", {
+        value: options.target,
+        configurable: true,
+      });
+      document.dispatchEvent(event);
+      return event;
+    }
+
+    function touchDown(clientX: number, target: EventTarget): void {
+      fireTouch("touchstart", { points: [{ clientX, clientY: 300 }], target });
+    }
+
+    function touchTo(
+      point: TouchPoint,
+      target: EventTarget,
+    ): { readonly cancelled: boolean } {
+      const event = fireTouch("touchmove", { points: [point], target });
+      return { cancelled: event.defaultPrevented };
+    }
+
+    it("cancels the browser's handling of an inward drag from the leading edge", () => {
+      mountOnBareScreen();
+
+      touchDown(8, document.body);
+      const first = touchTo({ clientX: 14, clientY: 300 }, document.body);
+      const later = touchTo({ clientX: 60, clientY: 300 }, document.body);
+
+      expect(first.cancelled).toBe(true);
+      // Every move after the decision, not only the one that made it: handing
+      // the drag back mid-gesture would let the page start scrolling under a
+      // finger the recognizer is still reading.
+      expect(later.cancelled).toBe(true);
+    });
+
+    it("cancels the browser's handling of an inward drag from the trailing edge", () => {
+      mountOnBareScreen();
+
+      touchDown(VIEWPORT_PX - 8, document.body);
+      const move = touchTo(
+        { clientX: VIEWPORT_PX - 20, clientY: 300 },
+        document.body,
+      );
+
+      expect(move.cancelled).toBe(true);
+    });
+
+    // The constraint that makes this safe to install app-wide: a scroll that
+    // begins in the strip is a scroll. Nothing is cancelled, so it does not
+    // even start late.
+    it("leaves a vertical drag from the edge to the page", () => {
+      mountOnBareScreen();
+
+      touchDown(8, document.body);
+      const move = touchTo({ clientX: 10, clientY: 340 }, document.body);
+
+      expect(move.cancelled).toBe(false);
+    });
+
+    // Once released, released. Re-deciding after the page has begun scrolling
+    // is the one thing that cannot work, so the drag is never taken back.
+    it("does not reclaim a released touch that later turns horizontal", () => {
+      mountOnBareScreen();
+
+      touchDown(8, document.body);
+      touchTo({ clientX: 10, clientY: 340 }, document.body);
+      const later = touchTo({ clientX: 120, clientY: 345 }, document.body);
+
+      expect(later.cancelled).toBe(false);
+    });
+
+    // Outward from the edge is a swipe off the screen, which this recognizer
+    // never answers - so cancelling it would take a gesture from the page and
+    // give it to nobody.
+    it("leaves an outward drag from the leading edge to the page", () => {
+      mountOnBareScreen();
+
+      touchDown(30, document.body);
+      const move = touchTo({ clientX: 6, clientY: 300 }, document.body);
+
+      expect(move.cancelled).toBe(false);
+    });
+
+    it("leaves a drag that starts between the zones to the page", () => {
+      mountOnBareScreen();
+
+      touchDown(200, document.body);
+      const move = touchTo({ clientX: 260, clientY: 300 }, document.body);
+
+      expect(move.cancelled).toBe(false);
+    });
+
+    // The reservation applies the recognizer's own entrance test, so the two
+    // can never disagree about whose gesture this is - taking a drag the
+    // recognizer would refuse would cancel a scroll for nothing.
+    it("leaves a drag inside a text entry to the page", () => {
+      mountOnBareScreen();
+      const composer = document.createElement("textarea");
+      document.body.appendChild(composer);
+
+      touchDown(8, composer);
+      const move = touchTo({ clientX: 60, clientY: 300 }, composer);
+
+      expect(move.cancelled).toBe(false);
+    });
+
+    it("leaves a drag alone while the edges are claimed", () => {
+      setMobileApp(true);
+      mountSwipe({ edgesClaimed: () => true });
+
+      touchDown(8, document.body);
+      const move = touchTo({ clientX: 60, clientY: 300 }, document.body);
+
+      expect(move.cancelled).toBe(false);
+    });
+
+    it("ignores a second finger, leaving pinch and two-finger pans to the page", () => {
+      mountOnBareScreen();
+
+      fireTouch("touchstart", {
+        points: [
+          { clientX: 8, clientY: 300 },
+          { clientX: 200, clientY: 300 },
+        ],
+        target: document.body,
+      });
+      const move = touchTo({ clientX: 60, clientY: 300 }, document.body);
+
+      expect(move.cancelled).toBe(false);
+    });
+
+    /**
+     * A document-level non-passive `touchmove` is the one listener that
+     * genuinely costs something: the browser must wait for it before moving the
+     * page on every frame of every scroll in the app. So its LIFETIME is the
+     * contract, not merely its behaviour - it may exist between a qualifying
+     * touch-down and that touch ending, and at no other time.
+     */
+    describe("the cost of the per-move listener", () => {
+      /**
+       * Whether a registration asked for the passive slot, read off the
+       * recorded argument rather than from a type: what matters is what the
+       * browser was actually told.
+       */
+      function askedForPassive(options: unknown): boolean {
+        if (typeof options !== "object" || options === null) return false;
+        return "passive" in options && options.passive === true;
+      }
+
+      function passiveFlagsFor(
+        calls: ReadonlyArray<ReadonlyArray<unknown>>,
+        type: string,
+      ): ReadonlyArray<boolean> {
+        return calls
+          .filter((call) => call[0] === type)
+          .map((call) => askedForPassive(call[2]));
+      }
+
+      function countFor(
+        calls: ReadonlyArray<ReadonlyArray<unknown>>,
+        type: string,
+      ): number {
+        return calls.filter((call) => call[0] === type).length;
+      }
+
+      afterEach(() => {
+        vi.restoreAllMocks();
+      });
+
+      it("registers nothing per-move until a touch qualifies", () => {
+        const addSpy = vi.spyOn(document, "addEventListener");
+
+        mountOnBareScreen();
+
+        expect(passiveFlagsFor(addSpy.mock.calls, "touchmove")).toEqual([]);
+      });
+
+      // Non-passive is the whole point: a listener that cannot cancel reserves
+      // nothing, and a browser that knows nothing can cancel hands the drag
+      // straight to its scroller.
+      it("registers a cancellable per-move listener once a touch qualifies", () => {
+        mountOnBareScreen();
+        const addSpy = vi.spyOn(document, "addEventListener");
+
+        touchDown(8, document.body);
+
+        expect(passiveFlagsFor(addSpy.mock.calls, "touchmove")).toEqual([
+          false,
+        ]);
+      });
+
+      it("drops it when the touch ends", () => {
+        mountOnBareScreen();
+        touchDown(8, document.body);
+        touchTo({ clientX: 60, clientY: 300 }, document.body);
+        const removeSpy = vi.spyOn(document, "removeEventListener");
+
+        fireTouch("touchend", { points: [], target: document.body });
+
+        expect(countFor(removeSpy.mock.calls, "touchmove")).toBeGreaterThan(0);
+      });
+
+      it("drops it the moment the drag turns out to be a scroll", () => {
+        mountOnBareScreen();
+        touchDown(8, document.body);
+        const removeSpy = vi.spyOn(document, "removeEventListener");
+
+        touchTo({ clientX: 10, clientY: 340 }, document.body);
+
+        expect(countFor(removeSpy.mock.calls, "touchmove")).toBeGreaterThan(0);
+      });
+    });
   });
 
   /**

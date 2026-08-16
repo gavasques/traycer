@@ -344,14 +344,33 @@ describe("useWorktreeWorkspacesRefresh", () => {
     expect(fixture.forcedCalls().length).toBe(2);
   });
 
-  it("recovers from a host swap that ABORTS the read, and stays silent about it", async () => {
-    // The dominant host-swap path, and the one `onSuccess` alone cannot see.
-    // `HostClient.bind` snapshots the outgoing host's in-flight jobs and
-    // settles them `authority-superseded`, which the GUI boundary turns into a
-    // TanStack cancellation - so the request FAILS. Without handling it in
-    // `onError`, switching hosts mid-refresh skipped the follow-up force and
-    // toasted "Couldn't refresh folder details." at a user who did nothing but
-    // change hosts.
+  it("stays silent on a cancellation that is NOT a host move, and starts no chase", async () => {
+    // The `onError` CancelledError arm, on the trigger that still produces it.
+    //
+    // This case used to drive a HOST SWAP, because `HostClient.bind` snapshotted
+    // the outgoing host's in-flight jobs and settled them `authority-superseded`.
+    // Redesign P2.1 deleted that: a host becoming effective is no longer a
+    // lifecycle event for the host that left, so a swap mid-refresh now lets the
+    // in-flight read finish and lands in `onSuccess` - which carries the SAME
+    // `forceAgainstLiveHost` call, so the follow-up survives and is covered by
+    // "forces again against the host the user switched to, and stops there".
+    //
+    // What P2.1 did NOT delete is the cancellation class itself, and this arm is
+    // its only cover. `setRequestContext` still aborts the bound host's in-flight
+    // work on an identity transition - deliberately, because a credential change
+    // must not let work issued under the old identity keep running - so an auth
+    // change mid-refresh is now the plainest live producer. It is also the one
+    // the fixture already speaks: `client` is exposed and the context fixture is
+    // already imported, so nothing here reaches for new fixture surface. (A
+    // same-host TRANSPORT move reaches the same arm, but pinning it would couple
+    // this test to whichever fields `sameHostTransport` happens to compare -
+    // machinery P4.1/P4.2 will move.)
+    //
+    // The claim, and it is a different one than before: a cancellation with the
+    // host UNMOVED is silent AND spawns nothing. `forceAgainstLiveHost` returns
+    // early when the live host still equals the one the request started under,
+    // so there is no second force to find - the toast must not fire and the
+    // chase must not start.
     const fixture = createFixture();
     const rendered = renderHook(() => usePicker(fixture.client, PATHS, true), {
       wrapper: fixture.Wrapper,
@@ -367,22 +386,47 @@ describe("useWorktreeWorkspacesRefresh", () => {
     act(() => {
       inFlight = rendered.result.current.refresh.refresh();
     });
-    // First force is in flight under the host that will leave.
     await fixture.waitForHeldRequest("forced", 1);
+
+    // The identity transition. A DIFFERENT context reference is what makes this
+    // a transition rather than a same-user rotation (which mutates the lease in
+    // place and deliberately does not abort anything).
     act(() => {
-      fixture.swapHost();
-    });
-    // Follow-up force against the host now on screen is also held (hold is
-    // still armed), so wait for that successive arrival before releasing.
-    await fixture.waitForHeldRequest("forced", 2);
-    await act(async () => {
-      fixture.releaseHeldReads();
-      await inFlight;
+      fixture.client.setRequestContext(
+        createRequestContextFixture({
+          origin: "renderer",
+          bearerToken: "tok-2",
+        }),
+      );
     });
 
-    // One force per host: the aborted one under the host that left, and the
-    // follow-up under the host now on screen.
-    expect(fixture.forcedCalls().length).toBe(2);
+    // NOT released first, and that ordering IS the discriminator. The abort is
+    // ASYNCHRONOUS - `cancelThenAbortHost` waits on the invalidator's
+    // `cancelHostScope` before aborting the coordinator job - so releasing here
+    // would let the held read settle normally and win the race, and the test
+    // would pass without a cancellation ever occurring. Awaiting the in-flight
+    // refresh FIRST means only the abort can settle it: if the cancellation
+    // stops firing, this await never returns and the case times out rather
+    // than quietly passing.
+    await act(async () => {
+      await inFlight;
+    });
+    fixture.releaseHeldReads();
+
+    // THE DISCRIMINATOR, and it is the only assertion here that can tell the
+    // subject apart from its own null hypothesis. `onSuccess` is what writes
+    // the forced response into the entry the picker renders from, so a read
+    // that was CANCELLED leaves the pre-refresh branch on screen while a read
+    // that merely settled would have moved it to the disk value. Written down
+    // because the silence assertions below are true of BOTH outcomes: a
+    // successful held read also makes exactly one forced call and also raises
+    // no toast, so on their own they pass whether or not the cancellation this
+    // test is named for ever happened. Measured, not assumed - without this
+    // line the trigger can be deleted outright and the test still passes.
+    expect(rendered.result.current.branch).toBe("feature/login");
+    // Exactly the one force that was cancelled: the host never moved, so no
+    // follow-up is owed and none is made.
+    expect(fixture.forcedCalls().length).toBe(1);
     expect(toastSpy).not.toHaveBeenCalled();
   });
 

@@ -1411,6 +1411,128 @@ describe("useEdgeNavSwipe", () => {
     expect(probe.navigations).toEqual([]);
   });
 
+  /**
+   * A blocking surface can arrive DURING the contact - a migration frame lands,
+   * a dialog opens on something happening elsewhere - so the finger that began
+   * on an ordinary screen is mid-travel over a surface the user has to address.
+   * No amount of care about WHEN a claimant registers covers this; only asking
+   * again does.
+   */
+  describe("a claim arriving mid-contact", () => {
+    function mountWithSwitchableClaim(): {
+      readonly probe: SwipeProbe;
+      readonly claim: (next: boolean) => void;
+    } {
+      setMobileApp(true);
+      let claimed = false;
+      const probe = mountSwipe({ edgesClaimed: () => claimed });
+      return {
+        probe,
+        claim: (next: boolean) => {
+          claimed = next;
+        },
+      };
+    }
+
+    it("drops a gesture that was clean at pointer-down", () => {
+      const { probe, claim } = mountWithSwitchableClaim();
+
+      dispatchPointer("pointerdown", {
+        clientX: 8,
+        clientY: 300,
+        target: document.body,
+        timeStamp: 0,
+        pointerId: 1,
+        isPrimary: true,
+      });
+      claim(true);
+      dispatchPointer("pointermove", {
+        clientX: 80,
+        clientY: 300,
+        target: document.body,
+        timeStamp: 100,
+        pointerId: 1,
+        isPrimary: true,
+      });
+
+      expect(probe.navigations).toEqual([]);
+    });
+
+    // Dropped, not paused. A claim that appears mid-contact does not retract
+    // when the layer closes: the swipe that started under one screen is not
+    // owed to whatever screen follows it, and re-arming a resident tracker
+    // would hand it over.
+    it("does not re-arm the same contact once the claim lifts", () => {
+      const { probe, claim } = mountWithSwitchableClaim();
+
+      dispatchPointer("pointerdown", {
+        clientX: 8,
+        clientY: 300,
+        target: document.body,
+        timeStamp: 0,
+        pointerId: 1,
+        isPrimary: true,
+      });
+      claim(true);
+      dispatchPointer("pointermove", {
+        clientX: 40,
+        clientY: 300,
+        target: document.body,
+        timeStamp: 100,
+        pointerId: 1,
+        isPrimary: true,
+      });
+      claim(false);
+      dispatchPointer("pointermove", {
+        clientX: 120,
+        clientY: 300,
+        target: document.body,
+        timeStamp: 200,
+        pointerId: 1,
+        isPrimary: true,
+      });
+
+      expect(probe.navigations).toEqual([]);
+    });
+
+    // The novelty guard for both cases above: the next contact is a new
+    // gesture and navigates normally.
+    it("answers the next contact once the claim is gone", () => {
+      const { probe, claim } = mountWithSwitchableClaim();
+
+      dispatchPointer("pointerdown", {
+        clientX: 8,
+        clientY: 300,
+        target: document.body,
+        timeStamp: 0,
+        pointerId: 1,
+        isPrimary: true,
+      });
+      claim(true);
+      dispatchPointer("pointermove", {
+        clientX: 80,
+        clientY: 300,
+        target: document.body,
+        timeStamp: 100,
+        pointerId: 1,
+        isPrimary: true,
+      });
+      dispatchPointer("pointerup", {
+        clientX: 80,
+        clientY: 300,
+        target: document.body,
+        timeStamp: 150,
+        pointerId: 1,
+        isPrimary: true,
+      });
+      claim(false);
+
+      swipe({ from: 8, to: 60, target: document.body, dropY: 0 });
+
+      expect(probe.navigations).toEqual(["back"]);
+    });
+  });
+
   it("does not navigate on a rail that already pans sideways", () => {
     const probe = mountOnBareScreen();
     const rail = document.createElement("div");

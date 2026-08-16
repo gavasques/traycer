@@ -34,8 +34,10 @@ export interface EdgeNavSwipeHandlers {
   readonly onNavigate: (direction: EdgeNavDirection) => void;
   /**
    * Whether something on screen already owns the screen edges - the navigation
-   * drawer, while it is out. Asked at pointer-down, because a swipe that starts
-   * under a covering surface belongs to that surface.
+   * drawer while it is out, a modal layer, a surface blocking the app by its
+   * own means. Asked at pointer-down AND on every move the gesture has not yet
+   * committed to, so a surface that appears mid-contact takes the edges with it
+   * rather than inheriting a swipe aimed at the screen it replaced.
    */
   readonly edgesClaimed: () => boolean;
 }
@@ -132,6 +134,19 @@ export function useEdgeNavSwipe(handlers: EdgeNavSwipeHandlers): void {
       const started = tracking;
       if (started === null) return;
       if (event.pointerId !== started.pointerId) return;
+      // Asked again on every undecided move, not only at pointer-down. A
+      // blocking surface can arrive DURING the contact - a migration frame
+      // lands, a dialog opens on a keystroke elsewhere - and the finger that
+      // was travelling over an ordinary screen is now travelling over a
+      // surface the user has to address. Nothing about when a claimant
+      // registers can cover that; only re-asking can. The gesture is dropped
+      // rather than held, because a claim that appears mid-contact does not
+      // retract when the layer closes: the swipe that started under one screen
+      // is not owed to the next one.
+      if (handlersRef.current.edgesClaimed()) {
+        tracking = null;
+        return;
+      }
       // Travel along the swipe's own inward direction, so one classifier reads
       // both edges and each is positive to itself.
       const travelPx =

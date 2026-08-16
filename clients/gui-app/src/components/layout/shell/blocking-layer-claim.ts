@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useLayoutEffect } from "react";
 
 /**
  * A count, not a boolean, because two blocking surfaces can overlap and the
@@ -48,9 +48,17 @@ export function blockingLayerClaimed(): boolean {
  * A surface that mounts an ordinary modal dialog needs none of this: the
  * barrier already speaks for it, and claiming as well would be a second source
  * of truth for the same fact.
+ *
+ * BEFORE PAINT, not after. A passive effect is deferred, so the surface can be
+ * on screen and under a finger while the claim is still queued - and a gesture
+ * recognizer asking in that window is told the app is free, which is exactly
+ * the answer this exists to prevent. The claim has to be true from the first
+ * frame the surface is visible, and a layout effect is what makes "it is on
+ * screen" and "it says so" the same instant. The work is a counter increment,
+ * so nothing is being paid for the earlier slot.
  */
 export function useBlockingLayerClaim(active: boolean): void {
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!active) return;
     return claimBlockingLayer();
   }, [active]);

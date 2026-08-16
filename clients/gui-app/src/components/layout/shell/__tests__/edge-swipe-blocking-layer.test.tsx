@@ -4,6 +4,7 @@
 // itself - and only the first is visible to a document-level recognizer. This
 // suite covers the second, which is the one a barrier-only guard waves straight
 // through.
+import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render } from "@testing-library/react";
 import { QueryClient } from "@tanstack/react-query";
@@ -17,7 +18,10 @@ import { routeTree } from "@/routeTree.gen";
 import type { AppRouter } from "@/router";
 import { EpicMigrationModal } from "@/components/epic-canvas/dialogs/epic-migration-modal";
 import { useMobileHistorySwipes } from "@/components/layout/shell/use-mobile-history-swipes";
-import { blockingLayerClaimed } from "@/components/layout/shell/blocking-layer-claim";
+import {
+  blockingLayerClaimed,
+  useBlockingLayerClaim,
+} from "@/components/layout/shell/blocking-layer-claim";
 import { setMobileApp } from "@/lib/mobile-app";
 import { useAuthStore } from "@/stores/auth/auth-store";
 import { useMobileNavStore } from "@/stores/layout/mobile-nav-store";
@@ -132,6 +136,43 @@ afterEach(() => {
   setMobileApp(false);
   useMobileNavStore.setState({ open: false });
   migrationState.current = IDLE_MIGRATION;
+});
+
+/**
+ * WHEN the claim is acquired, which no behavioural test in this file can see:
+ * Testing Library flushes passive effects inside `act`, so a claim registered
+ * in a passive effect looks identical to one registered before paint. The
+ * window it hides is real on a device - the surface is painted and under a
+ * finger while the claim is still queued - so it is pinned structurally
+ * instead.
+ *
+ * The probe is two competing effects in ONE component, with the passive one
+ * declared FIRST. Passive effects run in declaration order, so a passively
+ * acquired claim would run second and this probe would see the app free; a
+ * layout effect runs before any passive effect regardless of where it was
+ * declared, so seeing the claim held is proof of the earlier slot rather than
+ * of ordering luck.
+ */
+describe("blocking-layer claim acquisition", () => {
+  const passiveObservations: boolean[] = [];
+
+  function AcquisitionOrderProbe() {
+    useEffect(() => {
+      passiveObservations.push(blockingLayerClaimed());
+    }, []);
+    useBlockingLayerClaim(true);
+    return null;
+  }
+
+  beforeEach(() => {
+    passiveObservations.length = 0;
+  });
+
+  it("holds the claim before any passive effect runs", () => {
+    render(<AcquisitionOrderProbe />);
+
+    expect(passiveObservations).toEqual([true]);
+  });
 });
 
 describe("edge swipes under the epic migration modal", () => {

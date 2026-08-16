@@ -14,7 +14,6 @@ import {
 } from "@traycer-clients/shared/auth/auth-validation";
 import type { Environment } from "@traycer/protocol/config/paths";
 import { cliCredentialsPath } from "@traycer/protocol/config/paths";
-import { readCredentialsFile } from "@traycer/protocol/config/credentials";
 import {
   createCredentialsMutationStore,
   type CredentialsMutationStore,
@@ -197,6 +196,23 @@ export class FileTokenStore {
         error: describeLogError(error),
       });
     }
+    try {
+      // Drain any quarantined conditional deletes BEFORE the first read is
+      // served: a pair whose delete was pending when the app died must be
+      // removed — not rehydrated — on this launch. Reads suppress the pair
+      // regardless; the drain (retried on the store's own cadence on
+      // failure) is what actually completes the delete.
+      const clean = await this.store.drainQuarantine(null);
+      if (!clean) {
+        log.warn(
+          "[file-token-store] quarantined credential delete still pending",
+        );
+      }
+    } catch (error) {
+      log.warn("[file-token-store] quarantine drain failed at startup", {
+        error: describeLogError(error),
+      });
+    }
   }
 
   /**
@@ -337,7 +353,10 @@ export class FileTokenStore {
     }
     let file: StoredCredentials | null;
     try {
-      file = await readCredentialsFile(this.credentialsPath);
+      // Through the store, not a raw file read: the change fan-out must be
+      // quarantine-aware — a pair whose conditional delete is pending is
+      // never advertised as present to any window.
+      file = await this.store.read();
     } catch (error) {
       log.warn("[file-token-store] credentials read after watch event failed", {
         error: describeLogError(error),

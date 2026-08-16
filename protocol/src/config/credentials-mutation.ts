@@ -161,6 +161,14 @@ export interface CredentialsMutationStore {
     expectedToken: string,
     signal: AbortSignal | null,
   ): Promise<MutationResult>;
+  /**
+   * Completes any pending quarantined conditional deletes (see
+   * {@link quarantinePath}): if the durable pair is quarantined, delete it;
+   * residue digests whose pair is no longer durable are dropped. `true`
+   * means the quarantine is empty afterwards. Run at startup before serving
+   * reads, and retried on the store's own cadence after a failure.
+   */
+  drainQuarantine(signal: AbortSignal | null): Promise<boolean>;
   /** CAS'd merge of the `user` block only; tokens untouched. */
   updateProfile(args: {
     readonly expectedToken: string;
@@ -297,8 +305,63 @@ export function spentBaseMarkerPath(credentialsPath: string): string {
   return `${credentialsPath}.pending-spend.json`;
 }
 
+/**
+ * Sidecar recording token digests whose conditional delete has been REQUESTED
+ * but has not provably landed (the quarantine). Written BEFORE the delete is
+ * attempted, inside the same lock — so a crash, a failed commit, or a whole
+ * app relaunch leaves the intent durable: no read serves a quarantined
+ * credential, and a fresh store instance drains the delete before anything
+ * can adopt the pair. Digests, never raw tokens.
+ */
+export function quarantinePath(credentialsPath: string): string {
+  return `${credentialsPath}.quarantine.json`;
+}
+
 function digestToken(token: string): string {
   return createHash("sha256").update(token, "utf8").digest("hex");
+}
+
+/**
+ * Absent reads as empty. Malformed also reads as empty: the record is written
+ * atomically BEFORE the delete attempt, so a torn/garbled file cannot hide a
+ * still-pending delete — a genuinely pending one has a well-formed record. An
+ * I/O fault propagates: the caller decides its fail direction.
+ */
+async function readQuarantinedDigests(qPath: string): Promise<Set<string>> {
+  let raw: string;
+  try {
+    raw = await readFile(qPath, "utf8");
+  } catch (err) {
+    if (errorCode(err) === "ENOENT") return new Set();
+    throw err;
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    const digests = (parsed as { tokenDigests?: unknown }).tokenDigests;
+    if (Array.isArray(digests)) {
+      return new Set(
+        digests.filter((entry): entry is string => typeof entry === "string"),
+      );
+    }
+  } catch {
+    // Malformed — treated as empty per the contract above.
+  }
+  return new Set();
+}
+
+async function writeQuarantinedDigests(
+  qPath: string,
+  digests: ReadonlySet<string>,
+): Promise<void> {
+  if (digests.size === 0) {
+    try {
+      await unlink(qPath);
+    } catch (err) {
+      if (errorCode(err) !== "ENOENT") throw err;
+    }
+    return;
+  }
+  await writeJsonFileAtomic(qPath, { tokenDigests: [...digests] }, 0o600);
 }
 
 /**
@@ -439,7 +502,24 @@ export function createCredentialsMutationStore(
 
   let pending: PendingContinuation | null = null;
   let retryTimer: NodeJS.Timeout | null = null;
+  let quarantineRetryTimer: NodeJS.Timeout | null = null;
   let disposed = false;
+  const qPath = quarantinePath(paths.credentialsPath);
+
+  function scheduleQuarantineRetry(): void {
+    if (quarantineRetryTimer !== null || disposed) return;
+    quarantineRetryTimer = setTimeout(() => {
+      quarantineRetryTimer = null;
+      void drainQuarantine(null).then(
+        (clean) => {
+          if (!clean) scheduleQuarantineRetry();
+        },
+        () => {
+          scheduleQuarantineRetry();
+        },
+      );
+    }, options.continuationRetryMs);
+  }
 
   /**
    * Clear the spent-base marker ONLY if it still names `spentToken`'s digest.
@@ -641,6 +721,18 @@ export function createCredentialsMutationStore(
   }
 
   async function read(): Promise<StoredCredentials | null> {
+    const result = await readWithOverlay();
+    if (result === null) return null;
+    // Quarantine suppression: a pair whose conditional delete was requested
+    // but has not provably landed is NEVER served — to this process or,
+    // because every renderer read routes here, to any window. The delete
+    // itself is completed by drainQuarantine (startup + retry cadence).
+    const quarantined = await readQuarantinedDigests(qPath);
+    if (quarantined.has(digestToken(result.token))) return null;
+    return result;
+  }
+
+  async function readWithOverlay(): Promise<StoredCredentials | null> {
     const file = await readCredentialsFile(paths.credentialsPath);
     const p = pending;
     if (p === null) return file;
@@ -844,10 +936,22 @@ export function createCredentialsMutationStore(
       signal,
       true,
       async ({ state, file }): Promise<MutationResult> => {
+        // QUARANTINE FIRST, inside this same lock, before any attempt: from
+        // this write on, no read anywhere serves the pair, a crash leaves
+        // the intent durable for the next launch's drain, and a failed
+        // commit below leaves it armed for the retry cadence.
+        const digest = digestToken(expectedToken);
+        const quarantined = await readQuarantinedDigests(qPath);
+        if (!quarantined.has(digest)) {
+          quarantined.add(digest);
+          await writeQuarantinedDigests(qPath, quarantined);
+        }
         // The comparison lives under the same lock as the delete below: a
         // sign-in that landed since the caller captured `expectedToken` is
         // observed here and kept, never destroyed by the stale undo.
         if (file === null || file.token !== expectedToken) {
+          quarantined.delete(digest);
+          await writeQuarantinedDigests(qPath, quarantined);
           return { outcome: "superseded", credentials: file };
         }
         const commit = await commitMutation({
@@ -858,14 +962,56 @@ export function createCredentialsMutationStore(
         });
         // Same interactive-intent contract as `signOut`: a failed conditional
         // delete surfaces (the stale pair is still durable and the caller must
-        // know), and a landed one removes the file the marker was guarding.
+        // know — though the quarantine already stops every read from serving
+        // it), and a landed one removes the file the marker was guarding.
         if (commit.kind === "committed") {
           await clearSpentBaseMarker(paths.credentialsPath);
+          quarantined.delete(digest);
+          await writeQuarantinedDigests(qPath, quarantined);
+          return { outcome: "deleted", credentials: null };
+        }
+        scheduleQuarantineRetry();
+        return { outcome: "commit-failed", credentials: null };
+      },
+    );
+  }
+
+  async function drainQuarantine(signal: AbortSignal | null): Promise<boolean> {
+    // Lock-free pre-check: the common case (nothing quarantined) must stay
+    // free for the startup path that runs this before every first read.
+    const preCheck = await readQuarantinedDigests(qPath);
+    if (preCheck.size === 0) return true;
+    const result = await runMutation(
+      signal,
+      true,
+      async ({ state, file }): Promise<MutationResult> => {
+        const quarantined = await readQuarantinedDigests(qPath);
+        if (quarantined.size === 0) {
+          return { outcome: "deleted", credentials: null };
+        }
+        if (file === null || !quarantined.has(digestToken(file.token))) {
+          // Nothing quarantined is durable any more — every entry is
+          // residue of a pair that was already replaced or removed.
+          await writeQuarantinedDigests(qPath, new Set());
+          return { outcome: "deleted", credentials: null };
+        }
+        const commit = await commitMutation({
+          paths: commitPaths,
+          op: "signOut",
+          target: { kind: "delete" },
+          currentState: state,
+        });
+        if (commit.kind === "committed") {
+          await clearSpentBaseMarker(paths.credentialsPath);
+          await writeQuarantinedDigests(qPath, new Set());
           return { outcome: "deleted", credentials: null };
         }
         return { outcome: "commit-failed", credentials: null };
       },
     );
+    if (result.outcome === "deleted") return true;
+    scheduleQuarantineRetry();
+    return false;
   }
 
   async function updateProfile(args: {
@@ -1070,6 +1216,7 @@ export function createCredentialsMutationStore(
     signIn,
     signOut,
     signOutIfToken,
+    drainQuarantine,
     updateProfile,
     guardedSignIn,
     migrateFirstWrite,
@@ -1079,6 +1226,10 @@ export function createCredentialsMutationStore(
       if (retryTimer !== null) {
         clearTimeout(retryTimer);
         retryTimer = null;
+      }
+      if (quarantineRetryTimer !== null) {
+        clearTimeout(quarantineRetryTimer);
+        quarantineRetryTimer = null;
       }
     },
   };

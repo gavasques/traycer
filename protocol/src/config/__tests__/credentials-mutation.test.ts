@@ -19,6 +19,7 @@ import {
 import {
   createCredentialsMutationStore,
   CredentialsStoreUnavailableError,
+  quarantinePath,
   spentBaseMarkerPath,
   type CredentialsMutationStore,
   type RefreshFn,
@@ -389,6 +390,87 @@ describe("credentials mutation store", () => {
       expect(bOut.outcome).toBe("applied");
       expect(["deleted", "superseded"]).toContain(aOut.outcome);
       expect((await readCredentialsFile(credentialsPath))?.token).toBe("tok-b");
+    });
+  });
+
+  describe("quarantine (pending conditional deletes, durable)", () => {
+    function digestOf(token: string): string {
+      return createHash("sha256").update(token, "utf8").digest("hex");
+    }
+
+    it("suppresses a quarantined pair from every read — including a fresh store instance — and the drain completes the delete", async () => {
+      const store = makeStore(refreshStub(rotateOk).fn);
+      await seedSignedIn(store);
+      const qPath = quarantinePath(credentialsPath);
+      writeFileSync(
+        qPath,
+        JSON.stringify({ tokenDigests: [digestOf(CREDS.token)] }),
+      );
+      // The pair is durable on disk, but no reader is served it.
+      expect(await readCredentialsFile(credentialsPath)).toEqual(CREDS);
+      expect(await store.read()).toBeNull();
+
+      // RELAUNCH: a brand-new store over the same files (the app restarted
+      // after a failed delete). Suppression holds from the persisted record,
+      // and the startup drain completes the delete before anything adopts.
+      const relaunched = makeStore(refreshStub(rotateOk).fn);
+      expect(await relaunched.read()).toBeNull();
+      expect(await relaunched.drainQuarantine(null)).toBe(true);
+      expect(await readCredentialsFile(credentialsPath)).toBeNull();
+      expect(existsSync(qPath)).toBe(false);
+      expect(await relaunched.read()).toBeNull();
+    });
+
+    it.skipIf(!canForceCommitFailure)(
+      "a failed conditional delete stays quarantined until a drain lands it",
+      async () => {
+        const store = makeStore(refreshStub(rotateOk).fn);
+        await seedSignedIn(store);
+        const qPath = quarantinePath(credentialsPath);
+        // Pre-armed record (exactly as the register-before-attempt leaves
+        // it), then the delete's WAL commit is blocked.
+        writeFileSync(
+          qPath,
+          JSON.stringify({ tokenDigests: [digestOf(CREDS.token)] }),
+        );
+        chmodSync(workDir, 0o500);
+        const failed = await store.signOutIfToken(CREDS.token, null);
+        expect(failed.outcome).toBe("commit-failed");
+        // Still durable, still suppressed, drain still failing.
+        expect(await readCredentialsFile(credentialsPath)).toEqual(CREDS);
+        expect(await store.read()).toBeNull();
+        expect(await store.drainQuarantine(null)).toBe(false);
+        // Heal: the drain deletes the pair; nothing was ever served it.
+        chmodSync(workDir, 0o700);
+        expect(await store.drainQuarantine(null)).toBe(true);
+        expect(await readCredentialsFile(credentialsPath)).toBeNull();
+        expect(await store.read()).toBeNull();
+      },
+    );
+
+    it("drops residue digests whose pair is no longer durable", async () => {
+      const store = makeStore(refreshStub(rotateOk).fn);
+      await seedSignedIn(store);
+      const qPath = quarantinePath(credentialsPath);
+      writeFileSync(
+        qPath,
+        JSON.stringify({ tokenDigests: [digestOf("long-gone-token")] }),
+      );
+      // The durable pair is NOT quarantined: reads serve it untouched.
+      expect((await store.read())?.token).toBe(CREDS.token);
+      expect(await store.drainQuarantine(null)).toBe(true);
+      expect(existsSync(qPath)).toBe(false);
+      expect((await store.read())?.token).toBe(CREDS.token);
+    });
+
+    it("signOutIfToken quarantines before attempting and clears on landing", async () => {
+      const store = makeStore(refreshStub(rotateOk).fn);
+      await seedSignedIn(store);
+      const qPath = quarantinePath(credentialsPath);
+      const deleted = await store.signOutIfToken(CREDS.token, null);
+      expect(deleted.outcome).toBe("deleted");
+      // Landed cleanly: no quarantine residue.
+      expect(existsSync(qPath)).toBe(false);
     });
   });
 

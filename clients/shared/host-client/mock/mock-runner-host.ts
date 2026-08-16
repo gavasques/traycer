@@ -165,6 +165,12 @@ export class MockRunnerHost implements IRunnerHost {
     (change: TokenStoreChange) => void
   >();
   private tokenStoreRevision = 0;
+  // Mirrors the real store authority's quarantine: a token whose conditional
+  // delete was requested but has not landed is never served by `get` and
+  // never advertised present by the change fan-out. Tests inject
+  // `tokenStoreConditionalDeleteError` to make the delete fail.
+  readonly tokenStoreQuarantinedTokens = new Set<string>();
+  tokenStoreConditionalDeleteError: Error | null = null;
 
   private readonly authCallbackHandlers = new Set<() => void>();
   private readonly localHostHandlers = new Set<
@@ -451,7 +457,10 @@ export class MockRunnerHost implements IRunnerHost {
   readonly tokenStore: ITokenStore = {
     get: async (): Promise<StoredCredentials | null> => {
       const value = this.tokenStoreEntries.get(MOCK_TOKEN_STORE_KEY);
-      return value === undefined ? null : value;
+      if (value === undefined) return null;
+      // Quarantine suppression, exactly as the real store authority: a pair
+      // whose conditional delete is pending is served to NO reader.
+      return this.tokenStoreQuarantinedTokens.has(value.token) ? null : value;
     },
     signIn: async (
       tokens: StoredAuthTokens,
@@ -513,12 +522,20 @@ export class MockRunnerHost implements IRunnerHost {
       expectedToken: string,
     ): Promise<"deleted" | "kept"> => {
       // In-memory analogue of the store-authority conditional delete: the
-      // compare and delete are synchronous over the map, hence atomic.
+      // compare and delete are synchronous over the map, hence atomic — and
+      // the token is QUARANTINED before the attempt, so a failed delete
+      // leaves it suppressed for every reader until a retry lands.
+      this.tokenStoreQuarantinedTokens.add(expectedToken);
+      if (this.tokenStoreConditionalDeleteError !== null) {
+        throw this.tokenStoreConditionalDeleteError;
+      }
       const stored = this.tokenStoreEntries.get(MOCK_TOKEN_STORE_KEY) ?? null;
       if (stored === null || stored.token !== expectedToken) {
+        this.tokenStoreQuarantinedTokens.delete(expectedToken);
         return "kept";
       }
       this.tokenStoreEntries.delete(MOCK_TOKEN_STORE_KEY);
+      this.tokenStoreQuarantinedTokens.delete(expectedToken);
       this.notifyTokenStoreChangedAfterMutation();
       return "deleted";
     },
@@ -581,7 +598,13 @@ export class MockRunnerHost implements IRunnerHost {
    */
   notifyTokenStoreChanged(): void {
     this.tokenStoreRevision += 1;
-    const stored = this.tokenStoreEntries.get(MOCK_TOKEN_STORE_KEY);
+    const raw = this.tokenStoreEntries.get(MOCK_TOKEN_STORE_KEY);
+    // The fan-out is quarantine-aware like the real authority's: a pending
+    // conditional delete is never advertised as a present credential.
+    const stored =
+      raw !== undefined && this.tokenStoreQuarantinedTokens.has(raw.token)
+        ? undefined
+        : raw;
     const change: TokenStoreChange = {
       present: stored !== undefined,
       userId: stored?.user.id ?? null,

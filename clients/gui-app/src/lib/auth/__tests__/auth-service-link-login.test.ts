@@ -518,6 +518,71 @@ describe("link-login attempt fence", () => {
     }
   });
 
+  it("a SECOND window can never adopt a quarantined pair: shared store, real fan-out", async () => {
+    const { service, host } = makeService();
+    // Window B: a second, independently STARTED AuthService over the SAME
+    // runner host — the same shared token store and the same change
+    // fan-out, exactly like a second Electron window. It has no local
+    // pending-undo record for A's token; only the store authority's
+    // quarantine can stop it.
+    const windowB = new AuthService({ runnerHost: host });
+    trackedServices.push(windowB);
+    const { script, restore } = installLinkFetch();
+    const realStore: ITokenStore = host.tokenStore;
+    const { saveEnteredPromise, releaseSave } = pauseStoreSignIn(realStore);
+    try {
+      script.validationResponse = () => json(PROFILE_BODY, 200);
+      script.tokenResponse = () =>
+        json(
+          {
+            token: "attempt-a-token",
+            refreshToken: "attempt-a-r",
+            familyId: "f",
+          },
+          200,
+        );
+      await service.start();
+      await windowB.start();
+      // The store authority's conditional delete fails; the quarantine it
+      // registered BEFORE the attempt stays.
+      host.tokenStoreConditionalDeleteError = new Error(
+        "EIO: credentials file unwritable",
+      );
+      const linkResult = service.signInWithLinkCode("ABCDE-FGHJK");
+      await vi.advanceTimersByTimeAsync(1_100);
+      await saveEnteredPromise;
+
+      Object.defineProperty(host.deviceFlow, "start", {
+        configurable: true,
+        value: () => Promise.resolve(null),
+      });
+      const deviceSignIn = service.signIn();
+      await vi.advanceTimersByTimeAsync(10);
+      await deviceSignIn;
+
+      releaseSave();
+      expect((await linkResult).kind).toBe("failed");
+
+      // The write's fan-out reached BOTH windows. The raw entry is durable,
+      // but the store serves it to NO reader — so neither window adopts,
+      // even though the token would validate (stubbed 200).
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(useAuthStore.getState().status).not.toBe("signed-in");
+      expect(host.tokenStoreEntries.get("traycer.token")?.token).toBe(
+        "attempt-a-token",
+      );
+      expect(await realStore.get()).toBeNull();
+
+      // Heal: the deletion lands BEFORE either window adopts anything.
+      host.tokenStoreConditionalDeleteError = null;
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(host.tokenStoreEntries.get("traycer.token")).toBeUndefined();
+      expect(useAuthStore.getState().status).not.toBe("signed-in");
+    } finally {
+      restore();
+    }
+  });
+
   it("terminal denial of the CURRENT attempt projects the ordinary failure", async () => {
     const { service } = makeService();
     const { script, restore } = installLinkFetch();

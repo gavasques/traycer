@@ -2288,6 +2288,35 @@ export class AuthService {
       this.scheduleSessionRecovery("reconcile:pending-undo");
       return;
     }
+    await this.projectReconciledSnapshot(
+      stored,
+      outcome,
+      identityGen,
+      reconcileGen,
+    );
+  }
+
+  /**
+   * Adoption tail of {@link runReconcileOnce}, after every local fence has
+   * passed: a STORE re-read mirroring the recovery path's
+   * `storedSessionStillOnDisk`. The local pending-undo set only knows THIS
+   * window's undos — another window's undo registers its quarantine at the
+   * store authority, whose reads then stop serving the pair — so the
+   * validated snapshot is projected only if the store still serves it.
+   */
+  private async projectReconciledSnapshot(
+    stored: StoredCredentials,
+    outcome: ValidationOutcome,
+    identityGen: number,
+    reconcileGen: number,
+  ): Promise<void> {
+    if (!(await this.storedSessionStillOnDisk(stored.token))) {
+      this.scheduleSessionRecovery("reconcile:stored-session-superseded");
+      return;
+    }
+    if (!this.isReconcileCurrent(identityGen, reconcileGen)) {
+      return;
+    }
     this.applyReconciledOutcome(stored, outcome);
   }
 

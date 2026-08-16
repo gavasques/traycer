@@ -1450,6 +1450,46 @@ describe("useEdgeNavSwipe", () => {
     expect(probe.navigations).toEqual([]);
   });
 
+  // The shape a rich editor's node views take: a non-editable atom - a mention
+  // chip, a slash-command result, an attached image - inside an editable root.
+  // There is no caret in one to drag, so the nearest declaration wins and the
+  // swipe is the shell's. Walking past it to the editable root would refuse a
+  // gesture over every atom in the document.
+  it("navigates on a drag over a non-editable atom inside an editor", () => {
+    const probe = mountOnBareScreen();
+    const editable = document.createElement("div");
+    editable.setAttribute("contenteditable", "true");
+    document.body.appendChild(editable);
+    const atom = document.createElement("span");
+    atom.setAttribute("contenteditable", "false");
+    editable.appendChild(atom);
+    const glyph = document.createElement("span");
+    atom.appendChild(glyph);
+
+    swipe({ from: 8, to: 60, target: glyph, dropY: 0 });
+
+    expect(probe.navigations).toEqual(["back"]);
+  });
+
+  // The carve-out is about the caret, not about ownership of every descendant:
+  // a real field nested inside a non-editable atom is still a field, and the
+  // tag is checked at every level on the way up.
+  it("does not navigate on a field nested inside a non-editable atom", () => {
+    const probe = mountOnBareScreen();
+    const editable = document.createElement("div");
+    editable.setAttribute("contenteditable", "true");
+    document.body.appendChild(editable);
+    const atom = document.createElement("span");
+    atom.setAttribute("contenteditable", "false");
+    editable.appendChild(atom);
+    const field = document.createElement("input");
+    atom.appendChild(field);
+
+    swipe({ from: 8, to: 60, target: field, dropY: 0 });
+
+    expect(probe.navigations).toEqual([]);
+  });
+
   /**
    * The zones are 32px of APP SURFACE, not of screen. In landscape the sensor
    * housing's inset can be wider than a zone itself, so a recognizer measuring

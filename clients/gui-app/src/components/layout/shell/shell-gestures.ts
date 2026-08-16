@@ -11,6 +11,7 @@
  * recognizer that guesses differently from its neighbour is how one ends up
  * stealing the other's touches.
  */
+import { blockingLayerClaimed } from "@/components/layout/shell/blocking-layer-claim";
 
 export interface DirectionalGesture {
   /** Travel along the gesture's own axis, positive in its direction. */
@@ -243,39 +244,58 @@ export function isWithinFocusedTextEntry(target: EventTarget | null): boolean {
  * the resolved `isContentEditable` property. The property's whole advantage is
  * that it resolves inheritance, and this walk already climbs to the ancestor
  * carrying the attribute - so the attribute answers the same question one level
- * up, and answers it in terms of what the markup actually declares. An explicit
- * `contenteditable="false"` is a carve-out inside an editable region and is not
- * a text entry.
+ * up, and answers it in terms of what the markup actually declares.
+ *
+ * The NEAREST declaration wins, which is what makes an explicit
+ * `contenteditable="false"` a real carve-out rather than a value that is merely
+ * skipped over. The walk stops there and answers no, because the editor said
+ * that subtree is not text: rich-text node views - a mention chip, a
+ * slash-command result, an attached image - are non-editable atoms sitting
+ * inside an editable root, and there is no caret in one to drag. Continuing up
+ * to the root would refuse a gesture over every one of them, which is the
+ * opposite of what the carve-out is for. A field nested INSIDE such an atom is
+ * still a field: the tag is checked first, at every level.
  */
 export function withinTextEntry(target: EventTarget | null): boolean {
   let node = asElement(target);
   while (node !== null) {
     if (node.tagName === "INPUT" || node.tagName === "TEXTAREA") return true;
     const editable = node.getAttribute("contenteditable");
-    if (editable !== null && editable !== "false") return true;
+    if (editable === "false") return false;
+    if (editable !== null) return true;
     node = node.parentElement;
   }
   return false;
 }
 
 /**
- * Whether a modal layer is covering the app - a dialog, a sheet, an alert, a
- * modal menu, any of them.
+ * Whether a layer is covering the app - a dialog, a sheet, an alert, a modal
+ * menu, or a surface that blocks the app by its own means.
  *
- * Read off `body`'s inline `pointer-events`, which the dismissable-layer
+ * TWO SOURCES, because there are two ways to be blocking and only one of them
+ * is visible in the DOM.
+ *
+ * The first is `body`'s inline `pointer-events`, which the dismissable-layer
  * primitive sets to `none` for as long as at least one layer has outside
- * pointer events disabled, and restores when the last one unmounts. That is
- * not a proxy for the question: it IS the question. "A modal layer is up"
- * matters here only because it means the surface underneath is not the user's
- * to interact with, and this is the app declaring exactly that. Every modal
- * surface in the app funnels through that primitive, so nothing has to be
- * enumerated and nothing new has to be remembered when a surface is added.
+ * pointer events disabled, and restores when the last one unmounts. That is not
+ * a proxy for the question: it IS the question. "A modal layer is up" matters
+ * here only because it means the surface underneath is not the user's to
+ * interact with, and this is the app declaring exactly that. Every surface
+ * using the primitive's modal machinery funnels through it, so nothing has to
+ * be enumerated and nothing new has to be remembered when one is added.
  *
- * Cheap enough to ask per gesture: an inline style read on one element, no
- * query and no layout.
+ * The second is the explicit claim, for surfaces that block WITHOUT that
+ * machinery - the ones that mount the primitive non-modally and inert a subtree
+ * of their own instead, so the document never learns anything. They are no less
+ * blocking for it; they are just silent, and a guard reading only the barrier
+ * would wave a gesture straight through them.
+ *
+ * Cheap enough to ask per gesture: an inline style read on one element and a
+ * counter, no query and no layout.
  */
 export function modalLayerCoversApp(): boolean {
-  return document.body.style.pointerEvents === "none";
+  if (document.body.style.pointerEvents === "none") return true;
+  return blockingLayerClaimed();
 }
 
 /** Blurs the focused text entry, which is what closes the soft keyboard. */

@@ -26,11 +26,23 @@ const NO_DRAG_STYLE = { WebkitAppRegion: "no-drag" } as CSSProperties;
  */
 export function HistoryNavButtons() {
   const available = useHistoryNavAvailable();
-  const router = useRouter();
-  const { canGoBack, canGoForward } = useHistoryNavState();
   if (!available) {
     return null;
   }
+  return <HistoryNavArrows />;
+}
+
+/**
+ * Split from the gate above so the state subscription mounts ONLY where the
+ * arrows do. Read inside one component, `useHistoryNavState` would run before
+ * the availability check could return - subscribing, and re-rendering on every
+ * navigation, in a shell that renders nothing at all. Availability never flips
+ * for the life of a router (it is a property of the history that router was
+ * built with), so this boundary is stable and costs no remount.
+ */
+function HistoryNavArrows() {
+  const router = useRouter();
+  const { canGoBack, canGoForward } = useHistoryNavState();
   return (
     <div className="flex shrink-0 items-center" style={NO_DRAG_STYLE}>
       {/* Tooltip trigger is the wrapping <span>, not the Button: a disabled

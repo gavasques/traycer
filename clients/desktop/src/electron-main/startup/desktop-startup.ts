@@ -41,9 +41,12 @@ import {
 import { RunnerIpcBridge } from "../ipc/register-runner-ipc";
 import {
   applyHostUpdateMenuState,
+  armFirstInstallOnSignIn,
   refreshHostRegistryIfNotRemoved,
   runLaunchHostConvergeReconcile,
+  signedInGateFromAuthSession,
   type HostUpdateMenuSurface,
+  type SignedInGate,
 } from "./host-launch-converge";
 import type { IpcHostController } from "../ipc/runner-ipc-bridge";
 import { respawnIfDown } from "./host-health-respawn";
@@ -219,6 +222,7 @@ export interface DesktopStartupTestHooks {
   runWindowPhase(): Promise<{
     readonly hostController: IpcHostController;
     readonly menu: HostUpdateMenuSurface;
+    readonly signedIn: SignedInGate;
   }>;
   runDeferredBackground(): void;
 }
@@ -250,6 +254,8 @@ interface AppServices {
   readonly menu: MenuController;
   readonly windowRegistry: WindowRegistry;
   readonly zoomController: WindowZoomController;
+  /** Consent gate for the first install; see `armFirstInstallOnSignIn`. */
+  readonly signedIn: SignedInGate;
 }
 
 interface DeferredStartupPlan {
@@ -257,6 +263,7 @@ interface DeferredStartupPlan {
   readonly services: {
     readonly hostController: IpcHostController;
     readonly menu: HostUpdateMenuSurface;
+    readonly signedIn: SignedInGate;
   };
   runBackground(): void;
 }
@@ -664,6 +671,7 @@ async function runWindowPhase(state: BootState): Promise<AppServices> {
     menu,
     windowRegistry,
     zoomController: createdZoomController,
+    signedIn: signedInGateFromAuthSession(authSession),
   };
 }
 
@@ -934,6 +942,7 @@ export function runDeferred<
   TServices extends {
     readonly hostController: IpcHostController;
     readonly menu: HostUpdateMenuSurface;
+    readonly signedIn: SignedInGate;
   },
 >(
   state: TState,
@@ -941,6 +950,12 @@ export function runDeferred<
   runBackground: (state: TState, services: TServices) => void,
 ): void {
   runBackground(state, services);
+  // Two DIFFERENT actions, deliberately not merged. The reconciler settles the
+  // debt of a host that exists; the first install creates one that never has,
+  // and only for a signed-in user (see `armFirstInstallOnSignIn`). Arming is
+  // synchronous and cheap - it either acts now or waits for the sign-in that
+  // the pre-retirement renderer gate also waited for.
+  armFirstInstallOnSignIn(services.hostController, services.signedIn);
   void timed("deferred", "host-launch-converge", () =>
     runLaunchHostConvergeReconcile(services.hostController, services.menu),
   );

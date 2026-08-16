@@ -841,18 +841,30 @@ describe("LocalHostGate", () => {
     });
     const { readLifecycle } = mountProvisioningLifecycle(host);
 
+    // THE AUTHORITY CONVERGES TOO, and through this same spy. D14 wants a
+    // never-dialed local host, so the in-process authority requests an ensure
+    // at construction and `MockRunnerHost` routes it to
+    // `hostManagement.convergeReady` exactly as the real desktop port does.
+    // Settling it here is what makes the counts below describe the GESTURES
+    // rather than a race between two actors - this test passed in isolation
+    // and failed in the full suite until it said so.
+    await waitFor(() => {
+      expect(convergeReady).toHaveBeenCalledTimes(1);
+    });
+
     act(() => {
       readLifecycle()?.provisioning.force();
     });
     await waitFor(() => {
       expect(convergeReady).toHaveBeenCalledWith(true);
     });
+    expect(convergeReady).toHaveBeenCalledTimes(2);
 
     act(() => {
       readLifecycle()?.provisioning.retry();
     });
     await waitFor(() => {
-      expect(convergeReady).toHaveBeenCalledTimes(2);
+      expect(convergeReady).toHaveBeenCalledTimes(3);
     });
     expect(convergeReady).toHaveBeenLastCalledWith(false);
   });
@@ -894,11 +906,22 @@ describe("LocalHostGate", () => {
     });
     const { readLifecycle } = mountProvisioningLifecycle(host);
 
+    // THE AUTHORITY CONVERGES TOO, and through this same spy. D14 wants a
+    // never-dialed local host, so the in-process authority requests an ensure
+    // at construction and `MockRunnerHost` routes it to
+    // `hostManagement.convergeReady` exactly as the real desktop port does.
+    // Settling it here is what makes the counts below describe the GESTURES
+    // rather than a race between two actors - this test passed in isolation
+    // and failed in the full suite until it said so.
+    await waitFor(() => {
+      expect(convergeReady).toHaveBeenCalledTimes(1);
+    });
+
     act(() => {
       readLifecycle()?.provisioning.retry();
     });
     await waitFor(() => {
-      expect(convergeReady).toHaveBeenCalledTimes(1);
+      expect(convergeReady).toHaveBeenCalledTimes(2);
       expect(readLifecycle()?.provisioning.hostBusy).toBe(true);
     });
     expect(convergeReady).toHaveBeenLastCalledWith(false);
@@ -910,7 +933,7 @@ describe("LocalHostGate", () => {
       readLifecycle()?.provisioning.retry();
     });
     await waitFor(() => {
-      expect(convergeReady).toHaveBeenCalledTimes(2);
+      expect(convergeReady).toHaveBeenCalledTimes(3);
     });
     expect(convergeReady).toHaveBeenLastCalledWith(false);
     expect(readLifecycle()?.provisioning.hostBusy).toBe(true);
@@ -919,7 +942,7 @@ describe("LocalHostGate", () => {
       readLifecycle()?.provisioning.force();
     });
     await waitFor(() => {
-      expect(convergeReady).toHaveBeenCalledTimes(3);
+      expect(convergeReady).toHaveBeenCalledTimes(4);
     });
     expect(convergeReady).toHaveBeenLastCalledWith(true);
   });

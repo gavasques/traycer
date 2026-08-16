@@ -12,6 +12,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { MockHostMessenger } from "@traycer-clients/shared/host-client/mock/mock-host-messenger";
 import { MockRunnerHost } from "@traycer-clients/shared/host-client/mock/mock-runner-host";
+import { useSelectionAuthorityStore } from "@/stores/host/selection-authority-store";
 import type { HostDirectoryEntry } from "@traycer-clients/shared/host-client/host-directory";
 import {
   HostRequestAbortedError,
@@ -279,6 +280,27 @@ function hostStatusDetail(compatibility: HostCompatibility): string {
   return `busy=${String(snapshot.busy)};count=${String(snapshot.busySessionCount)};version=${snapshot.hostVersion}`;
 }
 
+/**
+ * The selection authority's verdict for the local host, read out of the store
+ * the bridge writes.
+ *
+ * WHY THESE TESTS ASSERT HERE RATHER THAN ON THE STATUS TEXT. An incompatible
+ * host is `dead("incompatible")` FOR SELECTION (D13/C4), so the authority
+ * drops it from derivation the moment the probe reports and `effectiveHostId`
+ * goes null. `useHostCompatibility()` is keyed on the bound host, so with
+ * nothing bound it has no verdict left to render and the status text falls
+ * back to `checking`. The verdict is not lost - it moved to the layer that
+ * acts on it, and that is where it is now checked.
+ */
+function authorityIncompatibleCode(hostId: string): string | null {
+  const lease = useSelectionAuthorityStore
+    .getState()
+    .leases.find((entry) => entry.hostId === hostId);
+  if (lease === undefined || lease.status !== "dead") return null;
+  if (lease.dead.reason !== "incompatible") return null;
+  return lease.dead.detail.code;
+}
+
 function getCompatibilityStatusText(): string | null {
   return screen.getByRole("status", {
     name: "Host compatibility status",
@@ -539,8 +561,12 @@ describe("HostCompatibilityProvider startup consumers", () => {
     });
 
     await waitFor(() => {
-      expect(getCompatibilityStatusText()).toBe("incompatible");
+      expect(authorityIncompatibleCode(localSnapshot.hostId)).toBe(
+        "INCOMPATIBLE",
+      );
     });
+    // The load-bearing half, unchanged: an incompatible host is probed once
+    // and nothing else is ever dispatched to it.
     expect(methods).toEqual(["host.status"]);
     expect(getTaskContexts).not.toHaveBeenCalled();
     expect(listHarnesses).not.toHaveBeenCalled();
@@ -953,6 +979,7 @@ describe("HostCompatibilityProvider startup consumers", () => {
     await waitFor(() => {
       expect(getCompatibilityStatusText()).toBe("compatible");
     });
+    expect(authorityIncompatibleCode(localSnapshot.hostId)).toBeNull();
 
     await act(async () => {
       await queryClient.invalidateQueries();
@@ -960,8 +987,14 @@ describe("HostCompatibilityProvider startup consumers", () => {
 
     // Holding a prior verdict must never swallow a real one: a host that was
     // replaced or updated under the same id says INCOMPATIBLE, and that wins.
+    // Read at the authority, which is what acts on it - the rendered status
+    // reverts to `checking` once the host leaves selection, so asserting the
+    // text here would be asserting the surface's loss of a host rather than
+    // the verdict that caused it.
     await waitFor(() => {
-      expect(getCompatibilityStatusText()).toBe("incompatible");
+      expect(authorityIncompatibleCode(localSnapshot.hostId)).toBe(
+        "INCOMPATIBLE",
+      );
     });
     queryClient.clear();
   });

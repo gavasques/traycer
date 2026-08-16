@@ -624,9 +624,19 @@ function useHostProvisioning(args: {
   // What stays HERE is presentation and USER-INITIATED recovery: Retry, forced
   // update, the busy-keep flow, the removal surface, and the progress the
   // mutation lane pushes. Those are gestures and rendering, not automatic
-  // process mutation, and they remain until P3.1 re-homes this surface. The
-  // boot-time provisioning intent now belongs to the authority alone, which
-  // asks for it exactly when derivation wants the local host and it is down.
+  // process mutation, and they remain until P3.1 re-homes this surface.
+  //
+  // BOOT-TIME PROVISIONING SPLITS IN TWO, and an earlier draft of this comment
+  // said "the authority alone", which was wrong in a way that cost a first
+  // launch. The authority asks through `LocalHostEnsurePort` keyed on a hostId
+  // it reads from the fleet, and the fleet reads the local id from the
+  // enrollment / pid-metadata files - so on a machine that has never had a
+  // host the id is null and the authority structurally cannot ask. It owns
+  // SELECTION-TIME ensure: derivation wants the local host and that host
+  // exists but is down. The FIRST INSTALL belongs to the desktop's launch
+  // reconciler (`electron-main/startup/host-launch-converge.ts`), which is the
+  // launch-time process actor and gates on the removal sentinel. Retiring this
+  // effect without that arm left nobody installing a first-ever host.
   void attemptedRef;
 
   // Direct removal-sentinel check, independent of the one-shot `convergeReady`

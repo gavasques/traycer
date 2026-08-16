@@ -283,30 +283,36 @@ export class MockRunnerHost implements IRunnerHost {
     this.selectionAuthorityMount = createInProcessSelectionAuthority({
       fleet: this.selectionFleet,
       identity: this.selectionIdentity,
-      // A shell with no host process can neither provision nor take the host
-      // deliberately down, and saying so honestly is what makes P1.3's ∅
-      // definition come out right here.
+      // MIRRORS `createDesktopLocalHostEnsurePort`. When this shell has host
+      // management, D14's ensure goes where the real one goes - through
+      // `convergeReady` - because that call IS the observable event. A mock
+      // that answered `ok` directly satisfied the engine while leaving the
+      // provisioning invisible to anything watching the controller, so a test
+      // asserting "the authority started the host" could not see it happen
+      // even when it did.
       //
-      // ANSWERED AGAINST THE FIXTURE, not as a constant. A mock built WITH a
-      // `localHost` snapshot is modelling a shell whose local host is already
-      // running - that is the entire content of the fixture - so the ensure
-      // has nothing to do and answers ok. Refusing there instead used to be
+      // With no management there is no controller to ask, and the answer is
+      // read off the FIXTURE rather than being a constant: a mock built WITH a
+      // `localHost` snapshot is modelling a shell whose host is already
+      // running, so the ensure has nothing to do. Refusing there used to be
       // invisible, because the engine only asked when the local lease was
       // already `dead`; once P1.3's F3(b) ruling let derivation ask for a
       // NEVER-DIALED local host too, the constant refusal fired on every such
       // mock at boot, drove the local lease to `dead` for the retry cooldown
       // (registry §5's ∅ made real), and left `effectiveHostId` null - so the
       // window unbound its host client and every gate/compat surface in the
-      // gui-app suite hung on a probe that could no longer run. The mock was
-      // contradicting its own fixture; `localHost === null` is the only shape
-      // that genuinely cannot provision.
+      // gui-app suite hung on a probe that could no longer run. `localHost ===
+      // null` is the only shape that genuinely cannot provision.
       localHostEnsure: {
+        // THE DEFERRAL IS LOAD-BEARING, not style. This authority is being
+        // constructed right here, and its constructor derives immediately -
+        // which calls `ensureReady()` SYNCHRONOUSLY, before the assignment of
+        // `this.hostManagement` further down this same constructor has run.
+        // An inline read would see `undefined` on the very first ensure, which
+        // is the cold-start one that matters most. One microtask puts the read
+        // after the constructor completes.
         ensureReady: () =>
-          Promise.resolve(
-            this.localHost === null
-              ? { ok: false, reason: "local-provisioning-unavailable" }
-              : { ok: true },
-          ),
+          Promise.resolve().then(() => this.ensureLocalHostReady()),
       },
       localOutage: inertLocalHostOutageSignal,
       preferredStore: this.selectionPreferredStore,
@@ -338,6 +344,26 @@ export class MockRunnerHost implements IRunnerHost {
     // Access-only (§3): the mock mirrors the desktop IPC, which no longer
     // refreshes on a failed lookup — the spend routes through `tokenStore.rotate`.
     return validateAuthTokenIdentityAccessOnly(this.authnBaseUrl, token);
+  }
+
+  /**
+   * D14's local ensure for this shell - see the port's own note at the
+   * authority mount for why it is deferred and why the no-management answer
+   * reads the fixture. Kept as a method rather than a closure so that
+   * ordering constraint has one place to be explained.
+   */
+  private async ensureLocalHostReady(): Promise<
+    { ok: true } | { ok: false; reason: string }
+  > {
+    const management = this.hostManagement;
+    if (management === null) {
+      return this.localHost === null
+        ? { ok: false, reason: "local-provisioning-unavailable" }
+        : { ok: true };
+    }
+    const outcome = await management.convergeReady(false);
+    if (outcome.kind === "ok") return { ok: true };
+    return { ok: false, reason: outcome.kind };
   }
 
   listRegisteredHosts(bearerToken: string): Promise<HostListFetchResult> {

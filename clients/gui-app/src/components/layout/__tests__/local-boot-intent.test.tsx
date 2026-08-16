@@ -366,19 +366,58 @@ describe("local-boot intent", () => {
     expect(spy.removalStateCalls()).toBe(0);
   });
 
-  it("runs the local ensure and draws the install card for a first-ever start", async () => {
+  it("the AUTHORITY's ensure reaches host management - the port is not a stub", async () => {
+    // The counterpart to the negative arm above, and the pin for a fidelity
+    // property that is otherwise invisible. `MockRunnerHost` composes the
+    // authority's `LocalHostEnsurePort`, and an earlier version of it answered
+    // `ok` directly instead of routing to `convergeReady` the way the real
+    // `createDesktopLocalHostEnsurePort` does. That satisfied the engine while
+    // making the provisioning unobservable to anything watching the
+    // controller: an ensure that "succeeded" without the host ever being asked
+    // to converge. Nothing failed, because no test looked.
+    //
+    // Here the local host EXISTS in the fleet and has never been dialed, which
+    // is exactly when D14 wants it, so the authority requests the ensure and
+    // it must arrive at management. The remote-preferred test above is the
+    // negative arm of the same mechanism: derivation that does NOT want local
+    // must leave the controller alone.
+    const spy = buildManagementSpy();
+
+    mountRealChain(spy.management, true);
+
+    await waitFor(() => {
+      expect(spy.convergeReadyCalls()).toBe(1);
+    });
+  });
+
+  it("does NOT provision a first-ever start from the RENDERER - that actor moved to main", async () => {
     // Nothing preferred and no local row yet: a genuine cold local start.
-    // This is the arm that must NOT be sacrificed to close the one above -
-    // the rich card is where install progress and the bootstrap.log path live
-    // (traycer#862), and a first install is exactly when they are needed.
+    //
+    // THE ACTOR MOVED, and this test moved with it. It used to assert that
+    // the renderer ran the ensure and drew the install card, because
+    // `local-host-gate.tsx` fired a once-per-mount `convergeReady`. P1.3
+    // retired that - two process actors for one host is what made the ∅
+    // definition undecidable - so the renderer must now install NOTHING, and
+    // asserting otherwise would be pinning the defect the retirement removed.
+    //
+    // First install did not disappear with it: it is
+    // `armFirstInstallOnSignIn` in the desktop's launch reconciler
+    // (`electron-main/startup/host-launch-converge.ts`), sign-in gated and
+    // removal-sentinel gated, and it is proven THERE - in the process that
+    // actually performs it - by that module's own suite. This chain does not
+    // mount main, so a renderer test asserting a main-process action could
+    // only ever be theatre. What is genuinely this layer's to promise is that
+    // it does not act, and does not lie about the host while it waits.
     const spy = buildManagementSpy();
 
     mountRealChain(spy.management, false);
 
     await waitFor(() => {
-      expect(spy.convergeReadyCalls()).toBe(1);
+      expect(screen.queryByTestId("runtime-fallback")).toBeNull();
     });
-    expect(screen.getByTestId("local-host-loading-spinner")).toBeTruthy();
+    expect(spy.convergeReadyCalls()).toBe(0);
+    // Still the local surface rather than the remote one - the window knows
+    // this is a local boot, it simply is not the thing booting it.
     expect(screen.queryByText("Connecting to Traycer Host…")).toBeNull();
   });
 });

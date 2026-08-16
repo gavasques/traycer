@@ -10,6 +10,7 @@ import type {
 } from "../../host/host-controller-types";
 import type { HostRegistryUpdateState } from "../../../ipc-contracts/host-management-types";
 import type { DesktopStartupTestHooks } from "../desktop-startup";
+import type { SignedInGate } from "../host-launch-converge";
 
 const electronMock = vi.hoisted(() => ({
   app: {
@@ -52,11 +53,38 @@ vi.mock("../../ipc/host-management-ipc", () => ({
 // Imported after the mocks above so the module under test picks them up.
 const {
   runLaunchHostConvergeReconcile,
+  armFirstInstallOnSignIn,
   refreshHostRegistryIfNotRemoved,
   applyHostUpdateMenuState,
 } = await import("../host-launch-converge");
 const { __setDesktopStartupTestHooks, runDesktopStartup } =
   await import("../desktop-startup");
+
+/**
+ * A {@link SignedInGate} whose answer can flip, so a test can drive the
+ * sign-in TRANSITION rather than only the already-signed-in case - the
+ * transition is the arm that reproduces the pre-retirement timing, where the
+ * host was installed once the gate mounted after sign-in.
+ */
+function fakeSignedInGate(initial: boolean): SignedInGate & {
+  signIn(): void;
+  listenerCount(): number;
+} {
+  let signedIn = initial;
+  const listeners = new Set<(next: boolean) => void>();
+  return {
+    isSignedIn: () => signedIn,
+    onChanged: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    signIn: () => {
+      signedIn = true;
+      for (const listener of Array.from(listeners)) listener(true);
+    },
+    listenerCount: () => listeners.size,
+  };
+}
 
 function fakeMenu() {
   return {
@@ -109,6 +137,12 @@ function fakeHostController(
   readonly convergeReadyCalls: readonly boolean[];
   readonly stageLatestCalls: number;
   /**
+   * How many times status was sampled. Lets a test wait for an actor that
+   * DECLINES to act - "no converge" is not observable until you know the
+   * decision was actually reached, rather than still pending.
+   */
+  readonly getStatusCalls: number;
+  /**
    * Method names in invocation order. Counts alone cannot express "recovery
    * ran BEFORE the release download", which is the whole point of the
    * unavailable-first ordering.
@@ -120,6 +154,7 @@ function fakeHostController(
   const convergeReadyCalls: boolean[] = [];
   const callOrder: string[] = [];
   let stageLatestCalls = 0;
+  let getStatusCalls = 0;
   return {
     get callOrder() {
       return callOrder;
@@ -136,7 +171,11 @@ function fakeHostController(
     get stageLatestCalls() {
       return stageLatestCalls;
     },
+    get getStatusCalls() {
+      return getStatusCalls;
+    },
     async getStatus(): Promise<HostControllerStatus> {
+      getStatusCalls += 1;
       return status;
     },
     async applyStaged(
@@ -542,7 +581,15 @@ describe("runLaunchHostConvergeReconcile (fixup B1 + B2)", () => {
       runPreReady: () => undefined,
       whenReady: async () => undefined,
       runOnReady: async () => undefined,
-      runWindowPhase: async () => ({ hostController, menu: fakeMenu() }),
+      // SIGNED OUT for this composition test, so the first-install actor
+      // provably cannot contribute to the assertions below: it arms, sees no
+      // signed-in identity, and waits. What is under test here is activation
+      // debt on a host that already exists.
+      runWindowPhase: async () => ({
+        hostController,
+        menu: fakeMenu(),
+        signedIn: fakeSignedInGate(false),
+      }),
       runDeferredBackground: background,
     });
 
@@ -628,6 +675,101 @@ describe("runLaunchHostConvergeReconcile (fixup B1 + B2)", () => {
     await runLaunchHostConvergeReconcile(controller, fakeMenu());
 
     expect(refreshRegistryUpdateStateMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("armFirstInstallOnSignIn", () => {
+  const neverInstalled = (removedByUser: boolean): HostControllerStatus => ({
+    ...fakeStatus(false, "unavailable", removedByUser),
+    installedVersion: null,
+  });
+
+  it("installs once for a signed-in user on a machine that has never had a host", async () => {
+    const controller = fakeHostController(
+      neverInstalled(false),
+      { kind: "ok", value: { appliedVersion: "1.4.1", runningActivated: true } },
+      { kind: "ok", value: { activated: true } },
+    );
+
+    armFirstInstallOnSignIn(controller, fakeSignedInGate(true));
+
+    await vi.waitFor(() => {
+      expect(controller.convergeReadyCalls).toEqual([false]);
+    });
+    // The reconciler's arms are not this actor's business, and vice versa.
+    expect(controller.applyStagedCalls).toEqual([]);
+    expect(controller.activateInstalledCalls).toEqual([]);
+  });
+
+  it("CONSENT: a signed-out launch installs nothing, and waits rather than giving up", async () => {
+    const controller = fakeHostController(
+      neverInstalled(false),
+      { kind: "ok", value: { appliedVersion: "1.4.1", runningActivated: true } },
+      { kind: "ok", value: { activated: true } },
+    );
+    const gate = fakeSignedInGate(false);
+
+    armFirstInstallOnSignIn(controller, gate);
+    await Promise.resolve();
+
+    // Installing a background service is consent-bearing: the retired renderer
+    // path only ever provisioned for a signed-in user, and restoring it
+    // unconditionally would be the same action under a weaker precondition.
+    expect(controller.convergeReadyCalls).toEqual([]);
+    // ...and it is WAITING, not declining. A test that only asserted the empty
+    // call list would pass just as happily against an actor that gave up.
+    expect(gate.listenerCount()).toBe(1);
+  });
+
+  it("installs on the sign-in TRANSITION - the pre-retirement timing", async () => {
+    const controller = fakeHostController(
+      neverInstalled(false),
+      { kind: "ok", value: { appliedVersion: "1.4.1", runningActivated: true } },
+      { kind: "ok", value: { activated: true } },
+    );
+    const gate = fakeSignedInGate(false);
+    armFirstInstallOnSignIn(controller, gate);
+
+    gate.signIn();
+
+    await vi.waitFor(() => {
+      expect(controller.convergeReadyCalls).toEqual([false]);
+    });
+    // One-shot: the subscription is released once it has acted.
+    expect(gate.listenerCount()).toBe(0);
+  });
+
+  it("CONSENT: a host the user removed is never reinstalled, even signed in", async () => {
+    const controller = fakeHostController(
+      neverInstalled(true),
+      { kind: "ok", value: { appliedVersion: "1.4.1", runningActivated: true } },
+      { kind: "ok", value: { activated: true } },
+    );
+
+    armFirstInstallOnSignIn(controller, fakeSignedInGate(true));
+    await vi.waitFor(() => {
+      expect(controller.getStatusCalls).toBeGreaterThan(0);
+    });
+
+    // `installedVersion` is null for a REMOVED host too, so the sentinel is
+    // the only thing separating "never had one" from "deliberately got rid of
+    // it" - and it is checked at the moment of acting, not at arming.
+    expect(controller.convergeReadyCalls).toEqual([]);
+  });
+
+  it("does nothing when a host is already installed - that debt is the reconciler's", async () => {
+    const controller = fakeHostController(
+      fakeStatus(false, "activated", false),
+      { kind: "ok", value: { appliedVersion: "1.4.1", runningActivated: true } },
+      { kind: "ok", value: { activated: true } },
+    );
+
+    armFirstInstallOnSignIn(controller, fakeSignedInGate(true));
+    await vi.waitFor(() => {
+      expect(controller.getStatusCalls).toBeGreaterThan(0);
+    });
+
+    expect(controller.convergeReadyCalls).toEqual([]);
   });
 });
 

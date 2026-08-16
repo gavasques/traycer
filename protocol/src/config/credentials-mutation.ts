@@ -689,6 +689,14 @@ export function createCredentialsMutationStore(
   async function runMutation(
     signal: AbortSignal | null,
     interactive: boolean,
+    // Whether the body may observe a QUARANTINED current pair. Only the two
+    // operations that HEAL the quarantine (the conditional delete and the
+    // drain) see it; every other mutation is served the same filtered view
+    // `read()` gives — so no mutation outcome can ever return, spend, or
+    // CAS against a pair whose delete is pending. Without this gate, a
+    // rotate could hand the quarantined pair out as `superseded`, or
+    // refresh it into a successor the quarantine no longer names.
+    servesQuarantined: boolean,
     body: (ctx: {
       state: SidecarState;
       file: StoredCredentials | null;
@@ -711,7 +719,13 @@ export function createCredentialsMutationStore(
             credentials: pendingCredentials(pending),
           };
         }
-        const file = await readCredentialsFile(paths.credentialsPath);
+        let file = await readCredentialsFile(paths.credentialsPath);
+        if (!servesQuarantined && file !== null) {
+          const quarantined = await readQuarantinedDigests(qPath);
+          if (quarantined.has(digestToken(file.token))) {
+            file = null;
+          }
+        }
         return body({ state, file });
       },
     );
@@ -767,6 +781,7 @@ export function createCredentialsMutationStore(
   }): Promise<MutationResult> {
     return runMutation(
       args.signal,
+      false,
       false,
       async ({ state, file }): Promise<MutationResult> => {
         // Guards before any spend (R7-C2).
@@ -871,6 +886,7 @@ export function createCredentialsMutationStore(
     return runMutation(
       signal,
       true,
+      false,
       async ({ state, file }): Promise<MutationResult> => {
         // Resolved under the same lock that performs the write: a caller that
         // built `credentials` from a pre-lock read (or omits the refresh token
@@ -909,6 +925,7 @@ export function createCredentialsMutationStore(
     return runMutation(
       signal,
       true,
+      false,
       async ({ state }): Promise<MutationResult> => {
         const commit = await commitMutation({
           paths: commitPaths,
@@ -934,6 +951,9 @@ export function createCredentialsMutationStore(
   ): Promise<MutationResult> {
     return runMutation(
       signal,
+      true,
+      // The quarantine blocks SERVING and SPENDING, never the delete that
+      // heals it — this op must see the quarantined pair to remove it.
       true,
       async ({ state, file }): Promise<MutationResult> => {
         // QUARANTINE FIRST, inside this same lock, before any attempt: from
@@ -984,6 +1004,7 @@ export function createCredentialsMutationStore(
     const result = await runMutation(
       signal,
       true,
+      true,
       async ({ state, file }): Promise<MutationResult> => {
         const quarantined = await readQuarantinedDigests(qPath);
         if (quarantined.size === 0) {
@@ -1022,6 +1043,7 @@ export function createCredentialsMutationStore(
     return runMutation(
       args.signal,
       false,
+      false,
       async ({ state, file }): Promise<MutationResult> => {
         if (file === null) return { outcome: "deleted", credentials: null };
         // A committed/pending sign-out stands: the advisory profile merge must
@@ -1058,6 +1080,7 @@ export function createCredentialsMutationStore(
       args.expectedFile === null ? null : digestCredentials(args.expectedFile);
     return runMutation(
       args.signal,
+      false,
       false,
       async ({ state, file }): Promise<MutationResult> => {
         // Never resurrect a signed-out session, and never overwrite a newer
@@ -1111,6 +1134,7 @@ export function createCredentialsMutationStore(
       args.expectedFile === null ? null : digestCredentials(args.expectedFile);
     return runMutation(
       args.signal,
+      false,
       false,
       async ({ state, file }): Promise<MutationResult> => {
         // Guards before the spend (R7-C2), identical to guardedSignIn: never

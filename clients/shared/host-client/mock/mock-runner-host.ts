@@ -481,7 +481,14 @@ export class MockRunnerHost implements IRunnerHost {
       // In-memory analogue of the locked rotate: the same guards, then a real
       // (test-faked) refresh HTTP call — no file, no lock. Lets gui-app tests
       // drive every rotate outcome by stubbing `fetch` on the authn base URL.
-      const stored = this.tokenStoreEntries.get(MOCK_TOKEN_STORE_KEY) ?? null;
+      // Quarantine-filtered like the real authority's mutation view: a pair
+      // whose conditional delete is pending can never be returned as
+      // `superseded` nor refreshed into a successor.
+      const raw = this.tokenStoreEntries.get(MOCK_TOKEN_STORE_KEY) ?? null;
+      const stored =
+        raw !== null && this.tokenStoreQuarantinedTokens.has(raw.token)
+          ? null
+          : raw;
       if (stored === null) {
         return { outcome: "deleted", pair: null };
       }

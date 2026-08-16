@@ -463,6 +463,58 @@ describe("credentials mutation store", () => {
       expect((await store.read())?.token).toBe(CREDS.token);
     });
 
+    it("rotate never serves or spends a quarantined pair — exact and mismatched expected", async () => {
+      const refresh = refreshStub(rotateOk);
+      const store = makeStore(refresh.fn);
+      await seedSignedIn(store);
+      const qPath = quarantinePath(credentialsPath);
+      writeFileSync(
+        qPath,
+        JSON.stringify({ tokenDigests: [digestOf(CREDS.token)] }),
+      );
+      // (a) exact match: the quarantined pair must not be refresh-spent into
+      // a successor the quarantine no longer names.
+      const exact = await store.rotate({
+        expectedUserId: CREDS.user.id,
+        expectedToken: CREDS.token,
+        refreshTokenOverride: null,
+        signal: null,
+      });
+      expect(exact.outcome).toBe("deleted");
+      expect(exact.credentials).toBeNull();
+      // (b) mismatched expected: the quarantined pair must not be handed out
+      // as `superseded` for the caller to adopt.
+      const mismatch = await store.rotate({
+        expectedUserId: CREDS.user.id,
+        expectedToken: "tok-older",
+        refreshTokenOverride: null,
+        signal: null,
+      });
+      expect(mismatch.outcome).toBe("deleted");
+      expect(mismatch.credentials).toBeNull();
+      // The refresh transport was never invoked for either case.
+      expect(refresh.calls()).toBe(0);
+      // The pair is still durable — the DRAIN heals it, never a rotate.
+      expect(await readCredentialsFile(credentialsPath)).toEqual(CREDS);
+    });
+
+    it("the quarantine blocks serving and spending, never the delete that heals it", async () => {
+      const store = makeStore(refreshStub(rotateOk).fn);
+      await seedSignedIn(store);
+      const qPath = quarantinePath(credentialsPath);
+      writeFileSync(
+        qPath,
+        JSON.stringify({ tokenDigests: [digestOf(CREDS.token)] }),
+      );
+      expect(await store.read()).toBeNull();
+      // signOutIfToken sees the quarantined pair (it is the heal path) and
+      // completes the delete that every other mutation is blind to.
+      const healed = await store.signOutIfToken(CREDS.token, null);
+      expect(healed.outcome).toBe("deleted");
+      expect(await readCredentialsFile(credentialsPath)).toBeNull();
+      expect(existsSync(qPath)).toBe(false);
+    });
+
     it("signOutIfToken quarantines before attempting and clears on landing", async () => {
       const store = makeStore(refreshStub(rotateOk).fn);
       await seedSignedIn(store);

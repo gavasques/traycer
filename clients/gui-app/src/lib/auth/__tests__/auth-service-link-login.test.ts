@@ -573,6 +573,17 @@ describe("link-login attempt fence", () => {
       );
       expect(await realStore.get()).toBeNull();
 
+      // Window B's proactive ROTATE against its older live same-user token,
+      // racing A's failed undo: the mutation view is quarantine-filtered
+      // like the read view, so the rotate is told the session is gone —
+      // never handed the zombie as `superseded`, and nothing is spent.
+      const rotated = await realStore.rotate({
+        userId: "user-1",
+        token: "attempt-older-token",
+      });
+      expect(rotated.outcome).toBe("deleted");
+      expect(rotated.pair).toBeNull();
+
       // Heal: the deletion lands BEFORE either window adopts anything.
       host.tokenStoreConditionalDeleteError = null;
       await vi.advanceTimersByTimeAsync(120_000);

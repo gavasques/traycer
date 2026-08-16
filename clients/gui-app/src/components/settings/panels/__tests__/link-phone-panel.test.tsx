@@ -262,7 +262,7 @@ describe("LinkPhonePanel", () => {
     mocks.useAuthLinkLoginCode.mockReturnValue(queryResultWithCode(Date.now()));
     render(<LinkPhonePanel />);
     expect(screen.getByTestId("link-phone-single-use-hint").textContent).toBe(
-      "Each code links one phone, expires in a minute, and needs your approval here.",
+      "Each code signs in one phone, expires in about a minute, and only takes effect once you approve it here.",
     );
     // The raw code stays available for the manual-entry path.
     expect(screen.getByText("ABCDE-FGHJK")).toBeTruthy();

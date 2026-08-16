@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
 import { QrCode, Smartphone } from "lucide-react";
-import QRCode from "qrcode";
-import { buildLinkLoginQrPayload } from "@traycer-clients/shared/auth/link-login";
 import type { MintLinkLoginCodeResponse } from "@traycer/protocol/auth/link-login";
+import { LinkPhoneQrTile } from "@/components/settings/panels/link-phone-qr-tile";
 import { SettingsPanelShell } from "@/components/settings/settings-panel-shell";
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
 import { Button } from "@/components/ui/button";
@@ -17,59 +16,23 @@ import {
 import { useRespondLinkLoginMutation } from "@/hooks/auth/use-respond-link-login-mutation";
 import { useAuthStore } from "@/stores/auth/auth-store";
 
-/**
- * Renders the current public code as a QR. The data URL is derived state
- * from `code`; the effect exists only because the encoder's API is async.
- */
-function LinkLoginQr(props: { readonly code: string }) {
-  const [dataUrl, setDataUrl] = useState<string | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    QRCode.toDataURL(buildLinkLoginQrPayload(props.code), {
-      errorCorrectionLevel: "M",
-      margin: 2,
-      scale: 8,
-    }).then(
-      (url) => {
-        if (!cancelled) {
-          setDataUrl(url);
-        }
-      },
-      () => {
-        if (!cancelled) {
-          setDataUrl(null);
-        }
-      },
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [props.code]);
-
-  if (dataUrl === null) {
-    return <Skeleton className="aspect-square w-full max-w-64 rounded-lg" />;
-  }
-  return (
-    <img
-      src={dataUrl}
-      alt="Link-a-phone QR code"
-      // The QR is white-on-white by construction; the ring keeps it legible
-      // as a tile on both themes without re-rendering the matrix.
-      className="aspect-square w-full max-w-64 rounded-lg ring-1 ring-border/60"
-    />
-  );
+interface RotationCountdown {
+  readonly secondsLeft: number;
+  /** The same countdown as a 0..1 share, for the tile's draining frame. */
+  readonly remainingFraction: number;
 }
 
 /**
  * Ticks down to the moment the query's interval mints the next code. The
  * rotation happens `expiresIn − LINK_LOGIN_REMINT_MS/1000` seconds before the
  * shown code's expiry, so the target derives from the mint response the panel
- * already holds — no extra requests, just a local 1s clock.
+ * already holds — no extra requests, just a local 1s clock. The tile's frame
+ * and the text below it read this one clock, so they can never disagree.
  */
-function LinkCodeRotation(props: {
+function useRotationCountdown(props: {
   readonly expiresAtEpochSeconds: number;
   readonly expiresInSeconds: number;
-}) {
+}): RotationCountdown {
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
     const timer = setInterval(() => {
@@ -82,14 +45,11 @@ function LinkCodeRotation(props: {
   const rotationLeadMs = props.expiresInSeconds * 1_000 - LINK_LOGIN_REMINT_MS;
   const nextCodeAtMs = props.expiresAtEpochSeconds * 1_000 - rotationLeadMs;
   const secondsLeft = Math.max(0, Math.ceil((nextCodeAtMs - nowMs) / 1_000));
-  return (
-    <p
-      className="text-ui-xs text-muted-foreground tabular-nums"
-      data-testid="link-phone-countdown"
-    >
-      New code in {secondsLeft}s
-    </p>
-  );
+  // Measuring the lead back from expiry makes the gap between two mints the
+  // remint interval itself, whatever TTL the server hands back — so that
+  // interval is the full window the frame drains across.
+  const windowSeconds = LINK_LOGIN_REMINT_MS / 1_000;
+  return { secondsLeft, remainingFraction: secondsLeft / windowSeconds };
 }
 
 /**
@@ -139,8 +99,8 @@ function ConfirmClaimCard(props: {
           {detailLine}
         </p>
         <p className="text-ui-xs text-muted-foreground">
-          Details are approximate. Only approve if you scanned this code
-          yourself.
+          These details are approximate. Approve only if you just scanned this
+          code yourself.
         </p>
       </div>
       <div className="flex w-full items-center justify-center gap-3">
@@ -190,11 +150,10 @@ function AwaitingElsewhereCard() {
     >
       <Smartphone aria-hidden="true" className="text-muted-foreground" />
       <p className="text-ui-sm text-foreground">
-        A sign-in request is awaiting your approval on another device or
-        browser.
+        A phone is waiting for your approval on another device or browser.
       </p>
       <p className="text-ui-xs text-muted-foreground">
-        Approve or reject it there — a new code can be shown here afterwards.
+        Approve or reject it there, then a new code can be shown here.
       </p>
     </div>
   );
@@ -228,8 +187,8 @@ function SupersededCard(props: {
       </p>
       <p className="text-ui-xs text-muted-foreground">
         {props.kind === "rejected"
-          ? "It was rejected from another device or browser."
-          : "It was replaced or expired from another device or browser."}
+          ? "The rejection came from another device or browser. No phone was signed in."
+          : "It expired, or another device or browser replaced it."}
       </p>
       <Button
         variant="outline"
@@ -258,7 +217,7 @@ function ApprovedCard(props: { readonly onRestart: () => void }) {
     >
       <Smartphone aria-hidden="true" className="text-muted-foreground" />
       <p className="text-ui-sm text-foreground">
-        Approved — the phone is signing in now.
+        Approved. The phone is signing in now.
       </p>
       <Button
         variant="outline"
@@ -272,29 +231,38 @@ function ApprovedCard(props: { readonly onRestart: () => void }) {
 }
 
 function ShowingCard(props: { readonly minted: MintLinkLoginCodeResponse }) {
+  const countdown = useRotationCountdown({
+    expiresAtEpochSeconds: props.minted.expires_at,
+    expiresInSeconds: props.minted.expires_in,
+  });
   return (
     <>
-      <LinkLoginQr code={props.minted.code} />
+      <LinkPhoneQrTile
+        code={props.minted.code}
+        remainingFraction={countdown.remainingFraction}
+      />
       <div className="flex w-full max-w-md flex-col items-center gap-2">
         <p className="text-ui-sm text-muted-foreground">
           In the mobile app, choose{" "}
           <span className="font-medium text-foreground">Scan QR code</span> — or
-          type this code:
+          type this code in:
         </p>
         <code className="w-full rounded-md border border-border/60 bg-muted/40 px-3 py-2 text-center font-mono text-ui-xs break-all select-all">
           {props.minted.code}
         </code>
         <div className="flex flex-col items-center gap-0.5">
-          <LinkCodeRotation
-            expiresAtEpochSeconds={props.minted.expires_at}
-            expiresInSeconds={props.minted.expires_in}
-          />
+          <p
+            className="text-ui-xs text-muted-foreground tabular-nums"
+            data-testid="link-phone-countdown"
+          >
+            New code in {countdown.secondsLeft}s
+          </p>
           <p
             className="text-ui-xs text-muted-foreground"
             data-testid="link-phone-single-use-hint"
           >
-            Each code links one phone, expires in a minute, and needs your
-            approval here.
+            Each code signs in one phone, expires in about a minute, and only
+            takes effect once you approve it here.
           </p>
         </div>
       </div>
@@ -390,7 +358,7 @@ export function LinkPhonePanel() {
   return (
     <SettingsPanelShell
       title="Link a phone"
-      description="Sign the Traycer mobile app in by scanning a code from this device. Scanning alone signs nothing in — you approve each phone here before it gets access."
+      description="Sign the Traycer mobile app in by scanning this code. A scan on its own signs nothing in — every phone waits here for your approval first."
     >
       <div className="flex flex-col items-center gap-6 p-6">
         <LinkPhonePanelBody
@@ -439,7 +407,7 @@ function LinkPhonePanelBody(props: {
   if (!props.signedIn) {
     return (
       <p className="text-ui-sm text-muted-foreground">
-        Sign in on this device first — the phone takes over this account.
+        Sign in on this device first — a linked phone signs in to this account.
       </p>
     );
   }
@@ -478,7 +446,7 @@ function LinkPhonePanelBody(props: {
         message={
           props.code.error instanceof Error
             ? props.code.error.message
-            : "Could not mint a link code."
+            : "Could not create a link code."
         }
         retrying={props.code.isRefetching}
         onRetry={props.code.refetch}
@@ -487,7 +455,8 @@ function LinkPhonePanelBody(props: {
   }
   return (
     <div className="flex flex-col items-center gap-3">
-      <Skeleton className="aspect-square w-full max-w-64 rounded-lg" />
+      {/* Same footprint and radius as the tile, so the code lands in place. */}
+      <Skeleton className="aspect-square w-full max-w-64 rounded-xl" />
       <AgentSpinningDots
         className={undefined}
         testId={undefined}

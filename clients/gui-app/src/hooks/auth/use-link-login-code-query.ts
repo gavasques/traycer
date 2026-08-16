@@ -15,6 +15,22 @@ import { useAuthStore } from "@/stores/auth/auth-store";
 // can derive the rotation moment from the same cadence rather than a copy.
 export const LINK_LOGIN_REMINT_MS = 50_000;
 
+function mintFailureMessage(
+  kind:
+    "unauthorized" | "claim-pending" | "no-session-family" | "network-error",
+): string {
+  switch (kind) {
+    case "unauthorized":
+      return "Your session could not authorize a link code.";
+    case "claim-pending":
+      return "A sign-in request is already awaiting your approval.";
+    case "no-session-family":
+      return "This session cannot mint link codes — sign in again first.";
+    case "network-error":
+      return "Could not reach the sign-in service.";
+  }
+}
+
 function linkLoginCodeQueryOptions(
   auth: AuthService | null,
   userId: string | null,
@@ -33,12 +49,11 @@ function linkLoginCodeQueryOptions(
       const result = await auth.mintLinkLoginCode(signal);
       if (result.kind !== "ok") {
         // Thrown, not returned: the panel is an inline-error surface and the
-        // query's error state is its retry affordance.
-        throw new Error(
-          result.kind === "unauthorized"
-            ? "Your session could not authorize a link code."
-            : "Could not reach the sign-in service.",
-        );
+        // query's error state is its retry affordance. `claim-pending` is
+        // benign (the status poll surfaces the claim card within a tick) but
+        // still not a code to display, so it throws the same way — the panel
+        // keeps showing the previous data it already holds.
+        throw new Error(mintFailureMessage(result.kind));
       }
       return result.response;
     },

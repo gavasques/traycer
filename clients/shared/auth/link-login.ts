@@ -39,6 +39,13 @@ const NORMALIZED_CODE_PATTERN = /^[0-9A-HJKMNP-TV-Z]{10}$/;
 export type MintLinkLoginCodeFetchResult =
   | { readonly kind: "ok"; readonly response: MintLinkLoginCodeResponse }
   | { readonly kind: "unauthorized" }
+  /**
+   * A claim on the caller's chain is awaiting the human decision (409):
+   * benign — the surface should show/await the claim state, not an error.
+   */
+  | { readonly kind: "claim-pending" }
+  /** The caller's credential carries no session family (400): terminal. */
+  | { readonly kind: "no-session-family" }
   | { readonly kind: "network-error" };
 
 export type ClaimLinkLoginCodeFetchResult =
@@ -188,6 +195,12 @@ export async function mintLinkLoginCodeViaHttp(
   }
   if (response.status === 401 || response.status === 403) {
     return { kind: "unauthorized" };
+  }
+  if (response.status === 409) {
+    return { kind: "claim-pending" };
+  }
+  if (response.status === 400) {
+    return { kind: "no-session-family" };
   }
   if (response.status < 200 || response.status >= 300) {
     return { kind: "network-error" };

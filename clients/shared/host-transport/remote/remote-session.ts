@@ -165,6 +165,37 @@ function qosForStreamMethod(method: string): QosClassValue {
  */
 type ConnectionLossProvenance = "host-transport-plane" | "not-host-evidence";
 
+/**
+ * Whether a host-sent session FATAL is evidence about the HOST's transport
+ * plane, or about the credential plane standing between us and it.
+ *
+ * The durable classification rule decides this, not the frame's severity or
+ * its `retryable` flag: `confirmed-refusal` requires evidence from the HOST's
+ * transport plane, and an authn/credential rejection says nothing about
+ * whether the host is alive - it is alive enough to have rejected us.
+ *
+ * `UNAUTHORIZED` is the credential plane's code on this wire, and it is
+ * checked by CODE rather than by any recovery flag because the two are
+ * orthogonal: the same code arrives both retryable (the host's JWKS lookup
+ * timed out) and terminal (our bearer is genuinely bad), and neither is host
+ * evidence.
+ *
+ * Deliberately narrow rather than a guessed "credential family": every other
+ * fatal on this path - a relay policy close, a malformed frame, a phase
+ * deadline, and `HOST_RESTARTING` - IS the host's own plane answering, and
+ * widening this predicate on suspicion would silently stop counting real
+ * deaths. A new credential-plane code gets added here explicitly, with the
+ * same reasoning written down.
+ */
+function sessionFatalProvenance(
+  details: FatalErrorDetails,
+): ConnectionLossProvenance {
+  return details.code === "UNAUTHORIZED"
+    ? "not-host-evidence"
+    : "host-transport-plane";
+}
+
+
 export interface RemoteSessionOptions<
   RpcRegistry extends VersionedRpcRegistry,
   StreamRegistry extends VersionedStreamRpcRegistry,
@@ -1928,15 +1959,24 @@ export class RemoteSession<
     // the expected-outage HOLD above the death streak the loss feeds. Two
     // honest reports beat one that tries to mean both.
     this.reportRestartIntentIfPresent(details);
+    // Classified BEFORE the retryable arm, and that order is the whole point.
+    // `retryable` says how to RECOVER; it says nothing about what the failure
+    // is evidence OF, and the two are independent. A host whose own JWKS fetch
+    // times out while verifying our bearer answers `UNAUTHORIZED` WITH
+    // `retryable: true` - it is alive and talking, and the failure is on the
+    // credential plane. Reading the retryable flag first and calling every
+    // such drop host evidence let a healthy host bank a confirmed refusal per
+    // reconnect attempt, and three of them reach the death streak and fail the
+    // window away from a host that never stopped answering. That is the
+    // false-Offline class invariant 5 exists to prevent, reintroduced through
+    // the very arm whose own comment says "a prior genuine UNAUTHORIZED
+    // episode" flows through here.
+    const provenance = sessionFatalProvenance(details);
     if (details.retryable === true) {
       // A transient host blip must not count toward the credential give-up
       // bound - clear any streak left by a prior genuine UNAUTHORIZED episode.
       this.noProgressUnauthorizedReconnects = 0;
-      this.handleConnectionLost(
-        generation,
-        "session-fatal-retryable",
-        "host-transport-plane",
-      );
+      this.handleConnectionLost(generation, "session-fatal-retryable", provenance);
       return;
     }
     const auth = this.revalidator();

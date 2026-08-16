@@ -91,8 +91,18 @@ export const HOST_RESTARTING_FATAL_CODE = "HOST_RESTARTING";
  * new mux frame type throws `MuxFrameDecodeError` in `decodeMuxFrame`
  * (unknown type bytes are rejected, not skipped), and a new `/stream` control
  * kind falls through to the application-frame envelope, whose required
- * `hasBinaryPayload` is absent - tearing the socket down as malformed. A new
- * METHOD name is barred outright by the two-sided release invariant.
+ * `hasBinaryPayload` is absent - tearing the socket down as malformed.
+ *
+ * A new METHOD name does not fit either, though the reason is narrower than
+ * "the release invariant forbids it" - a new OPTIONAL stream method is
+ * additive and degrades quietly, as this repo's own two-sided tests show. It
+ * fails for a different reason: a method is something a client SUBSCRIBES to,
+ * and this frame has to reach peers that already hold whatever sessions they
+ * hold, at the instant the host is going down. A host cannot make an attached
+ * client subscribe to a new method retroactively, so the ones that never did
+ * would hear nothing. Putting it on the FLOOR instead - so every peer must
+ * serve it - is what the release invariant genuinely bars, since a floor
+ * addition breaks every host below the version bump.
  *
  * `tombstoneId` is minted once per teardown episode and is IDENTICAL on every
  * connection and both planes. That is what makes the authority's

@@ -855,8 +855,19 @@ describe("RemoteSession UNAUTHORIZED session-fatal recovery", () => {
             }
           : { kind: "ack" };
       const revalidate = vi.fn(() => Promise.resolve("rotated" as const));
-      const session = buildSession(relay, lease, {
-        revalidateForReconnect: revalidate,
+      // A RECORDING reporter, not `NO_TRANSPORT_EVIDENCE`. This test modelled
+      // the exact trigger shape for a real classification defect and could not
+      // see it, because an inert reporter records nothing to assert on: the
+      // session reconnected correctly the whole time while filing a confirmed
+      // refusal against a host that was answering. A test that drives the
+      // right scenario through a blind instrument reads as coverage and is
+      // not.
+      const recorder = new RecordingEvidence();
+      const session = new RemoteSession({
+        ...buildSessionOptions(relay, lease, {
+          revalidateForReconnect: revalidate,
+        }),
+        evidence: recorder,
       });
       try {
         session.start();
@@ -864,6 +875,18 @@ describe("RemoteSession UNAUTHORIZED session-fatal recovery", () => {
         expect(relay.openBearers).toEqual(["valid-token", "valid-token"]);
         expect(revalidate).not.toHaveBeenCalled();
         expect(relay.errors).toEqual([]);
+
+        // THE CLASSIFICATION: a retryable UNAUTHORIZED is the credential plane
+        // failing in front of a live host. It must never be recorded as a
+        // confirmed refusal - three of those reach the death streak and fail
+        // the window away from a host that never stopped answering.
+        expect(recorder.callsNamed("reportDialRefusal")).toEqual([]);
+        // The control, so the empty set above is a real exclusion rather than
+        // a reporter that was never called at all: the drop WAS reported, as
+        // indeterminate, against this host.
+        expect(
+          recorder.callsNamed("reportDialIndeterminate").map((c) => c.hostId),
+        ).toEqual(["host-1"]);
       } finally {
         session.close();
       }

@@ -225,9 +225,15 @@ describe("HostClient", () => {
   // dropped. Both moved DOWN a layer, because "the directory row changed" is
   // now the directory's event to raise, not this client's:
   //   - R-1 (a remote host's public key rotating must reach that host's
-  //     consumers). Nothing re-binds, so a rotation is an ordinary row change;
-  //     `subscribeHostRowChanged` is what carries it. Not covered here, and
-  //     not covered at that layer either - a named residual of P4.2.
+  //     consumers). Nothing re-binds, so a rotation is an ordinary row change
+  //     and the registry's row signal is what carries it. That half IS
+  //     covered, in two places, both proven live by neutering the arm:
+  //     `stream-runtime.test.tsx` rebuilds the client and closes the stale
+  //     session on a rotation, and `registry-row-changed-signal.test.tsx`
+  //     re-projects the owner identity key off the same signal.
+  //     What did NOT survive is the query-scope sweep: `bind()` invalidated
+  //     the rotated host's scope with `refetchActive`, the registry never
+  //     invalidates, and so that sweep is GONE rather than untested.
   //   - "a coarse move that is not evidence of a refusal must not churn the
   //     transport". Vacuous at this layer now (no re-bind, no churn to
   //     suppress). Its live half - the shell's `busy` projecting to `dialable`

@@ -334,10 +334,20 @@ function releaseRecord(record: HostRecord): void {
 }
 
 /**
- * Subscribes to ONE host's row/lease transitions. The per-host replacement for
- * `HostClient.bind()`'s change event: a consumer pinned to a host id by
- * `createRequesterForHostId` re-reads when the named host's row lands, and is
- * told nothing when some other host's row moves.
+ * Subscribes to ONE host's row/lease transitions: a consumer that can NAME its
+ * host is woken when that host's row or lease moves, and told nothing when any
+ * other host's does. Its callers are the ones holding a host id already - a
+ * directory-entry read, the landing terminal panel's reconciliation, and every
+ * lease's own `onChanged`.
+ *
+ * Contrast {@link subscribeAnyHostRowChanged}, which wakes unconditionally
+ * because its callers CANNOT name their host - the row not existing yet is the
+ * thing they are waiting on. That is the arm the three reactive projections
+ * ride; precision there would mean never waking for the row that matters.
+ *
+ * Historically this was the per-host replacement for `HostClient.bind()`'s
+ * change event, which is why it exists at all - but it no longer needs that
+ * comparison to be understood, and the slot has been gone since P4.2.
  */
 export function subscribeHostRowChanged(
   hostId: string,

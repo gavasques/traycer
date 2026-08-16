@@ -13,12 +13,14 @@ import {
   type IHostQueryInvalidator,
 } from "@traycer-clients/shared/host-client/host-client";
 import type { HostDirectoryEntry } from "@traycer-clients/shared/host-client/host-directory";
+import type { RemoteHostDirectoryEntry } from "@traycer-clients/shared/host-client/remote-fetcher";
 import {
   installHostConnectionRegistrySource,
   resetHostConnectionRegistryForTest,
 } from "@traycer-clients/shared/host-client/host-connection-registry";
 import { MockHostMessenger } from "@traycer-clients/shared/host-client/mock/mock-host-messenger";
 import { useReactiveHostReadiness } from "@/hooks/host/use-reactive-host-readiness";
+import { useReactiveOwnerIdentityKey } from "@/hooks/host/use-reactive-owner-identity-key";
 
 /**
  * THE P4.2 HANDOFF INSTRUMENT (redesign P4.1), now discharged.
@@ -78,6 +80,32 @@ const LATE_HOST: HostDirectoryEntry = {
   transportDialability: "dialable",
 };
 
+/**
+ * A fully-formed REMOTE row, because the additive case below turns on a field
+ * only a remote entry carries. Its public key is what R-1 rotates.
+ */
+const ROTATING_HOST_ID = "rotating-host";
+const rotatingHost = (publicKey: string): RemoteHostDirectoryEntry => ({
+  hostId: ROTATING_HOST_ID,
+  label: "Rotating Host",
+  kind: "remote",
+  // Every remote host shares one fixed relay attach URL, so a rotation is a
+  // same-URL event by construction - the key is the only thing that moves.
+  websocketUrl: "wss://rotating.traycer.invalid/rpc",
+  version: "0.0.0-mock",
+  transportDialability: "dialable",
+  publicKey,
+  relayFuseGrace: false,
+  remoteStatus: {
+    connectivity: "connectable",
+    viewerReachability: "ok",
+    clientCloud: "ok",
+    updateState: "current",
+    appVersion: null,
+    lastSeenAt: null,
+  },
+});
+
 class NoopInvalidator implements IHostQueryInvalidator {
   invalidateHostScope(
     _hostId: string | null,
@@ -118,6 +146,12 @@ class LateArrivingDirectory {
    * pid the entry does not carry).
    */
   emitUnchanged(): void {
+    this.emit();
+  }
+
+  /** Seeds/rotates the remote row R-1 is about, then says so. */
+  publishRotatingHost(publicKey: string): void {
+    this.entries = [rotatingHost(publicKey)];
     this.emit();
   }
 
@@ -214,5 +248,50 @@ describe("the registry's row-changed signal (P4.2 handoff)", () => {
       directory.emitUnchanged();
     });
     expect(renders).toBe(rendersAfterMount);
+  });
+
+  /**
+   * THE SECOND PROJECTION, and the reason this case is additive rather than a
+   * duplicate: the two cases above drive `useReactiveHostReadiness`. All three
+   * projections that lost their `client.onChange` arm in P4.2 ride the SAME
+   * coarse subscription (`subscribeAnyHostRowChanged`), so what distinguishes
+   * this case is not the arm - it is the projection reading off it and the
+   * stimulus that moves it. One projection being carried is not evidence that
+   * another is: they compose different snapshots from different fields.
+   *
+   * The stimulus is R-1: a same-`hostId` public-key rotation
+   * (re-enrollment / corruption recovery). It is worth pinning HERE
+   * specifically because P4.2 deleted the only case that covered it - the
+   * client-layer test asserted `bind()` re-binding a rotated entry, and that
+   * mechanism is gone. A rotation is now an ordinary row change and this is
+   * the arm that has to carry it; nothing else asserts that it does.
+   */
+  it("re-projects the owner identity on an R-1 public-key rotation, through the COARSE arm", () => {
+    const directory = new LateArrivingDirectory();
+    const { client } = buildPinnedRequester(directory);
+    directory.publishRotatingHost("pubkey-a");
+    installHostConnectionRegistrySource({
+      directory: {
+        findById: (hostId) => directory.findById(hostId),
+        onDirectoryChanged: (listener) => directory.onChange(listener),
+      },
+      leases: null,
+    });
+    const pinnedToRotating = client.createRequesterForHostId(ROTATING_HOST_ID);
+
+    const { result } = renderHook(() =>
+      useReactiveOwnerIdentityKey(pinnedToRotating),
+    );
+    const before = result.current;
+    expect(before).not.toBeNull();
+    expect(before).toContain("pubkey-a");
+
+    // ONLY the key moves: same id, same relay URL, same version, same status.
+    act(() => {
+      directory.publishRotatingHost("pubkey-b");
+    });
+
+    expect(result.current).not.toBe(before);
+    expect(result.current).toContain("pubkey-b");
   });
 });

@@ -1,15 +1,9 @@
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-  type Mock,
-} from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   linkLoginStatusViaHttp,
+  mintLinkLoginCodeViaHttp,
   respondLinkLoginViaHttp,
+  type MintLinkLoginCodeFetchResult,
 } from "../../../../shared/auth/link-login";
 import { runLinkPhoneFlow } from "../link-phone-flow";
 import { validateStoredCredentials } from "../validate";
@@ -24,8 +18,8 @@ vi.mock("qrcode", () => ({
   default: { toString: vi.fn(() => Promise.resolve("[qr]")) },
 }));
 
-// Mint is the CLI's own `fetch` (it needs the 409/400 statuses the shared
-// client folds away), so it is stubbed at the global instead.
+// All three authenticated calls go through the shared client. Only the QR
+// payload builder stays real, since the printed payload is asserted on.
 vi.mock("../../../../shared/auth/link-login", async (importOriginal) => {
   const actual =
     await importOriginal<
@@ -33,6 +27,7 @@ vi.mock("../../../../shared/auth/link-login", async (importOriginal) => {
     >();
   return {
     ...actual,
+    mintLinkLoginCodeViaHttp: vi.fn(),
     linkLoginStatusViaHttp: vi.fn(),
     respondLinkLoginViaHttp: vi.fn(),
   };
@@ -51,6 +46,7 @@ vi.mock("node:readline", () => ({
   }),
 }));
 
+const mintMock = vi.mocked(mintLinkLoginCodeViaHttp);
 const statusMock = vi.mocked(linkLoginStatusViaHttp);
 const respondMock = vi.mocked(respondLinkLoginViaHttp);
 const credentialsMock = vi.mocked(validateStoredCredentials);
@@ -94,35 +90,14 @@ function printed(ctx: CommandContext): string {
   return vi.mocked(ctx.output.humanRequired).mock.calls.join("\n");
 }
 
-/**
- * The three fields the mint path reads off a `fetch` response. Declaring them
- * beats casting a literal to the full DOM `Response`, and it documents exactly
- * how much of the interface the flow depends on.
- */
-interface MintResponseStub {
-  readonly ok: boolean;
-  readonly status: number;
-  readonly json: () => Promise<unknown>;
-}
-
-function mintResponse(code: string): MintResponseStub {
+function mintedCode(code: string): MintLinkLoginCodeFetchResult {
   return {
-    ok: true,
-    status: 200,
-    json: () =>
-      Promise.resolve({
-        code,
-        expires_in: 60,
-        expires_at: Math.floor(Date.now() / 1_000) + 60,
-      }),
-  };
-}
-
-function mintRefusal(status: number): MintResponseStub {
-  return {
-    ok: false,
-    status,
-    json: () => Promise.resolve({ error: "refused" }),
+    kind: "ok",
+    response: {
+      code,
+      expires_in: 60,
+      expires_at: Math.floor(Date.now() / 1_000) + 60,
+    },
   };
 }
 
@@ -144,7 +119,6 @@ const UNCLAIMED = {
   response: { status: "unclaimed" as const, claimant: null },
 };
 
-let fetchMock: Mock<() => Promise<MintResponseStub>>;
 let originalIsTty: boolean | undefined;
 
 beforeEach(() => {
@@ -165,15 +139,13 @@ beforeEach(() => {
       user: { id: "u1", email: "ada@traycer.ai", name: "Ada" },
     },
   });
-  fetchMock = vi.fn(() => Promise.resolve(mintResponse("ABCDE-FGHJK")));
-  vi.stubGlobal("fetch", fetchMock);
+  mintMock.mockResolvedValue(mintedCode("ABCDE-FGHJK"));
   statusMock.mockResolvedValue(UNCLAIMED);
   respondMock.mockResolvedValue({ kind: "ok" });
 });
 
 afterEach(() => {
   vi.useRealTimers();
-  vi.unstubAllGlobals();
   Object.defineProperty(process.stdin, "isTTY", {
     configurable: true,
     value: originalIsTty,
@@ -279,7 +251,7 @@ describe("runLinkPhoneFlow", () => {
   });
 
   it("explains a mint refused while a claim already awaits a decision", async () => {
-    fetchMock.mockResolvedValue(mintRefusal(409));
+    mintMock.mockResolvedValue({ kind: "claim-pending" });
 
     const result = await runWithPolls(interactiveCtx(), 1);
 
@@ -290,9 +262,9 @@ describe("runLinkPhoneFlow", () => {
   });
 
   it("rotates the code while nothing claims it", async () => {
-    fetchMock
-      .mockResolvedValueOnce(mintResponse("ABCDE-FGHJK"))
-      .mockResolvedValue(mintResponse("KLMNP-QRSTV"));
+    mintMock
+      .mockResolvedValueOnce(mintedCode("ABCDE-FGHJK"))
+      .mockResolvedValue(mintedCode("KLMNP-QRSTV"));
     const ctx = interactiveCtx();
 
     const settled = Promise.allSettled([
@@ -303,7 +275,7 @@ describe("runLinkPhoneFlow", () => {
     await vi.advanceTimersByTimeAsync(POLL_MS);
     await settled;
 
-    expect(fetchMock.mock.calls.length).toBeGreaterThan(1);
+    expect(mintMock.mock.calls.length).toBeGreaterThan(1);
     expect(printed(ctx)).toContain("KLMNP-QRSTV");
     // The watch follows the rotation onto the code now on screen.
     expect(statusMock.mock.calls.at(-1)?.[2]).toBe("KLMNP-QRSTV");
@@ -315,7 +287,7 @@ describe("runLinkPhoneFlow", () => {
     await expect(
       runLinkPhoneFlow(ctx, { showQr: true }),
     ).rejects.toThrowError(/interactive terminal/);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mintMock).not.toHaveBeenCalled();
   });
 
   it("refuses when stdin is not a terminal", async () => {
@@ -335,6 +307,6 @@ describe("runLinkPhoneFlow", () => {
     await expect(
       runLinkPhoneFlow(interactiveCtx(), { showQr: true }),
     ).rejects.toThrowError(/Not logged in/);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mintMock).not.toHaveBeenCalled();
   });
 });

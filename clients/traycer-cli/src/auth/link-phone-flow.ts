@@ -3,12 +3,13 @@ import QRCode from "qrcode";
 import {
   buildLinkLoginQrPayload,
   linkLoginStatusViaHttp,
+  mintLinkLoginCodeViaHttp,
   respondLinkLoginViaHttp,
+  type MintLinkLoginCodeFetchResult,
 } from "../../../shared/auth/link-login";
-import {
-  mintLinkLoginCodeResponseSchema,
-  type LinkLoginStatusResponse,
-  type MintLinkLoginCodeResponse,
+import type {
+  LinkLoginStatusResponse,
+  MintLinkLoginCodeResponse,
 } from "@traycer/protocol/auth/link-login";
 import { config } from "../config";
 import { CLI_ERROR_CODES, cliError } from "../runner/errors";
@@ -37,8 +38,6 @@ const LINK_PHONE_REMINT_MS = 50_000;
 // while the phone is still in the user's hand.
 const LINK_PHONE_POLL_INTERVAL_MS = 2_000;
 
-const LINK_PHONE_MINT_TIMEOUT_MS = 10_000;
-
 export type LinkPhoneDecision = "approved" | "rejected";
 
 export interface LinkPhoneResult {
@@ -48,61 +47,6 @@ export interface LinkPhoneResult {
     readonly location: string | null;
     readonly userAgent: string | null;
   };
-}
-
-type MintOutcome =
-  | { readonly kind: "ok"; readonly response: MintLinkLoginCodeResponse }
-  | { readonly kind: "claim-pending" }
-  | { readonly kind: "no-session-family" }
-  | { readonly kind: "unauthorized" }
-  | { readonly kind: "network-error" };
-
-/**
- * Mints a public code under the caller's bearer.
- *
- * Deliberately not `mintLinkLoginCodeViaHttp` from the shared client: that
- * mapping folds 409 and 400 into `network-error`, and this surface must tell
- * the human the difference between "a claim is already awaiting your decision"
- * (wait, or answer it where it was raised), "this credential carries no session
- * family" (sign in again) and "the service is unreachable" (retry). Fold this
- * back into the shared client when it grows those states.
- */
-async function mintLinkLoginCode(
-  authnBaseUrl: string,
-  bearerToken: string,
-): Promise<MintOutcome> {
-  let response: Response;
-  try {
-    response = await fetch(new URL("api/v3/auth/link/mint", `${authnBaseUrl.replace(/\/*$/, "")}/`), {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${bearerToken}`,
-        Accept: "application/json",
-        "Content-Type": "application/json",
-      },
-      body: "{}",
-      signal: AbortSignal.timeout(LINK_PHONE_MINT_TIMEOUT_MS),
-    });
-  } catch {
-    return { kind: "network-error" };
-  }
-  if (response.status === 409) {
-    return { kind: "claim-pending" };
-  }
-  if (response.status === 400) {
-    return { kind: "no-session-family" };
-  }
-  if (response.status === 401 || response.status === 403) {
-    return { kind: "unauthorized" };
-  }
-  if (!response.ok) {
-    return { kind: "network-error" };
-  }
-  const body: unknown = await response.json().catch(() => null);
-  const parsed = mintLinkLoginCodeResponseSchema.safeParse(body);
-  return parsed.success
-    ? { kind: "ok", response: parsed.data }
-    : { kind: "network-error" };
 }
 
 /**
@@ -224,7 +168,7 @@ async function requireBearerToken(): Promise<string> {
   return validation.credentials.token;
 }
 
-function mintFailure(outcome: MintOutcome): never {
+function mintFailure(outcome: MintLinkLoginCodeFetchResult): never {
   switch (outcome.kind) {
     case "claim-pending":
       throw cliError({
@@ -311,7 +255,11 @@ async function watchUntilClaimed(
   const { authnBaseUrl } = config;
 
   const mintAndPrint = async (): Promise<WatchedCode> => {
-    const outcome = await mintLinkLoginCode(authnBaseUrl, bearerToken);
+    const outcome = await mintLinkLoginCodeViaHttp(
+      authnBaseUrl,
+      bearerToken,
+      null,
+    );
     if (outcome.kind !== "ok") {
       mintFailure(outcome);
     }

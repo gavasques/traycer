@@ -329,6 +329,69 @@ describe("credentials mutation store", () => {
     });
   });
 
+  describe("signOutIfToken (conditional delete under the file lock)", () => {
+    it("deletes only an exact token match; anything else is kept as superseded", async () => {
+      const store = makeStore(refreshStub(rotateOk).fn);
+      await seedSignedIn(store);
+      const kept = await store.signOutIfToken("tok-other", null);
+      expect(kept.outcome).toBe("superseded");
+      expect(kept.credentials?.token).toBe("tok-0");
+      expect(await readCredentialsFile(credentialsPath)).toEqual(CREDS);
+
+      const deleted = await store.signOutIfToken("tok-0", null);
+      expect(deleted.outcome).toBe("deleted");
+      expect(await readCredentialsFile(credentialsPath)).toBeNull();
+
+      // Absent file: nothing to undo, reported as kept, never an error.
+      const absent = await store.signOutIfToken("tok-0", null);
+      expect(absent.outcome).toBe("superseded");
+      expect(absent.credentials).toBeNull();
+    });
+
+    it("window A's stale undo vs window B's signIn on the shared file: B survives either order", async () => {
+      // Two independent stores on the SAME paths model two windows' main-side
+      // mutations serialized only by the real file lock.
+      const storeA = makeStore(refreshStub(rotateOk).fn);
+      const storeB = makeStore(refreshStub(rotateOk).fn);
+      const bPair: StoredCredentials = {
+        ...CREDS,
+        token: "tok-b",
+        refreshToken: "rt-b",
+      };
+
+      // Order 1: B's sign-in lands first. A's conditional delete compares
+      // INSIDE its own lock acquisition, observes B's pair, and keeps it —
+      // the interleave that a composed get()+delete() would have destroyed.
+      await storeA.signIn(CREDS, false, null);
+      expect((await storeB.signIn(bPair, false, null)).outcome).toBe("applied");
+      const staleUndo = await storeA.signOutIfToken("tok-0", null);
+      expect(staleUndo.outcome).toBe("superseded");
+      expect((await readCredentialsFile(credentialsPath))?.token).toBe("tok-b");
+
+      // Order 2: A's undo lands first (deletes its own stale pair), then B
+      // signs in — B's pair is the end state either way.
+      rmSync(credentialsPath, { force: true });
+      await storeA.signIn(CREDS, false, null);
+      expect((await storeA.signOutIfToken("tok-0", null)).outcome).toBe(
+        "deleted",
+      );
+      expect((await storeB.signIn(bPair, false, null)).outcome).toBe("applied");
+      expect((await readCredentialsFile(credentialsPath))?.token).toBe("tok-b");
+
+      // And concurrently, for good measure: whichever side wins the lock,
+      // the file never ends up without B's pair.
+      rmSync(credentialsPath, { force: true });
+      await storeA.signIn(CREDS, false, null);
+      const [bOut, aOut] = await Promise.all([
+        storeB.signIn(bPair, false, null),
+        storeA.signOutIfToken("tok-0", null),
+      ]);
+      expect(bOut.outcome).toBe("applied");
+      expect(["deleted", "superseded"]).toContain(aOut.outcome);
+      expect((await readCredentialsFile(credentialsPath))?.token).toBe("tok-b");
+    });
+  });
+
   describe("updateProfile", () => {
     it("merges the user block when the token matches, leaving tokens untouched", async () => {
       const store = makeStore(refreshStub(rotateOk).fn);

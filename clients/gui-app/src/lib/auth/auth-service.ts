@@ -455,6 +455,11 @@ export class AuthService {
   private sessionRecoveryTimer: number | null = null;
   private sessionRecoveryDelayMs: number = SESSION_RECOVERY_INITIAL_DELAY_MS;
   private sessionRecoveryAttempt: number = 0;
+  // A superseded-save undo whose conditional delete FAILED: the stale pair is
+  // still durable. The recovery loop must complete this delete before it may
+  // adopt anything from the store — adopting first would resurrect exactly
+  // the zombie credential the attempt fence dropped.
+  private pendingUndoToken: string | null = null;
 
   constructor(options: AuthServiceOptions) {
     this.runnerHost = options.runnerHost;
@@ -996,6 +1001,12 @@ export class AuthService {
       // Never race an interactive sign-in; its success settles the loop via
       // `applySignedIn`, its failure leaves the next tick to try again.
       this.scheduleSessionRecovery("recovery:interactive-attempt");
+      return;
+    }
+    // A failed superseded-save undo left a stale pair durable. Complete that
+    // conditional delete BEFORE reading anything to adopt — otherwise this
+    // very loop would validate and re-adopt the zombie the fence dropped.
+    if (await this.pendingUndoBlocksRecovery(generation)) {
       return;
     }
     let stored: StoredCredentials | null;
@@ -2536,19 +2547,66 @@ export class AuthService {
 
   /**
    * Undo for a credential save whose attempt was superseded mid-write: an
-   * atomic compare-and-delete on the store's mutation chain removes the pair
-   * ONLY if the store still holds exactly the token this stale finalization
-   * wrote — a successor's `signIn` serializes wholly before or after the
-   * compare-and-delete, so its pair can never be destroyed by a stale
-   * comparison. A failed undo has a real consequence (the stale pair would
-   * rehydrate on a later launch if the successor fails), so it surfaces
-   * through the shared store-fault seam instead of being swallowed.
+   * atomic compare-and-delete at the store's own authority (main's file
+   * lock) removes the pair ONLY if the store still holds exactly the token
+   * this stale finalization wrote — any other window's `signIn` serializes
+   * wholly before or after it, so a successor's pair can never be destroyed
+   * by a stale comparison. A failed undo has a real consequence (the stale
+   * pair would rehydrate on a later launch if the successor fails), so it
+   * surfaces through the shared store-fault seam AND is remembered: the
+   * recovery loop completes the delete before adopting anything durable.
    */
   private async undoSupersededCredentialSave(token: string): Promise<void> {
     try {
       await this.tokenStore.deleteIfToken(token);
     } catch (error) {
+      this.pendingUndoToken = token;
       this.markStoreUnavailable("undo-superseded-save", error);
+    }
+  }
+
+  /**
+   * Completes an outstanding failed undo before recovery may adopt from the
+   * store. `true` means the store is clean (no pending undo, or the retry
+   * just settled it — `kept` is settled too: someone else's pair owns the
+   * file now and the stale one is gone). `false` means the conditional
+   * delete is STILL failing and nothing durable may be adopted this tick.
+   */
+  /**
+   * Recovery-tick guard around {@link retryPendingCredentialUndo}: while the
+   * pending conditional delete cannot land, adoption is blocked and the loop
+   * re-arms (identity-fenced). Extracted so the tick stays under the
+   * complexity ceiling.
+   */
+  private async pendingUndoBlocksRecovery(
+    generation: number,
+  ): Promise<boolean> {
+    if (await this.retryPendingCredentialUndo()) {
+      return false;
+    }
+    if (this.isIdentityCurrent(generation)) {
+      this.scheduleSessionRecovery("recovery:pending-undo");
+    }
+    return true;
+  }
+
+  private async retryPendingCredentialUndo(): Promise<boolean> {
+    const token = this.pendingUndoToken;
+    if (token === null) {
+      return true;
+    }
+    try {
+      const result = await this.tokenStore.deleteIfToken(token);
+      this.pendingUndoToken = null;
+      appLogger.info("[auth] completed pending superseded-save undo", {
+        result,
+      });
+      return true;
+    } catch (error) {
+      appLogger.warn("[auth] pending superseded-save undo still failing", {
+        error: describeLogError(error),
+      });
+      return false;
     }
   }
 

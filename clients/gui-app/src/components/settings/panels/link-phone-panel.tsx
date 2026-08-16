@@ -253,17 +253,16 @@ function MintErrorCard(props: {
 }
 
 /**
- * Settings → Link a phone, confirm-gated. Shows a rotating public code
- * (QR + typeable text); when a phone claims it — the CURRENT code or the
- * previous one still inside its rotation grace — the QR swaps for an
+ * Settings → Link a phone, confirm-gated. Shows the rotating public code
+ * (QR + typeable text); when a phone claims it the QR swaps for an
  * Approve/Reject confirmation carrying the claimant's server-observed
  * metadata. Approval — never the scan — is what signs the phone in, and it
  * releases the session only to the claimant the user just reviewed.
  *
- * The panel watches every code it minted that could still be claimed (the
- * engine keeps a claimed record alive for its 2-minute approve window even
- * after the QR rotates), so first-claim-wins holds across the whole rotating
- * attempt, not per displayed alias.
+ * The server enforces ONE live code per user: each mint atomically
+ * supersedes the previous unclaimed record, and minting is refused while a
+ * claim awaits this decision — so the displayed code is the only one that
+ * can ever be claimed, and the panel watches exactly it.
  */
 export function LinkPhonePanel() {
   const signedIn = useAuthStore((s) => s.status === "signed-in");

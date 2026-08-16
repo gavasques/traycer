@@ -985,6 +985,15 @@ export interface ITokenStore {
     readonly token: string;
   }): Promise<TokenRotateResult>;
   delete(): Promise<void>;
+  /**
+   * Conditional delete for undoing a superseded sign-in's write: removes the
+   * stored pair ONLY if it still holds exactly `expectedToken`, with the
+   * comparison and the delete atomic at the store's own authority (the
+   * main-process file lock) — never composed from `get()` + `delete()` by a
+   * caller. `kept` means the store held nothing or someone else's pair.
+   * Rejects when the store cannot decide or the delete cannot land.
+   */
+  deleteIfToken(expectedToken: string): Promise<"deleted" | "kept">;
   subscribe(listener: (change: TokenStoreChange) => void): Disposable;
   /**
    * One-time migration of the legacy per-window localStorage token pair onto the

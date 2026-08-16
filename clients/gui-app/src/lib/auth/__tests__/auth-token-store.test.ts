@@ -1,9 +1,9 @@
 /**
- * The mutation-chain atomicity of `deleteIfToken`: the compare and the
- * conditional delete run as ONE chain link, so a successor's `signIn`
- * dispatched while the compare's read is still in flight serializes wholly
- * after the delete instead of being destroyed by a stale comparison — the
- * exact interleave a read-outside-the-chain undo would allow.
+ * The renderer wrapper's `deleteIfToken` contract: it FORWARDS the whole
+ * conditional delete to the backing store as one operation (the atomicity
+ * lives at the store's own authority — main's file lock — never composed
+ * from `get()` + `delete()` here), and it joins the renderer's mutation
+ * chain so it is ordered against this window's own `signIn`/`delete`.
  */
 import { describe, expect, it } from "vitest";
 import type {
@@ -33,10 +33,10 @@ interface BackingStore {
   readonly store: ITokenStore;
   readonly state: {
     current: StoredCredentials | null;
-    /** Consumed by the NEXT `get`: it awaits this gate before answering. */
-    nextGetGate: Promise<void> | null;
-    /** When set, `delete` rejects with this error. */
-    deleteError: Error | null;
+    /** Consumed by the NEXT `signIn`: it awaits this gate before writing. */
+    nextSignInGate: Promise<void> | null;
+    /** When set, `deleteIfToken` rejects with this error. */
+    deleteIfTokenError: Error | null;
   };
   readonly calls: string[];
 }
@@ -45,23 +45,23 @@ function makeBackingStore(initial: StoredCredentials | null): BackingStore {
   const calls: string[] = [];
   const state: BackingStore["state"] = {
     current: initial,
-    nextGetGate: null,
-    deleteError: null,
+    nextSignInGate: null,
+    deleteIfTokenError: null,
   };
   const store: ITokenStore = {
-    get: async (): Promise<StoredCredentials | null> => {
+    get: () => {
       calls.push("get");
-      const gate = state.nextGetGate;
-      state.nextGetGate = null;
-      if (gate !== null) {
-        await gate;
-      }
-      return state.current;
+      return Promise.resolve(state.current);
     },
     signIn: async (
       tokens: StoredAuthTokens,
       identity: StoredCredentialsIdentity,
     ): Promise<void> => {
+      const gate = state.nextSignInGate;
+      state.nextSignInGate = null;
+      if (gate !== null) {
+        await gate;
+      }
       calls.push("signIn");
       state.current = {
         token: tokens.token,
@@ -70,73 +70,81 @@ function makeBackingStore(initial: StoredCredentials | null): BackingStore {
         user: identity,
       };
     },
-    rotate: async () => {
-      throw new Error("rotate is not under test");
-    },
-    delete: async (): Promise<void> => {
+    rotate: () => Promise.reject(new Error("rotate is not under test")),
+    delete: () => {
       calls.push("delete");
-      if (state.deleteError !== null) {
-        throw state.deleteError;
+      state.current = null;
+      return Promise.resolve();
+    },
+    // The backing store owns the atomic compare-and-delete (in production:
+    // one locked FileTokenStore mutation reached over one IPC call).
+    deleteIfToken: (expectedToken: string) => {
+      calls.push(`deleteIfToken:${expectedToken}`);
+      if (state.deleteIfTokenError !== null) {
+        return Promise.reject(state.deleteIfTokenError);
+      }
+      if (state.current === null || state.current.token !== expectedToken) {
+        return Promise.resolve("kept" as const);
       }
       state.current = null;
+      return Promise.resolve("deleted" as const);
     },
     subscribe: () => ({ dispose: () => undefined }),
-    migrateLegacyCredentials: async () => {
-      throw new Error("migration is not under test");
-    },
+    migrateLegacyCredentials: () =>
+      Promise.reject(new Error("migration is not under test")),
   };
   return { store, state, calls };
 }
 
 describe("AuthTokenStore.deleteIfToken", () => {
-  it("deletes only an exact token match, keeps anything else", async () => {
-    const backing = makeBackingStore(pair("b-token"));
-    const store = new AuthTokenStore(backing.store);
-    await expect(store.deleteIfToken("a-token")).resolves.toBe("kept");
-    expect(backing.state.current?.token).toBe("b-token");
-
-    await expect(store.deleteIfToken("b-token")).resolves.toBe("deleted");
-    expect(backing.state.current).toBeNull();
-
-    await expect(store.deleteIfToken("b-token")).resolves.toBe("kept");
-  });
-
-  it("a successor signIn dispatched mid-compare survives the undo", async () => {
-    // A's stale pair is on disk; A's undo enters the chain and its read
-    // stalls. B's signIn is dispatched while that read is in flight — the
-    // interleave that, without the chain, would read A's token, then delete
-    // B's freshly-written pair with a stale comparison.
+  it("forwards the conditional delete as ONE backing operation, never get+delete", async () => {
     const backing = makeBackingStore(pair("a-token"));
     const store = new AuthTokenStore(backing.store);
-    let releaseGet: () => void = () => undefined;
-    backing.state.nextGetGate = new Promise<void>((resolve) => {
-      releaseGet = resolve;
+    await expect(store.deleteIfToken("other-token")).resolves.toBe("kept");
+    expect(backing.state.current?.token).toBe("a-token");
+
+    await expect(store.deleteIfToken("a-token")).resolves.toBe("deleted");
+    expect(backing.state.current).toBeNull();
+    // The wrapper issued only the atomic backing operation each time.
+    expect(backing.calls).toEqual([
+      "deleteIfToken:other-token",
+      "deleteIfToken:a-token",
+    ]);
+  });
+
+  it("joins the mutation chain: ordered after this window's in-flight signIn", async () => {
+    const backing = makeBackingStore(null);
+    const store = new AuthTokenStore(backing.store);
+    let releaseSignIn: () => void = () => undefined;
+    backing.state.nextSignInGate = new Promise<void>((resolve) => {
+      releaseSignIn = resolve;
     });
 
-    const undo = store.deleteIfToken("a-token");
-    const successorWrite = store.signIn(
+    const write = store.signIn(
       { token: "b-token", refreshToken: "b-refresh" },
       IDENTITY,
     );
-    releaseGet();
-
-    // The undo owns the chain until BOTH its read and its delete finish; the
-    // successor's write runs strictly after and survives.
-    await expect(undo).resolves.toBe("deleted");
-    await successorWrite;
-    expect(backing.calls).toEqual(["get", "delete", "signIn"]);
+    // Dispatched while the signIn is still in flight: the chain holds it
+    // back, so the conditional delete observes B's landed pair and keeps it.
+    const undo = store.deleteIfToken("a-token");
+    releaseSignIn();
+    await write;
+    await expect(undo).resolves.toBe("kept");
+    expect(backing.calls).toEqual(["signIn", "deleteIfToken:a-token"]);
     expect(backing.state.current?.token).toBe("b-token");
   });
 
-  it("a store fault inside the compare-and-delete rejects instead of resolving", async () => {
+  it("a backing-store fault rejects instead of resolving", async () => {
     const backing = makeBackingStore(pair("a-token"));
-    backing.state.deleteError = new Error("EIO: credentials file unwritable");
+    backing.state.deleteIfTokenError = new Error(
+      "EIO: credentials file unwritable",
+    );
     const store = new AuthTokenStore(backing.store);
     await expect(store.deleteIfToken("a-token")).rejects.toThrow(
       "EIO: credentials file unwritable",
     );
     // The pair the delete failed to remove is still there — the caller must
-    // hear about it, which is exactly why the rejection is not swallowed here.
+    // hear about it, which is exactly why the rejection is not swallowed.
     expect(backing.state.current?.token).toBe("a-token");
   });
 });

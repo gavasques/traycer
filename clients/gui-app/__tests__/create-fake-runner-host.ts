@@ -83,6 +83,7 @@ export function createFakeRunnerHost(
       rotate: () =>
         Promise.resolve({ outcome: "deleted" as const, pair: null }),
       delete: () => Promise.resolve(),
+      deleteIfToken: () => Promise.resolve("kept" as const),
       subscribe: () => ({ dispose: () => undefined }),
       migrateLegacyCredentials: () =>
         Promise.resolve("identity-unknown" as const),

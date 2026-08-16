@@ -275,18 +275,22 @@ describe("link-login attempt fence", () => {
     }
   });
 
-  it("a FAILED undo of the superseded save is surfaced, never swallowed", async () => {
+  it("a FAILED undo is surfaced, and recovery completes it before adopting — the zombie never returns", async () => {
     const { service, host } = makeService();
     const { script, restore } = installLinkFetch();
     const realStore: ITokenStore = host.tokenStore;
     const { saveEnteredPromise, releaseSave } = pauseStoreSignIn(realStore);
-    // The undo's conditional delete faults — the stale pair stays on disk,
-    // where a failed successor's next launch would rehydrate it. That must
-    // fire the shared store-fault seam, not vanish into a debug log.
-    Object.defineProperty(realStore, "delete", {
+    // The undo's atomic conditional delete faults — the stale pair stays
+    // durable. That must fire the shared store-fault seam AND fence the
+    // recovery loop: until the delete lands, nothing durable may be adopted.
+    let deleteIfTokenBroken = true;
+    const realDeleteIfToken = realStore.deleteIfToken.bind(realStore);
+    Object.defineProperty(realStore, "deleteIfToken", {
       configurable: true,
-      value: (): Promise<void> =>
-        Promise.reject(new Error("EIO: credentials file unwritable")),
+      value: (expectedToken: string): Promise<"deleted" | "kept"> =>
+        deleteIfTokenBroken
+          ? Promise.reject(new Error("EIO: credentials file unwritable"))
+          : realDeleteIfToken(expectedToken),
     });
     try {
       script.validationResponse = () => json(PROFILE_BODY, 200);
@@ -314,8 +318,23 @@ describe("link-login attempt fence", () => {
       releaseSave();
       const result = await linkResult;
       expect(result.kind).toBe("failed");
-      // Observable: the store-unavailable projection is the surfaced error.
+      // Observable: the store-unavailable projection is the surfaced error,
+      // and the stale pair is indeed still durable.
       expect(service.getLastError()).toBe(AUTH_ERROR_STORE_UNAVAILABLE);
+      expect((await realStore.get())?.token).toBe("attempt-a-token");
+
+      // Recovery ticks while the conditional delete still fails: the stale
+      // token WOULD validate (the /user stub says 200), but the pending-undo
+      // fence must keep the loop from adopting it.
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(useAuthStore.getState().status).not.toBe("signed-in");
+
+      // The store heals. Recovery completes the pending conditional delete
+      // FIRST, then finds no stored session — the zombie never signs back in.
+      deleteIfTokenBroken = false;
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(await realStore.get()).toBeNull();
+      expect(useAuthStore.getState().status).not.toBe("signed-in");
     } finally {
       restore();
     }

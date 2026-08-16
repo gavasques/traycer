@@ -1,9 +1,9 @@
 /**
- * The Link-a-phone panel's rotation affordances: the countdown derives the
- * next-mint moment from the mint response alone (expiry minus the rotation
- * lead) and ticks on a local clock, and the one-time nature of a code is
- * stated in copy — both must hold with no requests beyond the mint the query
- * already performed.
+ * The Link-a-phone panel under the server's one-live-code policy: the
+ * countdown derives the next-mint moment from the mint response alone, the
+ * displayed code is the ONLY watched code (a claim on it swaps the QR for
+ * the confirmation card), a rejection resumes rotation with a fresh code,
+ * and the one-time nature of a code is stated in copy.
  */
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -63,11 +63,15 @@ function respondIdle() {
   return { isPending: false, mutate: vi.fn() };
 }
 
-let currentView: { rerender: (ui: React.ReactElement) => void } | null = null;
-
-function viewRerender(): void {
-  currentView?.rerender(<LinkPhonePanel />);
-}
+const CLAIMED_STATUS = {
+  status: "claimed",
+  claimant: {
+    address: "192.168.29.87",
+    userAgent: "TraycerMobile/1.0 (iPhone)",
+    location: "Bengaluru, IN",
+    claimedAt: 100,
+  },
+};
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -81,7 +85,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("LinkPhonePanel rotation affordances", () => {
+describe("LinkPhonePanel", () => {
   it("counts down to the next mint from the shown code's expiry and ticks locally", () => {
     mocks.useAuthLinkLoginCode.mockReturnValue(queryResultWithCode(Date.now()));
     render(<LinkPhonePanel />);
@@ -104,22 +108,19 @@ describe("LinkPhonePanel rotation affordances", () => {
     );
   });
 
-  it("swaps the QR for an Approve/Reject confirmation when the code is claimed", () => {
+  it("watches only the displayed code; its claim swaps the QR for the confirmation and approves", () => {
     mocks.useAuthLinkLoginCode.mockReturnValue(queryResultWithCode(Date.now()));
-    mocks.useAuthLinkLoginStatus.mockReturnValue(
-      statusResult({
-        status: "claimed",
-        claimant: {
-          address: "192.168.29.87",
-          userAgent: "TraycerMobile/1.0 (iPhone)",
-          location: "Bengaluru, IN",
-          claimedAt: Date.now(),
-        },
-      }),
-    );
+    const view = render(<LinkPhonePanel />);
+    // The watch is on exactly the displayed code.
+    const watched = mocks.useAuthLinkLoginStatus.mock.calls
+      .map((call: unknown[]) => call[0])
+      .filter((code): code is string => typeof code === "string");
+    expect(new Set(watched)).toEqual(new Set(["ABCDE-FGHJK"]));
+
+    mocks.useAuthLinkLoginStatus.mockReturnValue(statusResult(CLAIMED_STATUS));
     const respond = respondIdle();
     mocks.useRespondLinkLoginMutation.mockReturnValue(respond);
-    render(<LinkPhonePanel />);
+    view.rerender(<LinkPhonePanel />);
     expect(screen.getByTestId("link-phone-confirm")).toBeTruthy();
     expect(screen.getByTestId("link-phone-claimant").textContent).toContain(
       "192.168.29.87",
@@ -134,8 +135,36 @@ describe("LinkPhonePanel rotation affordances", () => {
     );
   });
 
-  it("a claim on the PREVIOUS code (rotation grace) still surfaces the approval", () => {
-    // First render shows code A; rotation replaces it with B.
+  it("a rejection resumes rotation with a fresh code", () => {
+    const codeQuery = queryResultWithCode(Date.now());
+    mocks.useAuthLinkLoginCode.mockReturnValue(codeQuery);
+    mocks.useAuthLinkLoginStatus.mockReturnValue(statusResult(CLAIMED_STATUS));
+    const respond = {
+      isPending: false,
+      mutate: vi.fn(
+        (
+          _variables: { code: string; approve: boolean },
+          options: { onSuccess: (outcome: string) => void },
+        ) => {
+          options.onSuccess("ok");
+        },
+      ),
+    };
+    mocks.useRespondLinkLoginMutation.mockReturnValue(respond);
+    render(<LinkPhonePanel />);
+    act(() => {
+      screen.getByTestId("link-phone-reject").click();
+    });
+    expect(respond.mutate).toHaveBeenCalledWith(
+      { code: "ABCDE-FGHJK", approve: false },
+      expect.anything(),
+    );
+    // The rejected claim released the server's per-user lock; the panel
+    // immediately requests a fresh code instead of waiting out the interval.
+    expect(codeQuery.refetch).toHaveBeenCalled();
+  });
+
+  it("rotation replaces the watched code with the newly displayed one", () => {
     mocks.useAuthLinkLoginCode.mockReturnValue({
       ...queryResultWithCode(Date.now()),
       data: { code: "AAAAA-AAAAA", expires_in: 60, expires_at: 1 },
@@ -145,181 +174,15 @@ describe("LinkPhonePanel rotation affordances", () => {
       ...queryResultWithCode(Date.now()),
       data: { code: "BBBBB-BBBBB", expires_in: 60, expires_at: 2 },
     });
+    mocks.useAuthLinkLoginStatus.mockClear();
     view.rerender(<LinkPhonePanel />);
-    // The phone claimed A just before rotation; B is untouched.
-    mocks.useAuthLinkLoginStatus.mockImplementation((code: string | null) =>
-      statusResult(
-        code === "AAAAA-AAAAA"
-          ? {
-              status: "claimed",
-              claimant: {
-                address: "10.0.0.9",
-                userAgent: "TraycerMobile/1.0 (iPhone)",
-                location: null,
-                claimedAt: 100,
-              },
-            }
-          : null,
-      ),
-    );
-    const respond = respondIdle();
-    mocks.useRespondLinkLoginMutation.mockReturnValue(respond);
-    view.rerender(<LinkPhonePanel />);
-    expect(screen.getByTestId("link-phone-confirm")).toBeTruthy();
-    act(() => {
-      screen.getByTestId("link-phone-approve").click();
-    });
-    expect(respond.mutate).toHaveBeenCalledWith(
-      { code: "AAAAA-AAAAA", approve: true },
-      expect.anything(),
-    );
-  });
-
-  it("a claimed code with a DELAYED status survives fresh mints (never sliced out)", () => {
-    // Three rotations land before A's claimed status arrives.
-    for (const code of ["AAAAA-AAAAA", "BBBBB-BBBBB", "CCCCC-CCCCC"]) {
-      mocks.useAuthLinkLoginCode.mockReturnValue({
-        ...queryResultWithCode(Date.now()),
-        data: { code, expires_in: 60, expires_at: 1 },
-      });
-      if (code === "AAAAA-AAAAA") {
-        currentView = render(<LinkPhonePanel />);
-      } else {
-        screen.getByTestId("link-phone-single-use-hint"); // still showing
-        viewRerender();
-      }
-    }
-    // Now A's claim finally reports. The server's per-user lock means it is
-    // the ONLY possible claim; the panel must still be watching A.
-    mocks.useAuthLinkLoginStatus.mockImplementation((code: string | null) =>
-      statusResult(
-        code === "AAAAA-AAAAA"
-          ? {
-              status: "claimed",
-              claimant: {
-                address: "10.0.0.9",
-                userAgent: null,
-                location: null,
-                claimedAt: 100,
-              },
-            }
-          : null,
-      ),
-    );
-    const respond = respondIdle();
-    mocks.useRespondLinkLoginMutation.mockReturnValue(respond);
-    viewRerender();
-    expect(screen.getByTestId("link-phone-confirm")).toBeTruthy();
-    act(() => {
-      screen.getByTestId("link-phone-approve").click();
-    });
-    expect(respond.mutate).toHaveBeenCalledWith(
-      { code: "AAAAA-AAAAA", approve: true },
-      expect.anything(),
-    );
-  });
-
-  it("four codes deep: a claimed code with DELAYED statuses is never count-evicted", () => {
-    // A is claimed on the phone immediately, but its status responses lag
-    // while three whole rotations (B, C, D) land. The claimed record must
-    // still be watched when its status finally arrives — a count-based
-    // eviction here would strand the phone with an approval no card can give.
-    const codes = ["AAAAA-AAAAA", "BBBBB-BBBBB", "CCCCC-CCCCC", "DDDDD-DDDDD"];
-    for (const code of codes) {
-      mocks.useAuthLinkLoginCode.mockReturnValue({
-        ...queryResultWithCode(Date.now()),
-        data: { code, expires_in: 60, expires_at: 1 },
-      });
-      if (code === codes[0]) {
-        currentView = render(<LinkPhonePanel />);
-      } else {
-        screen.getByTestId("link-phone-single-use-hint"); // still showing
-        viewRerender();
-      }
-    }
-    mocks.useAuthLinkLoginStatus.mockImplementation((code: string | null) =>
-      statusResult(
-        code === "AAAAA-AAAAA"
-          ? {
-              status: "claimed",
-              claimant: {
-                address: "10.0.0.9",
-                userAgent: null,
-                location: null,
-                claimedAt: 100,
-              },
-            }
-          : null,
-      ),
-    );
-    const respond = respondIdle();
-    mocks.useRespondLinkLoginMutation.mockReturnValue(respond);
-    viewRerender();
-    expect(screen.getByTestId("link-phone-confirm")).toBeTruthy();
-    act(() => {
-      screen.getByTestId("link-phone-approve").click();
-    });
-    expect(respond.mutate).toHaveBeenCalledWith(
-      { code: "AAAAA-AAAAA", approve: true },
-      expect.anything(),
-    );
-  });
-
-  it("watch overflow evicts a server-confirmed unclaimed code, not the delayed one", () => {
-    // Five codes: A's status is still dark (could be the claim), B–D are
-    // confirmed unclaimed. The fifth mint overflows the watch bound, which
-    // must spend the eviction on a confirmed-unclaimed code and keep A.
-    const codes = [
-      "AAAAA-AAAAA",
-      "BBBBB-BBBBB",
-      "CCCCC-CCCCC",
-      "DDDDD-DDDDD",
-      "EEEEE-EEEEE",
-    ];
-    mocks.useAuthLinkLoginStatus.mockImplementation((code: string | null) =>
-      statusResult(
-        code === null || code === "AAAAA-AAAAA" || code === "EEEEE-EEEEE"
-          ? null
-          : { status: "unclaimed", claimant: null },
-      ),
-    );
-    for (const code of codes) {
-      mocks.useAuthLinkLoginCode.mockReturnValue({
-        ...queryResultWithCode(Date.now()),
-        data: { code, expires_in: 60, expires_at: 1 },
-      });
-      if (code === codes[0]) {
-        currentView = render(<LinkPhonePanel />);
-      } else {
-        viewRerender();
-      }
-    }
-    mocks.useAuthLinkLoginStatus.mockImplementation((code: string | null) =>
-      statusResult(
-        code === "AAAAA-AAAAA"
-          ? {
-              status: "claimed",
-              claimant: {
-                address: "10.0.0.9",
-                userAgent: null,
-                location: null,
-                claimedAt: 100,
-              },
-            }
-          : null,
-      ),
-    );
-    const respond = respondIdle();
-    mocks.useRespondLinkLoginMutation.mockReturnValue(respond);
-    viewRerender();
-    expect(screen.getByTestId("link-phone-confirm")).toBeTruthy();
-    act(() => {
-      screen.getByTestId("link-phone-approve").click();
-    });
-    expect(respond.mutate).toHaveBeenCalledWith(
-      { code: "AAAAA-AAAAA", approve: true },
-      expect.anything(),
-    );
+    // The superseded code is dead at the server; the committed render (the
+    // adjust-during-render pass settles before commit) watches only B.
+    const lastWatched = mocks.useAuthLinkLoginStatus.mock.calls
+      .map((call: unknown[]) => call[0])
+      .at(-1);
+    expect(lastWatched).toBe("BBBBB-BBBBB");
+    expect(screen.getByText("BBBBB-BBBBB")).toBeTruthy();
   });
 
   it("states that a code is single-use and short-lived", () => {

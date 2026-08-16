@@ -148,6 +148,19 @@ export interface CredentialsMutationStore {
   ): Promise<MutationResult>;
   /** Delete under the lock (ENOENT-tolerant); always advances the tombstone. */
   signOut(signal: AbortSignal | null): Promise<MutationResult>;
+  /**
+   * Conditional delete: removes the file ONLY if it still holds exactly
+   * `expectedToken`, with the comparison and the delete inside the same
+   * file-lock acquisition — a concurrent writer (another window's sign-in, an
+   * external CLI) serializes wholly before the comparison (→ `superseded`,
+   * its pair kept) or wholly after the landed delete; no interleave can make
+   * a stale comparison govern the delete. `deleted` when removed;
+   * `superseded` when the file was absent or held a different pair (kept).
+   */
+  signOutIfToken(
+    expectedToken: string,
+    signal: AbortSignal | null,
+  ): Promise<MutationResult>;
   /** CAS'd merge of the `user` block only; tokens untouched. */
   updateProfile(args: {
     readonly expectedToken: string;
@@ -394,7 +407,11 @@ async function writeSpentBaseMarker(
     ownerFingerprint: ownPidStartFingerprint(),
   };
   try {
-    await writeJsonFileAtomic(spentBaseMarkerPath(credentialsPath), marker, 0o600);
+    await writeJsonFileAtomic(
+      spentBaseMarkerPath(credentialsPath),
+      marker,
+      0o600,
+    );
   } catch {
     throw new CredentialsStoreUnavailableError(
       "spent-base marker could not be armed",
@@ -432,7 +449,10 @@ export function createCredentialsMutationStore(
    */
   async function clearOwnSpentBaseMarker(spentToken: string): Promise<void> {
     const marker = await readSpentBaseMarker(paths.credentialsPath);
-    if (marker !== null && marker.spentTokenDigest === digestToken(spentToken)) {
+    if (
+      marker !== null &&
+      marker.spentTokenDigest === digestToken(spentToken)
+    ) {
       await clearSpentBaseMarker(paths.credentialsPath);
     }
   }
@@ -816,6 +836,38 @@ export function createCredentialsMutationStore(
     );
   }
 
+  async function signOutIfToken(
+    expectedToken: string,
+    signal: AbortSignal | null,
+  ): Promise<MutationResult> {
+    return runMutation(
+      signal,
+      true,
+      async ({ state, file }): Promise<MutationResult> => {
+        // The comparison lives under the same lock as the delete below: a
+        // sign-in that landed since the caller captured `expectedToken` is
+        // observed here and kept, never destroyed by the stale undo.
+        if (file === null || file.token !== expectedToken) {
+          return { outcome: "superseded", credentials: file };
+        }
+        const commit = await commitMutation({
+          paths: commitPaths,
+          op: "signOut",
+          target: { kind: "delete" },
+          currentState: state,
+        });
+        // Same interactive-intent contract as `signOut`: a failed conditional
+        // delete surfaces (the stale pair is still durable and the caller must
+        // know), and a landed one removes the file the marker was guarding.
+        if (commit.kind === "committed") {
+          await clearSpentBaseMarker(paths.credentialsPath);
+          return { outcome: "deleted", credentials: null };
+        }
+        return { outcome: "commit-failed", credentials: null };
+      },
+    );
+  }
+
   async function updateProfile(args: {
     readonly expectedToken: string;
     readonly user: StoredCredentials["user"];
@@ -1017,6 +1069,7 @@ export function createCredentialsMutationStore(
     rotate,
     signIn,
     signOut,
+    signOutIfToken,
     updateProfile,
     guardedSignIn,
     migrateFirstWrite,

@@ -452,6 +452,31 @@ export class FileTokenStore {
   }
 
   /**
+   * Conditional delete for a renderer undoing a superseded sign-in save. The
+   * comparison and the delete run inside ONE locked mutation
+   * (`signOutIfToken`), so a sibling window's sign-in — or an external CLI
+   * writer — serializes wholly before the comparison (its pair is kept) or
+   * wholly after the landed delete; the renderer never composes this from
+   * `get()` + `delete()`. Rejects when the store cannot decide (lock-busy)
+   * or the delete cannot land, so a still-durable stale pair is never
+   * reported as cleaned up.
+   */
+  deleteIfToken(expectedToken: string): Promise<"deleted" | "kept"> {
+    return this.enqueue(async () => {
+      const result = await this.store.signOutIfToken(expectedToken, null);
+      if (result.outcome === "deleted") {
+        return "deleted";
+      }
+      if (result.outcome === "superseded") {
+        return "kept";
+      }
+      throw new Error(
+        `conditional credentials delete did not land: ${result.outcome}`,
+      );
+    });
+  }
+
+  /**
    * Change subscription. The owned watcher (§4) fires revisioned
    * `TokenStoreChange` events for external and self-writes; consumers re-read
    * the store (disk is the truth). Reconcile never writes/spends.

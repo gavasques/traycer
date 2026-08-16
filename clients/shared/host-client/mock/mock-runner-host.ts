@@ -509,6 +509,19 @@ export class MockRunnerHost implements IRunnerHost {
       this.tokenStoreEntries.delete(MOCK_TOKEN_STORE_KEY);
       this.notifyTokenStoreChangedAfterMutation();
     },
+    deleteIfToken: async (
+      expectedToken: string,
+    ): Promise<"deleted" | "kept"> => {
+      // In-memory analogue of the store-authority conditional delete: the
+      // compare and delete are synchronous over the map, hence atomic.
+      const stored = this.tokenStoreEntries.get(MOCK_TOKEN_STORE_KEY) ?? null;
+      if (stored === null || stored.token !== expectedToken) {
+        return "kept";
+      }
+      this.tokenStoreEntries.delete(MOCK_TOKEN_STORE_KEY);
+      this.notifyTokenStoreChangedAfterMutation();
+      return "deleted";
+    },
     subscribe: (listener: (change: TokenStoreChange) => void): Disposable => {
       this.tokenStoreChangeListeners.add(listener);
       return {

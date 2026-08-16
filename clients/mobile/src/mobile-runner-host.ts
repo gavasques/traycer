@@ -713,6 +713,18 @@ class MobileTokenStore implements ITokenStore {
     this.notifyAfterMutation();
   }
 
+  // Single-window store: no cross-process writers exist on mobile, so a
+  // read-compare-delete here is already the store's own authority.
+  async deleteIfToken(expectedToken: string): Promise<"deleted" | "kept"> {
+    const stored = await this.get();
+    if (stored === null || stored.token !== expectedToken) {
+      return "kept";
+    }
+    await this.secureStorage.delete(MOBILE_TOKEN_STORE_KEY);
+    this.notifyAfterMutation();
+    return "deleted";
+  }
+
   subscribe(listener: (change: TokenStoreChange) => void): Disposable {
     this.listeners.add(listener);
     return {

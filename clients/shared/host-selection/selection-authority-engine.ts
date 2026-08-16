@@ -105,6 +105,61 @@ export const RESTART_INTENT_EPISODE_MS = 60_000;
 export const LOCAL_EXPECTED_OUTAGE_CEILING_MS = 15 * 60_000;
 
 /**
+ * How many recent dial attempt ids one incarnation remembers for dedup.
+ *
+ * The set exists ONLY to collapse duplicate deliveries of the SAME attempt
+ * (an IPC redelivery, a reporter retry); nothing legitimately re-delivers an
+ * attempt from hundreds of dials ago. Forgetting an ancient id is bounded in
+ * harm by construction - the worst case is counting one duplicate twice,
+ * which can only inflate a streak that any success clears - whereas an
+ * unbounded set in a process that lives for weeks is not bounded in anything.
+ */
+export const ATTEMPT_DEDUP_WINDOW = 256;
+
+/**
+ * How many lost-before-established session ids one incarnation tombstones.
+ * A tombstone only has to outlive the reordered `established` racing it,
+ * which is a same-second window.
+ */
+export const SESSION_TOMBSTONE_WINDOW = 256;
+
+/**
+ * How many session observation ordinals one incarnation keeps PER HOST. Only
+ * the ordering of recent sessions can matter to compat freshness: a verdict
+ * anchored to a session this incarnation no longer tracks is stale by
+ * definition (see `rankForCompatAnchor`).
+ */
+export const SESSION_ORDINAL_WINDOW = 64;
+
+/**
+ * An insertion-ordered id set with a hard cap, evicting the oldest entry when
+ * it overflows. JS `Set` iterates in insertion order, which is the only
+ * property this needs - dedup is a one-shot test per id, so there is nothing
+ * to refresh on a hit and no LRU bookkeeping to pay for.
+ */
+class BoundedIdSet {
+  private readonly ids = new Set<string>();
+  private readonly capacity: number;
+
+  constructor(capacity: number) {
+    this.capacity = capacity;
+  }
+
+  has(id: string): boolean {
+    return this.ids.has(id);
+  }
+
+  add(id: string): void {
+    this.ids.add(id);
+    if (this.ids.size <= this.capacity) return;
+    for (const oldest of this.ids) {
+      this.ids.delete(oldest);
+      break;
+    }
+  }
+}
+
+/**
  * The engine's own clock and timer source (mechanism 7: "authority deadlines
  * come from its own ceilings, never renderer or host clocks"). A composition
  * input, not wire surface - tests inject a fake.
@@ -204,11 +259,15 @@ interface AttachmentRecord {
   readonly sessions: Map<string, LiveSessionRecord>;
   /**
    * `lost` observed before `established` for these ids: the session never
-   * counts as live and the later `established` is dropped.
+   * counts as live and the later `established` is dropped. BOUNDED - see
+   * {@link SESSION_TOMBSTONE_WINDOW}.
    */
-  readonly tombstonedSessionIds: Set<string>;
-  /** Dial dedup within the incarnation (mechanism 5). */
-  readonly seenAttemptIds: Set<string>;
+  readonly tombstonedSessionIds: BoundedIdSet;
+  /**
+   * Dial dedup within the incarnation (mechanism 5). BOUNDED - see
+   * {@link ATTEMPT_DEDUP_WINDOW}.
+   */
+  readonly seenAttemptIds: BoundedIdSet;
   /**
    * hostId -> sessionId -> the authority's observation ordinal, scoped to
    * THIS incarnation because that is the scope in which `sessionId` is unique.
@@ -216,6 +275,13 @@ interface AttachmentRecord {
    * comparable across incarnations.
    */
   readonly sessionOrdinals: Map<string, Map<string, number>>;
+  /**
+   * Per host, the highest ordinal evicted from `sessionOrdinals`. A verdict
+   * anchored to a forgotten session ranks HERE - never as something new -
+   * which is what keeps eviction from turning an ancient verdict into the
+   * freshest one.
+   */
+  readonly evictedOrdinalFloor: Map<string, number>;
 }
 
 /**
@@ -543,9 +609,10 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
       incarnationId,
       attachSeq: request.attachSeq,
       sessions: new Map<string, LiveSessionRecord>(),
-      tombstonedSessionIds: new Set<string>(),
-      seenAttemptIds: new Set<string>(),
+      tombstonedSessionIds: new BoundedIdSet(SESSION_TOMBSTONE_WINDOW),
+      seenAttemptIds: new BoundedIdSet(ATTEMPT_DEDUP_WINDOW),
       sessionOrdinals: new Map<string, Map<string, number>>(),
+      evictedOrdinalFloor: new Map<string, number>(),
     };
     record.attachment = attachment;
     this.installInventory(attachment, request.liveSessions);
@@ -803,7 +870,37 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
     const ordinal = this.nextSessionOrdinal;
     this.nextSessionOrdinal += 1;
     perHost.set(sessionId, ordinal);
+    if (perHost.size > SESSION_ORDINAL_WINDOW) {
+      for (const [oldestSessionId, oldestOrdinal] of perHost) {
+        perHost.delete(oldestSessionId);
+        attachment.evictedOrdinalFloor.set(hostId, oldestOrdinal);
+        break;
+      }
+    }
     return ordinal;
+  }
+
+  /**
+   * The rank a compat verdict's anchor earns.
+   *
+   * A KNOWN session keeps its ordinal. An unknown one is only minted as
+   * current when the reporter still holds that session live - otherwise it is
+   * a verdict for a session this incarnation no longer tracks, and it ranks at
+   * the evicted floor. Minting it as newest (the pre-bound behaviour) would
+   * let eviction promote an ancient verdict over a live one, which is exactly
+   * the flip the incarnation scoping was introduced to stop.
+   */
+  private rankForCompatAnchor(
+    attachment: AttachmentRecord,
+    hostId: string,
+    sessionId: string,
+  ): number {
+    const known = attachment.sessionOrdinals.get(hostId)?.get(sessionId);
+    if (known !== undefined) return known;
+    if (attachment.sessions.get(sessionId)?.hostId === hostId) {
+      return this.observeSession(attachment, hostId, sessionId);
+    }
+    return attachment.evictedOrdinalFloor.get(hostId) ?? -1;
   }
 
   private hostEvidence(hostId: string): HostEvidence {
@@ -898,7 +995,7 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
     const rank =
       report.probedOnSessionId === null
         ? -1
-        : this.observeSession(
+        : this.rankForCompatAnchor(
             attachment,
             report.hostId,
             report.probedOnSessionId,

@@ -11,6 +11,7 @@ import {
 } from "../selection-authority-contract";
 import {
   CONFIRMED_DEATH_REFUSAL_STREAK,
+  SESSION_ORDINAL_WINDOW,
   LOCAL_EXPECTED_OUTAGE_CEILING_MS,
   RESTART_INTENT_EPISODE_MS,
   SelectionAuthorityEngineImpl,
@@ -677,6 +678,107 @@ describe("SelectionAuthorityEngineImpl - compat freshness", () => {
 
     engine.ingestEvidence("A", attachA.incarnationId, compatIncompatible("H", null, INCOMPAT_DETAIL));
     expect(findLease(engine.snapshot().leases, "H")?.dead?.reason).toBe("incompatible");
+
+    authority.dispose();
+  });
+});
+
+describe("SelectionAuthorityEngineImpl - bounded per-incarnation state", () => {
+  it("evicting session ordinals never promotes a stale verdict: an anchor for a session the reporter no longer holds ranks at the floor, not as the newest", () => {
+    const clock = createFakeAuthorityClock(0);
+    const authority = createTestAuthority({
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: null,
+        hosts: [fleetHost("H", "remote")],
+      },
+      initialIdentityKey: "acct-1",
+      clock,
+    });
+    const { engine } = authority;
+    const seqA = engine.allocateAttachSeq("A");
+    const attachA = engine.attach("A", attachRequest(seqA, []));
+    if (!attachA.ok) throw new Error("expected attach to succeed");
+
+    // An ancient session, long since gone, that carried an incompatible
+    // verdict at the time.
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      sessionEvidence("H", "ancient", "established", 0),
+    );
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      sessionEvidence("H", "ancient", "lost", 0),
+    );
+
+    // Push its ordinal out of the window.
+    for (let i = 0; i < SESSION_ORDINAL_WINDOW + 1; i += 1) {
+      engine.ingestEvidence(
+        "A",
+        attachA.incarnationId,
+        sessionEvidence("H", `churn-${i}`, "established", 0),
+      );
+      engine.ingestEvidence(
+        "A",
+        attachA.incarnationId,
+        sessionEvidence("H", `churn-${i}`, "lost", 0),
+      );
+    }
+
+    // The live session, and a compatible verdict probed on it.
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      sessionEvidence("H", "current", "established", 0),
+    );
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      compatCompatible("H", "current"),
+    );
+    expect(findLease(engine.snapshot().leases, "H")?.status).not.toBe("dead");
+
+    // The delayed incompatible verdict for the EVICTED session must not win.
+    // Before the floor rule, an unknown anchor was minted as the newest
+    // ordinal, so eviction alone would have flipped this lease to dead.
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      compatIncompatible("H", "ancient", INCOMPAT_DETAIL),
+    );
+    expect(findLease(engine.snapshot().leases, "H")?.status).not.toBe("dead");
+
+    authority.dispose();
+  });
+
+  it("dial dedup still collapses duplicates inside the retained window", () => {
+    const clock = createFakeAuthorityClock(0);
+    const authority = createTestAuthority({
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: null,
+        hosts: [fleetHost("H", "remote")],
+      },
+      initialIdentityKey: "acct-1",
+      clock,
+    });
+    const { engine } = authority;
+    const seqA = engine.allocateAttachSeq("A");
+    const attachA = engine.attach("A", attachRequest(seqA, []));
+    if (!attachA.ok) throw new Error("expected attach to succeed");
+
+    // One attempt, delivered many times: still one count, so the streak
+    // cannot reach the threshold.
+    for (let i = 0; i < 10; i += 1) {
+      engine.ingestEvidence(
+        "A",
+        attachA.incarnationId,
+        dialRefusal("H", "duplicated", null, i),
+      );
+    }
+    expect(findLease(engine.snapshot().leases, "H")?.status).not.toBe("dead");
 
     authority.dispose();
   });

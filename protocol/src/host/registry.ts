@@ -459,11 +459,7 @@ import {
   prSubscribeDetailV10,
   prGetLocalDiffV10,
   prGetLocalDiffSummaryV10,
-  prGetLocalDiffSummaryV11,
-  prGetLocalDiffSummaryUpgradeV10ToV11,
   prGetLocalFileDiffV10,
-  prGetLocalFileDiffV11,
-  prGetLocalFileDiffUpgradeV10ToV11,
 } from "@traycer/protocol/host/pr-contracts";
 import {
   mentionGithubCatalogV10,
@@ -6789,19 +6785,14 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   "pr.getLocalDiffSummary": {
     degrade: { kind: "unsupported" },
     1: {
-      latestMinor: 1,
+      latestMinor: 0,
       versions: {
+        // Byte-path sidecars (`pathBytes`/`previousPathBytes`) ride the only
+        // minor: non-UTF-8 paths survive the summary -> per-file round trip
+        // for every peer, because no peer predates them.
         0: {
           contract: prGetLocalDiffSummaryV10,
           upgradeFromPreviousVersion: null,
-        },
-        // 1.1: byte-path sidecars (`pathBytes`/`previousPathBytes`) on every
-        // file row, so non-UTF-8 paths survive the summary -> per-file round
-        // trip. The 1.0-caller response fold (rows, not fields) lives host-
-        // side at emission; the bridge here only fills request-side nulls.
-        1: {
-          contract: prGetLocalDiffSummaryV11,
-          upgradeFromPreviousVersion: prGetLocalDiffSummaryUpgradeV10ToV11,
         },
       },
       downgradePathsFromLatest: {},
@@ -6810,17 +6801,13 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   "pr.getLocalFileDiff": {
     degrade: { kind: "unsupported" },
     1: {
-      latestMinor: 1,
+      latestMinor: 0,
       versions: {
+        // The request echoes the summary row's byte-path sidecars per side on
+        // the only minor; a `null` still means "clean path", never "legacy".
         0: {
           contract: prGetLocalFileDiffV10,
           upgradeFromPreviousVersion: null,
-        },
-        // 1.1: the request echoes the summary row's byte-path sidecars per
-        // side; bridge-filled `null` = "legacy peer", identical to clean.
-        1: {
-          contract: prGetLocalFileDiffV11,
-          upgradeFromPreviousVersion: prGetLocalFileDiffUpgradeV10ToV11,
         },
       },
       downgradePathsFromLatest: {},

@@ -162,15 +162,95 @@ export const NO_TRANSPORT_EVIDENCE: TransportEvidenceReporter = {
  */
 export class TransportEvidenceRelay implements TransportEvidenceReporter {
   private target: TransportEvidenceReporter | null = null;
+  /**
+   * The live sessions this relay has been told about, and the reason it holds
+   * state at all (redesign P1.3, review finding F2 half B).
+   *
+   * An attach carries the window's live-session inventory ATOMICALLY - that is
+   * why the kernel keeps its own session map instead of asking the transports
+   * at attach time (P1.1 decision 8: a re-announce step after the claim leaves
+   * an observable empty-session window in which concurrent refusals count
+   * against sockets that survived). But a kernel only learns about a session
+   * when one is ANNOUNCED, and a pooled remote session announces exactly once,
+   * at its own ready boundary: on a cache hit the session-building factory
+   * never runs. So a kernel that starts life after the sessions already exist
+   * attaches with an EMPTY inventory while live sockets are up - the
+   * phantom-ABSENCE direction of P1.1's blocker 6, where refusals accumulate
+   * against a host that is answering and the lease can reach `dead`.
+   *
+   * The relay is the one object whose lifetime already equals the session
+   * pool's - that is this module's stated invariant - so it is where
+   * pool-scoped state belongs. Deliberately NOT a queryable API: nothing reads
+   * this map from outside, it exists only to be replayed at {@link bind}. A
+   * getter would make it a second source of truth about liveness, competing
+   * with the kernel's, and the whole point is that there is one.
+   */
+  private readonly liveSessions = new Map<
+    string,
+    { readonly hostId: string; readonly transportKind: SelectionTransportKind }
+  >();
+  /**
+   * Restart tombstones observed while no kernel was bound, keyed by host.
+   *
+   * A tombstone looks like an EVENT, and replaying events is where
+   * phantom-liveness bugs come from - so it is worth being exact about why
+   * this one is STATE. The host is not reporting that something happened; it
+   * is announcing an ONGOING condition - going down deliberately, coming back
+   * - and that condition stops being true at a knowable moment. The two
+   * retention rules below are what convert it back into state, and neither
+   * needs a clock this relay does not have.
+   *
+   * `expiresAt` is retained for the report but NEVER consulted here: the
+   * contract is explicit that it is the HOST's clock and display-only, and the
+   * authority bounds episodes with its own ceiling. Reading it would be the
+   * second opinion the contract forbids.
+   */
+  private readonly retainedRestartIntents = new Map<
+    string,
+    { readonly tombstoneId: string; readonly expiresAt: number | null }
+  >();
 
   /**
-   * Points the relay at `target` and returns the unbind. A second bind
-   * replaces the first outright rather than stacking - two live kernels for
-   * one window is not a state this design has, and silently fanning out to
-   * both would double every streak the authority counts.
+   * Points the relay at `target`, REPLAYS what it already knows, and returns
+   * the unbind. A second bind replaces the first outright rather than
+   * stacking - two live kernels for one window is not a state this design has,
+   * and silently fanning out to both would double every streak the authority
+   * counts.
+   *
+   * The replay happens BEFORE this returns, so a bound target is never
+   * live-but-empty: there is no window in which the kernel is receiving fresh
+   * reports while still believing the pool is idle. In the composition that
+   * matters, `acquireRendererSelectionKernel` binds before it calls
+   * `start()`, so the replay lands in the kernel's session map before the
+   * attach reads its inventory - which is what makes this fix the ATTACH
+   * inventory rather than merely steady-state reporting.
+   *
+   * Sessions replay first, then tombstones. That order is the engine's own arm
+   * order: an expected outage OUTRANKS a live session (a host that has
+   * announced it is going down must not flash `ready` a moment before the
+   * socket dies), so a host that legitimately holds both reproduces the same
+   * verdict it would have reached live.
    */
   bind(target: TransportEvidenceReporter): () => void {
     this.target = target;
+    for (const [sessionId, session] of this.liveSessions) {
+      target.sessionEstablished(
+        session.hostId,
+        sessionId,
+        session.transportKind,
+      );
+    }
+    // CONSUMED, not re-announced. The semantics are "this was dropped on the
+    // floor; hand it to whoever binds next", not "re-open an episode on every
+    // bind". A redundant delivery would be inert anyway - the engine dedups on
+    // (hostId, tombstoneId) and a duplicate can never extend an episode - but
+    // relying on the consumer's dedup to bound our own re-announcement would
+    // be the relay asserting something it does not know.
+    const intents = Array.from(this.retainedRestartIntents);
+    this.retainedRestartIntents.clear();
+    for (const [hostId, intent] of intents) {
+      target.reportRestartIntent(hostId, intent.tombstoneId, intent.expiresAt);
+    }
     return () => {
       if (this.target === target) {
         this.target = null;
@@ -183,6 +263,13 @@ export class TransportEvidenceRelay implements TransportEvidenceReporter {
     sessionId: string,
     transportKind: SelectionTransportKind,
   ): void {
+    this.liveSessions.set(sessionId, { hostId, transportKind });
+    // RETENTION RULE 1: the host is back, so the restart it announced is over.
+    // This agrees with the engine by construction rather than by coincidence -
+    // the same evidence drives `onHostProvedAlive`, which closes the episode
+    // there - which is what makes this copy incapable of disagreeing with the
+    // authority's.
+    this.retainedRestartIntents.delete(hostId);
     this.target?.sessionEstablished(hostId, sessionId, transportKind);
   }
 
@@ -191,6 +278,12 @@ export class TransportEvidenceRelay implements TransportEvidenceReporter {
     sessionId: string,
     transportKind: SelectionTransportKind,
   ): void {
+    // Dropped from the inventory whether or not a target is bound. A session
+    // lost during an unbound window must never be replayed as live - that is
+    // the phantom-LIVENESS direction of blocker 6, and it is worse than the
+    // absence this fix exists to close: a phantom session suppresses the death
+    // streak for its host indefinitely.
+    this.liveSessions.delete(sessionId);
     this.target?.sessionLost(hostId, sessionId, transportKind);
   }
 
@@ -246,6 +339,20 @@ export class TransportEvidenceRelay implements TransportEvidenceReporter {
     tombstoneId: string,
     expiresAt: number | null,
   ): void {
-    this.target?.reportRestartIntent(hostId, tombstoneId, expiresAt);
+    // RETAINED ONLY WHILE UNBOUND. With a kernel bound the report reaches it
+    // now and there is nothing to hold; retaining anyway would mean replaying
+    // it again at the next bind, re-opening an episode the authority already
+    // knows about. The unbound window is precisely a host-runtime remount or
+    // an account switch - and a restart observed during one is the case a
+    // tombstone exists for, so dropping it there (the `?.` this replaces) is
+    // the one loss that costs the exemption its whole purpose.
+    if (this.target === null) {
+      // Last write wins per host: a newer tombstone describes the restart that
+      // is actually in progress, and the engine would ignore the older id as a
+      // duplicate episode anyway.
+      this.retainedRestartIntents.set(hostId, { tombstoneId, expiresAt });
+      return;
+    }
+    this.target.reportRestartIntent(hostId, tombstoneId, expiresAt);
   }
 }

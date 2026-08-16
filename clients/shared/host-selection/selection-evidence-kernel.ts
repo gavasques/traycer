@@ -125,6 +125,25 @@ export class SelectionEvidenceKernel implements TransportEvidenceReporter {
    */
   private readonly sessions = new Map<string, KernelSessionRecord>();
 
+  /**
+   * Restart tombstones observed while this window had no accepted
+   * incarnation, keyed by host and flushed once the attach lands.
+   *
+   * The mirror of `sessions` for a different kind of window-knowledge: both
+   * are things this window learned that the authority must be told across an
+   * attach boundary, and neither survives it on its own. Cleared by proof of
+   * life (see `sessionEstablished`) so the two holders of this fact - here and
+   * the transport relay - are incapable of disagreeing.
+   */
+  private readonly retainedRestartIntents = new Map<
+    string,
+    {
+      readonly tombstoneId: string;
+      readonly expiresAt: number | null;
+      readonly at: number;
+    }
+  >();
+
   private current: SelectionKernelSnapshot = DETACHED_SNAPSHOT;
   /**
    * The highest authority revision applied PER SLICE.
@@ -232,6 +251,12 @@ export class SelectionEvidenceKernel implements TransportEvidenceReporter {
     transportKind: SelectionTransportKind,
   ): void {
     this.sessions.set(sessionId, { hostId, transportKind });
+    // The host is back, so the restart it announced is over - the same rule
+    // the relay applies, and it agrees with the engine by construction, since
+    // this very evidence drives `onHostProvedAlive` there. Flushing a stale
+    // intent after the host proved itself alive would hold a HEALTHY host out
+    // of selection for a full episode.
+    this.retainedRestartIntents.delete(hostId);
     void this.options.client.reportEvidence({
       kind: "session",
       hostId,
@@ -357,12 +382,33 @@ export class SelectionEvidenceKernel implements TransportEvidenceReporter {
     tombstoneId: string,
     expiresAt: number | null,
   ): void {
+    const at = this.options.now();
+    if (!this.current.attached) {
+      // RETAINED, because the client would otherwise drop this on the floor:
+      // evidence produced before the attach BEGINS is discarded outright
+      // (`attachStarted` is still false), and that window is exactly where a
+      // replayed tombstone lands - the composition root binds the relay to
+      // this kernel and only then calls `start()`.
+      //
+      // Sessions already survive that window and it is worth being precise
+      // about why, because it is the reason intents did not: a session is
+      // recorded in `this.sessions` and the ATTACH INVENTORY is read from
+      // there, so the inventory carries it across the boundary. An intent has
+      // no such carrier, so it needs this one. Same class of
+      // window-knowledge, same treatment.
+      //
+      // Latest-per-host, matching the relay's own retention bound: a newer
+      // tombstone describes the restart actually in progress, and the engine
+      // would ignore the older id as a duplicate episode anyway.
+      this.retainedRestartIntents.set(hostId, { tombstoneId, expiresAt, at });
+      return;
+    }
     void this.options.client.reportEvidence({
       kind: "restart-intent",
       hostId,
       tombstoneId,
       expiresAt,
-      at: this.options.now(),
+      at,
     });
   }
 
@@ -426,8 +472,39 @@ export class SelectionEvidenceKernel implements TransportEvidenceReporter {
           return result;
         }
         this.installSnapshot(result.snapshot);
+        // FIRST THING after the attach lands, before any post-attach evidence
+        // can race it: a tombstone describes a host that is ALREADY going
+        // down, so anything that arrives after it should be interpreted
+        // against the episode, not ahead of it.
+        this.flushRetainedRestartIntents();
         return result;
       });
+  }
+
+  /**
+   * Hands the authority the restart intents this window observed while it had
+   * no accepted incarnation, and forgets them.
+   *
+   * CONSUMED, not re-announced - the semantics are "these were observed while
+   * nobody could hear them; deliver them once", and a later attach must not
+   * re-open a settled episode. A redundant delivery would be inert anyway
+   * (the engine keys episodes on `(hostId, tombstoneId)` and a duplicate can
+   * never extend one), which is also why no third dedup mechanism is added
+   * here if the relay's own retention and this one ever overlap: the engine
+   * already bounds a double delivery.
+   */
+  private flushRetainedRestartIntents(): void {
+    const retained = Array.from(this.retainedRestartIntents);
+    this.retainedRestartIntents.clear();
+    for (const [hostId, intent] of retained) {
+      void this.options.client.reportEvidence({
+        kind: "restart-intent",
+        hostId,
+        tombstoneId: intent.tombstoneId,
+        expiresAt: intent.expiresAt,
+        at: intent.at,
+      });
+    }
   }
 
   private applySelection(revision: number, change: SelectionChange): void {

@@ -687,6 +687,11 @@ function UsageActivitySection(props: {
  * explanation and a way back, never a silent gap. A classified
  * too-wide-window rejection with the fallback still in flight is NOT that
  * state: the narrower read is the answer to it, so the section waits.
+ *
+ * Once that narrower read has failed too, the FALLBACK's error is the one
+ * shown. The too-wide rejection is by then a resolved fact about the host's
+ * age, not a problem the reader can act on - it says the year window was
+ * refused, while what actually broke is whatever stopped the quarter.
  */
 function usageActivityDisplayedError(
   query: UsageSummaryQueryResult,
@@ -694,7 +699,7 @@ function usageActivityDisplayedError(
 ): HostRpcError | null {
   const error = query.error;
   if (error === null) return null;
-  if (isWindowTooWideError(error) && fallbackQuery.error === null) return null;
+  if (isWindowTooWideError(error)) return fallbackQuery.error;
   return error;
 }
 

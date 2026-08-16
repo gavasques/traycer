@@ -623,25 +623,25 @@ describe("<EpicUsageDialog />", () => {
     renderDialog(usageSummaryResponse);
     await screen.findByTestId("usage-cost-figure");
 
-    await user.click(screen.getByTestId("epic-usage-copy-image"));
+    await user.click(
+      screen.getByRole<HTMLButtonElement>("button", { name: "Copy image" }),
+    );
 
     // A capture is a full-region rasterisation, so the two legs share one
     // mutation: while the copy runs, DOWNLOAD is disabled too - not just the
     // button that was pressed.
-    const downloadButton = screen.getByTestId("epic-usage-download-image");
+    const downloadButton = screen.getByRole<HTMLButtonElement>("button", {
+      name: "Download image",
+    });
     await waitFor(() => {
-      expect(
-        downloadButton instanceof HTMLButtonElement && downloadButton.disabled,
-      ).toBe(true);
+      expect(downloadButton.disabled).toBe(true);
     });
     expect(mocks.captureUsageExportImageBlob).toHaveBeenCalledTimes(1);
 
     resolveCapture(blob);
 
     await waitFor(() => {
-      expect(
-        downloadButton instanceof HTMLButtonElement && downloadButton.disabled,
-      ).toBe(false);
+      expect(downloadButton.disabled).toBe(false);
     });
   });
 

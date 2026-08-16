@@ -61,10 +61,14 @@ vi.mock("@/lib/host/stream-runtime-context", () => ({
 
 // The socket is the boundary: the stub stream factory below stands in for the
 // whole transport, so this opener is never reached.
+//
+// Hoisted to ONE instance so it is referentially stable across renders, as the
+// real hook is — see `lib/registries/__tests__/chat-session-registry.test.ts`.
+const refuseDurableTransport = vi.hoisted(() => () => {
+  throw new Error("no durable transport in tests");
+});
 vi.mock("@/lib/host/use-durable-stream-transport", () => ({
-  useDurableStreamTransportFactory: () => () => {
-    throw new Error("no durable transport in tests");
-  },
+  useDurableStreamTransportFactory: () => refuseDurableTransport,
 }));
 
 import { EpicSessionContext } from "@/lib/registries/epic-session-registry";

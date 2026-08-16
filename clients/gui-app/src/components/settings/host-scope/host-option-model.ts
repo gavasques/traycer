@@ -1,3 +1,4 @@
+import type { HostHealthState } from "@/components/settings/host-scope/host-health";
 import type { HostScopeOption } from "@/components/settings/host-scope/host-scope-model";
 
 /**
@@ -38,22 +39,62 @@ export function isHostOptionSelectable(
 }
 
 /**
- * A host this client cannot dial is still worth listing — it is the account's
- * host and its status is real — but saying so up front prevents a click that
- * could only ever fail. Plan-gated is named apart from unreachable: the first
- * is fixed by an upgrade, the second maybe by waiting, and one word covering
- * both sends people debugging their network over a billing limit.
+ * The row's status word — the SAME vocabulary the Overview card speaks, in the
+ * terse form a single-line row can carry.
  *
- * `host.settingUp` outranks both, and that ordering is the M5 requirement: a
- * machine whose host is being installed right now is not "unreachable" in any
+ * It used to answer a ROUTE question in STATUS words:
+ *
+ *     if (host.connectable) return null;
+ *     return host.planRestricted ? "requires upgrade" : "unreachable";
+ *
+ * which made this the app's THIRD independent status vocabulary — after the
+ * Settings health line and the tile banners — and the one that contradicted its
+ * own row. A registry-only host whose health line read "Reported reachable"
+ * carried the word "unreachable" beside it, in the same row, because the two
+ * were answering different questions in the same voice.
+ *
+ * Those questions are now cleanly split. **Route decides interactivity**
+ * (`isHostOptionSelectable` below, which the containers use to render a row
+ * inert); **status decides words**, and status means the lease-derived
+ * `health.state`. A row that cannot be dialled is therefore silent about it
+ * here and inert to the touch, with the full reason spoken by the scope gate
+ * when a `view` pick lands on it — rather than a fourth surface inventing its
+ * own word for a fact three others already describe.
+ *
+ * `host.settingUp` outranks the table, and that ordering is the M5 requirement:
+ * a machine whose host is being installed right now is not "offline" in any
  * sense a user can act on — it is mid-setup, and it will be dialable shortly.
- * Calling it unreachable is what made the second device's first launch read as
- * a broken machine while it was working perfectly.
+ * It is also a mutation-lane fact rather than a status one, which is why it
+ * sits outside the table instead of inside it.
  */
+const STATUS_WORD: Record<HostHealthState, string | null> = {
+  // Nothing to add: the dot carries it, and a word here would restate the
+  // absence of a problem on every healthy row in the list.
+  online: null,
+  // Deliberately silent. The host is pickable and will dial; "reported
+  // reachable" is a nuance for the card, not a warning for a row, and the
+  // muted dot already withholds the liveness claim (F26).
+  "reported-reachable": null,
+  // A blind cloud read is not something a person acts on from a picker.
+  unknown: null,
+  // A WINDOW-scope fact: when the client is offline every row is in this
+  // state, so the global narrator owns it (`windowNarratorOwns`) and repeating
+  // it down a list of eight is the layered-narration class this epic deletes.
+  "viewer-offline": null,
+  restarting: "restarting",
+  offline: "offline",
+  // The remedy, not the symptom — one word covering both this and `offline`
+  // is what sent people debugging a network over a billing limit.
+  "local-only": "requires upgrade",
+  "update-required": "update required",
+  removed: "removed",
+  stopped: "stopped",
+  "not-installed": "not installed",
+};
+
 export function hostOptionStatusWord(host: HostScopeOption): string | null {
   if (host.settingUp) return "setting up";
-  if (host.connectable) return null;
-  return host.planRestricted ? "requires upgrade" : "unreachable";
+  return STATUS_WORD[host.health.state];
 }
 
 /**

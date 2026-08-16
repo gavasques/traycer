@@ -156,6 +156,14 @@ describe("<HostSwitcher /> empty vs failed", () => {
     // Same `connectable: false`, different fact: one is fixed by an upgrade,
     // the other maybe by waiting. One word covering both sent people
     // debugging their network over a billing limit.
+    //
+    // The row's word comes from `health.state` now, not from `connectable` /
+    // `planRestricted` — those decide whether the row can be PICKED, which is
+    // a route question, while the word is a status question (P4.3's ruling D).
+    // So the fixture has to say what the host's health IS, and the route flags
+    // stay because pick legality is still theirs to decide. `unreachable` is
+    // no longer a row word at all, which makes the second assertion below
+    // stronger than it was rather than weaker.
     render(
       <HostSwitcher
         hosts={[
@@ -165,6 +173,13 @@ describe("<HostSwitcher /> empty vs failed", () => {
             isLocalMachine: false,
             connectable: false,
             planRestricted: true,
+            health: {
+              state: "local-only",
+              label: "Local only",
+              detail: "Not reachable from here — remote access needs a paid plan.",
+              tone: "idle",
+              live: false,
+            },
           }),
         ]}
         selected={null}

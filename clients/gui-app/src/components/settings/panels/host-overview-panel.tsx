@@ -9,6 +9,8 @@ import {
   type InstallationDetailsRecord,
 } from "@/components/settings/panels/host-settings-installation-details";
 import { HostIdentityCard } from "@/components/settings/host-scope/host-identity-card";
+import { HostUpdateRequiredAction } from "@/components/settings/host-scope/host-update-required-action";
+import { useHostLease } from "@/hooks/host/use-host-lease";
 import { HostDangerZone } from "@/components/settings/host-scope/host-danger-zone";
 import { HostUpdateDrainGateRow } from "@/components/settings/host-scope/host-registry-updates";
 import { useHostRegistryUpdateMutation } from "@/components/settings/host-scope/use-host-registry-update-mutation";
@@ -56,7 +58,7 @@ import {
   hostServiceWriteLatches,
   useHostServiceWriteLatchStore,
 } from "@/components/settings/panels/host-service-write-latch-store";
-import { useHostBinding, type HostRpcRegistry } from "@/lib/host";
+import type { HostRpcRegistry } from "@/lib/host";
 import { toastFromHostError } from "@/lib/host-error-toast";
 import {
   toastHostRestartDeclined,
@@ -125,10 +127,37 @@ export function HostOverviewPanel(props: {
   const compact = useSettingsDensity() === "compact";
   const host = scope.host;
 
-  // The BINDING rather than `useHostClient()`: same context, re-provided by the
-  // panel above for an explicit pick, but `null` instead of a throw when there
-  // is no host runtime at all. Every read below is null-gated.
-  const client = useHostBinding()?.hostClient ?? null;
+  // THE SCOPE'S OWN CLIENT, read directly rather than through the ambient
+  // binding.
+  //
+  // This was `useHostBinding()?.hostClient`, and that was CORRECT — but only
+  // because of something two files away. `HostSettingsPanel` wraps this
+  // subtree in `<HostRuntimeContext.Provider value={scopedBinding}>` (`:148`),
+  // so the binding read here was already the scoped host's. The wrapper is the
+  // load-bearing part and it is not greppable from the words its old comment
+  // used: searching `HostBindingProvider|HostRuntimeProvider` finds nothing,
+  // because it is only ever spelled as the context's own `.Provider`. A
+  // correct mechanism that reads as absent is one a future refactor removes
+  // without noticing.
+  //
+  // Reading `scope.client` is behaviour-equivalent in both reachable arms —
+  // under `ready` it is the same client the wrapper re-provides, and under
+  // `following` `use-host-scope.ts:190` makes it the ambient one — and it
+  // removes the dependency: this panel now addresses the host it names whether
+  // or not anything above it re-provides. That matters because of what hangs
+  // off this value. Eight reads, and three of them WRITE:
+  // `host.identity.set` renames a machine, `host.restart` ends its sessions,
+  // and the drain-gate force ends them without waiting. The rule they owe is
+  // stated once, in `host-scope-status.ts`: "a visible host name must always
+  // match the client used by every read, stream and mutation beneath it."
+  //
+  // `host-overview-scoped-client.test.tsx` is the guard, and it works by
+  // forcing exactly the divergence the wrapper would otherwise hide.
+  //
+  // Still nullable, so the null-gating below is unchanged: `scope.client` is
+  // null for `connecting`, `unreachable` and `vanished` — the states
+  // `isHostScopeUsable` already refuses.
+  const client = scope.client;
   // MOUNTING, not rendering. A query hook mounted under a non-ready scope still
   // fires against the ambient host and caches the answer under this page's key,
   // however well a gate hides the result.
@@ -502,6 +531,15 @@ export function HostOverviewPanel(props: {
 
   const registryItem = host.item;
 
+  // The two facts the window modal's own update gate reduces to, asked once
+  // here rather than inside the JSX. Force-provisioning is the BUNDLED host's
+  // lifecycle on this computer: `hostManagement` is the bridge that can run it,
+  // and `isLocalMachine` is whether this row is the machine it would run
+  // against. Either one false means there is no update this app can perform,
+  // and the row falls back to naming the problem without offering a control
+  // that cannot reach it.
+  const canManageHost = host.isLocalMachine && management !== null;
+
   // The header cluster, withheld entirely when there is no route rather than
   // rendered and disabled. Every one of its verbs needs a live host to answer,
   // so on an unreachable host they would be dead controls under a card that
@@ -600,6 +638,9 @@ export function HostOverviewPanel(props: {
           )
         }
         actions={headerActions}
+        healthAction={
+          <HostUpdateRequiredSlot host={host} canManageHost={canManageHost} />
+        }
       >
         {view.updateProgress === null ? null : (
           <HostOverviewUpdateProgress
@@ -779,6 +820,59 @@ export function HostOverviewPanel(props: {
         }
       />
     </div>
+  );
+}
+
+/**
+ * The "Update host" remedy, mounted beside the health word that names the
+ * problem (rider 1: Settings renders `dead(incompatible)` with its affordance).
+ *
+ * GATED ON BOTH the rendered health state and the lease, and the conjunction is
+ * the point rather than belt-and-braces. `health.state` respects the derivation
+ * precedence — this machine's own stopped service outranks the authority's
+ * verdict — so a local host that is BOTH incompatible and not running reads
+ * "Stopped", and offering "Update host" beside that word would answer a
+ * question the card is not asking. The lease is then what carries the
+ * structured skew the action needs, which `health` deliberately does not.
+ *
+ * The lane is `convergeReady({ force: true })` — the SAME mutation and the same
+ * `runnerMutationKeys.hostConvergeReady()` key the window modal's "Update host"
+ * drives through `forceProvisioning`, and the same one `LocalHostRecoveryActions`
+ * below uses with `force: false`. So a click here is narrated by the existing
+ * actor-agnostic progress lane ("Applying the host update…") with no second
+ * observer and no new key; nothing about this surface needed a mechanism of its
+ * own, which is why it does not have one.
+ */
+export function HostUpdateRequiredSlot(props: {
+  readonly host: HostScopeOption;
+  readonly canManageHost: boolean;
+}): ReactNode {
+  const lease = useHostLease(props.host.hostId);
+  const convergeReady = useRunnerConvergeReady();
+  if (props.host.health.state !== "update-required") return null;
+  if (lease === null || lease.status !== "dead") return null;
+  if (lease.dead.reason !== "incompatible") return null;
+  return (
+    <HostUpdateRequiredAction
+      detail={lease.dead.detail}
+      canManageHost={props.canManageHost}
+      pending={convergeReady.isPending}
+      onUpdateHost={() => {
+        convergeReady.mutate(
+          { force: true },
+          {
+            onSuccess: () => {
+              toast.success(`Updating ${props.host.name}…`);
+            },
+            onError: (error) =>
+              toastFromRunnerError(
+                error,
+                `Couldn't update ${props.host.name}.`,
+              ),
+          },
+        );
+      }}
+    />
   );
 }
 

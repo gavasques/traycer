@@ -5,7 +5,9 @@ import { useHostDirectoryList } from "@/hooks/host/use-host-directory-list-query
 import { useRemoteSessionsPollReadiness } from "@/hooks/host/use-remote-sessions-poll-readiness";
 import { useHostProvisioningProgress } from "@/hooks/host/use-host-provisioning-progress";
 import { useRegisteredHosts } from "@/hooks/auth/use-registered-hosts-query";
-import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
+import { useEffectiveHostId } from "@/hooks/host/use-effective-host-id";
+import { useHostLeases } from "@/hooks/host/use-host-lease";
+import { useSelectionAuthorityAttached } from "@/hooks/host/use-selection-authority-attached";
 import { useRemoteHostsPlanRestricted } from "@/hooks/host/use-remote-hosts-plan-gate";
 import { useNowMs } from "@/components/settings/panels/host-settings-panel-hooks";
 import { useRunnerHost } from "@/providers/use-runner-host";
@@ -88,7 +90,14 @@ function skipInstalledRecord(): Promise<HostInstalledRecord | null> {
 export function useHostOptions(): HostOptions {
   const binding = useHostBinding();
   const runnerHost = useRunnerHost();
-  const activeHostId = useReactiveActiveHostId();
+  // The SELECTION, not addressability. `useReactiveActiveHostId()` answers
+  // "is the derived host addressable yet" and goes `null` while its directory
+  // row is still resolving; every picker here is narrating which host the
+  // authority chose, so the tag and the sort must not blink off for the length
+  // of a directory round trip. That distinction is P4.2's, written at the
+  // hook - narrators take this one, gates take that one - and this file is a
+  // narrator in all four of its consumers.
+  const activeHostId = useEffectiveHostId();
   const nowMs = useNowMs();
 
   const directoryQuery = useHostDirectoryList();
@@ -175,6 +184,20 @@ export function useHostOptions(): HostOptions {
   // launch reconciler, the authority's ensure, or a user's Retry asked.
   const localHostSettingUp = useHostProvisioningProgress() !== null;
 
+  // The authority's own verdicts, and the flag that says whether it has
+  // reached any. These are what make every row below say the same thing the
+  // tiles say: `use-host-lease.ts` has carried the rule as a doc comment since
+  // P3.3 - all status UI derives from the lease vocabulary, no surface reads
+  // sockets, probe caches or the cloud DTO directly - and until this read
+  // existed, Settings and the pickers were the sentence's counterexample.
+  //
+  // `attached` is threaded beside the leases rather than inferred from an
+  // empty array: before the bridge mounts EVERY host has no lease, and a
+  // derivation that could not tell that apart from a real verdict would blank
+  // the fleet on every cold start.
+  const leases = useHostLeases();
+  const authorityAttached = useSelectionAuthorityAttached();
+
   const hosts = useMemo(
     () =>
       buildHostScopeOptions({
@@ -184,6 +207,8 @@ export function useHostOptions(): HostOptions {
         activeHostId,
         localService,
         hasLiveSession,
+        leases,
+        authorityAttached,
         remoteHostsPlanRestricted,
         localHostSettingUp,
         nowMs,
@@ -195,6 +220,8 @@ export function useHostOptions(): HostOptions {
       activeHostId,
       localService,
       hasLiveSession,
+      leases,
+      authorityAttached,
       localHostSettingUp,
       remoteHostsPlanRestricted,
       nowMs,

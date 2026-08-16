@@ -8,6 +8,7 @@ import {
 } from "react";
 import { useRouterState } from "@tanstack/react-router";
 import type { HostDirectoryEntry } from "@traycer-clients/shared/host-client/host-directory";
+import type { HostLeaseSnapshot } from "@traycer-clients/shared/host-selection/selection-authority-contract";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
@@ -39,6 +40,8 @@ import { useReactiveHostReadiness } from "@/hooks/host/use-reactive-host-readine
 import { useRemoteSessionsPollReadiness } from "@/hooks/host/use-remote-sessions-poll-readiness";
 import { useHostBinding } from "@/lib/host";
 import { useEffectiveHostId } from "@/hooks/host/use-effective-host-id";
+import { useHostLeases } from "@/hooks/host/use-host-lease";
+import { useSelectionAuthorityAttached } from "@/hooks/host/use-selection-authority-attached";
 import {
   useHostCompatibility,
   type HostCompatibility,
@@ -64,6 +67,9 @@ export function HostReadinessControllerProvider(props: {
   // no longer holds one - and it changes the instant Activate re-derives,
   // which re-renders this controller.
   const effectiveHostId = useEffectiveHostId();
+  // The authority's own verdicts, for the default-host readiness arm below.
+  const leases = useHostLeases();
+  const authorityAttached = useSelectionAuthorityAttached();
   // The app-wide client, resolved from that id. It used to be the spine, whose
   // answer came from the active slot; P4.2 deleted the slot, so the id-pinned
   // requester is what reports "the effective host, once its row exists".
@@ -149,6 +155,8 @@ export function HostReadinessControllerProvider(props: {
           requestContextUserId={readiness.requestContextUserId}
           directoryEntries={directoryEntries}
           hasReadySessionFor={hasReadySessionFor}
+          leases={leases}
+          authorityAttached={authorityAttached}
           hasLocalHost={runnerHost.hasLocalHost}
           hasMobileNoHost={
             binding !== null && binding.directory.getCardinality() === "zero"
@@ -174,6 +182,13 @@ function HostReadinessControllerContents(props: {
   readonly requestContextUserId: string | null;
   readonly directoryEntries: ReadonlyArray<HostDirectoryEntry>;
   readonly hasReadySessionFor: (hostId: string) => boolean;
+  /**
+   * The authority's leases and its attach flag, threaded to the DEFAULT-HOST
+   * arm of `resolveSurfaceReadiness`. Read there and nowhere else - the
+   * tab-host arm stays a route question by design (§1b).
+   */
+  readonly leases: readonly HostLeaseSnapshot[];
+  readonly authorityAttached: boolean;
   readonly hasLocalHost: boolean;
   readonly hasMobileNoHost: boolean;
   readonly lifecycle: HostProvisioningLifecycle;
@@ -219,6 +234,8 @@ function HostReadinessControllerContents(props: {
           hasReadySessionFor: props.hasReadySessionFor,
           hasLocalHost: props.hasLocalHost,
           hasMobileNoHost: props.hasMobileNoHost,
+          leases: props.leases,
+          authorityAttached: props.authorityAttached,
         });
         return scope === "default-host"
           ? projectDefaultHostReadiness({
@@ -242,6 +259,8 @@ function HostReadinessControllerContents(props: {
     props.hasReadySessionFor,
     props.hasLocalHost,
     props.hasMobileNoHost,
+    props.leases,
+    props.authorityAttached,
     props.requestContextUserId,
   ]);
 

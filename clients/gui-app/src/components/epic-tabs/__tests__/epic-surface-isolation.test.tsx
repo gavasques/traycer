@@ -42,24 +42,50 @@ const activeHostEntry = vi.hoisted(() => ({
   transportDialability: "dialable" as const,
 }));
 
-const activeHostClient = vi.hoisted(() => ({
-  // The remote-aware owner identity key (R-1) reads the full active entry, not
-  // just its id, so the fake must answer `getActiveHost` too - with the real
-  // entry, matching `resolveHostById` below rather than contradicting it.
-  getActiveHost: () => activeHostEntry,
-  getActiveHostId: () => "default-host",
-  getRequestContext: () => null,
-  getRequestContextUserId: () => null,
-  onChange: () => () => undefined,
-  request: () => Promise.resolve({}),
-  resolveHostById: (hostId: string) =>
-    hostId === activeHostEntry.hostId ? activeHostEntry : null,
-}));
+const activeHostClient = vi.hoisted(() => {
+  const client = {
+    // The remote-aware owner identity key (R-1) reads the full active entry, not
+    // just its id, so the fake must answer `getActiveHost` too - with the real
+    // entry, matching `resolveHostById` below rather than contradicting it.
+    getActiveHost: () => activeHostEntry,
+    getActiveHostId: () => "default-host",
+    getRequestContext: () => null,
+    getRequestContextUserId: () => null,
+    onChange: () => () => undefined,
+    request: () => Promise.resolve({}),
+    resolveHostById: (hostId: string) =>
+      hostId === activeHostEntry.hostId ? activeHostEntry : null,
+    // Redesign P4.2's introduced symbol: `useReactiveActiveHostId` resolves the
+    // effective host through an id-pinned requester now that the active slot is
+    // gone, so a hand-rolled client that does not answer this throws on the
+    // first render that reaches the hook - here, transitively, via the sidebar
+    // rail. Added under an explicit grant rather than by P4.2's own sweep so
+    // this file keeps one writer; the line belongs to their class and their
+    // census, and is attributed there.
+    //
+    // SELF-RETURNING, and only honestly so because this fixture has exactly ONE
+    // host: the requester for `default-host` IS this client. A fixture with a
+    // second host would have to resolve per id, and returning `this` would then
+    // hand back a client addressing the wrong machine.
+    createRequesterForHostId: (): unknown => null,
+  };
+  client.createRequesterForHostId = () => client;
+  return client;
+});
 
+// ONE hoisted opener, not a fresh closure per render. This suite is the one
+// that hung for over nine minutes during P2.4 — a synchronous render loop
+// starves the event loop, so `--testTimeout` cannot fire and the run simply
+// stops terminating — and an unstable opener is exactly the dep churn that
+// feeds that shape. The mechanism was fixed at its owner (the provider's
+// presentation writes are idempotent by value), so this is the fixture no
+// longer contradicting the contract of the hook it doubles, not a live fix.
+// Full rationale: `lib/registries/__tests__/chat-session-registry.test.ts`.
+const refuseDurableTransport = vi.hoisted(() => () => {
+  throw new Error("the Epic stream override must prevent socket creation");
+});
 vi.mock("@/lib/host/use-durable-stream-transport", () => ({
-  useDurableStreamTransportFactory: () => () => {
-    throw new Error("the Epic stream override must prevent socket creation");
-  },
+  useDurableStreamTransportFactory: () => refuseDurableTransport,
 }));
 
 // Spread the real module rather than enumerate the three exports this suite

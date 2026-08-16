@@ -1,5 +1,6 @@
 import { createContext, use } from "react";
 import type { HostDirectoryEntry } from "@traycer-clients/shared/host-client/host-directory";
+import type { HostLeaseSnapshot } from "@traycer-clients/shared/host-selection/selection-authority-contract";
 import type { MutationProgress } from "@traycer-clients/shared/platform/runner-host";
 import type { HostStatusSnapshot } from "@/lib/host/compatibility-state";
 import { dialableHostEndpointFor } from "@/lib/host/transport-key";
@@ -254,6 +255,79 @@ export function isHostDialable(
   );
 }
 
+/**
+ * The effective host's lease, or `null` when the authority has not reached a
+ * usable verdict about it.
+ *
+ * `null` covers three different situations that must all defer to the weaker
+ * evidence rather than terminate the derivation: the kernel has not attached,
+ * no lease exists for this host, and the lease says `connecting` — the
+ * contract's non-committal state, which is also what an unknown status parses
+ * to at the raw boundary. Reading any of them as failure would turn "we have
+ * not found out yet" into a closed window.
+ */
+function defaultHostLease(args: {
+  readonly activeHostId: string | null;
+  readonly leases: readonly HostLeaseSnapshot[];
+  readonly authorityAttached: boolean;
+}): HostLeaseSnapshot | null {
+  if (!args.authorityAttached || args.activeHostId === null) return null;
+  const lease = args.leases.find(
+    (candidate) => candidate.hostId === args.activeHostId,
+  );
+  if (lease === undefined || lease.status === "connecting") return null;
+  return lease;
+}
+
+/**
+ * The app-wide surface's readiness. Extracted from
+ * {@link resolveSurfaceReadiness} so each arm is readable on its own - the two
+ * scopes answer genuinely different questions, and reading leases in one of
+ * them made a single function branch on both a route and a verdict.
+ */
+function defaultHostReadiness(args: {
+  readonly activeHostId: string | null;
+  readonly requestContextUserId: string | null;
+  readonly directoryEntries: ReadonlyArray<HostDirectoryEntry>;
+  readonly hasLocalHost: boolean;
+  readonly hasMobileNoHost: boolean;
+  readonly hasReadySessionFor: (hostId: string) => boolean;
+  readonly leases: readonly HostLeaseSnapshot[];
+  readonly authorityAttached: boolean;
+}): SurfaceReadiness {
+  const activeEntry = args.directoryEntries.find(
+    (candidate) => candidate.hostId === args.activeHostId,
+  );
+  if (
+    args.activeHostId !== null &&
+    args.requestContextUserId !== null &&
+    isHostDialable(
+      activeEntry,
+      activeEntry !== undefined && args.hasReadySessionFor(activeEntry.hostId),
+    )
+  ) {
+    return READY;
+  }
+  if (!args.hasLocalHost && args.hasMobileNoHost) {
+    return { kind: "mobile-no-host" };
+  }
+  // The authority's verdict, where it has one, decides which of the two
+  // not-ready kinds this is. Without it the choice was made by a proxy -
+  // "is there an id" - which answers `loading-host` for a host that is
+  // definitively gone and `unavailable-host` for one that is merely still
+  // connecting. A dead lease is not loading, and a connecting one is not
+  // unavailable; the lease is the only layer that knows which.
+  const lease = defaultHostLease(args);
+  if (lease !== null) {
+    return lease.status === "dead"
+      ? { kind: "unavailable-host" }
+      : { kind: "loading-host" };
+  }
+  return args.activeHostId === null
+    ? { kind: "loading-host" }
+    : { kind: "unavailable-host" };
+}
+
 export function resolveSurfaceReadiness(args: {
   readonly scope: HostReadinessScope;
   readonly tabHostId: string | null;
@@ -269,33 +343,29 @@ export function resolveSurfaceReadiness(args: {
    * {@link isHostDialable} for why this is an input and not a cache read).
    */
   readonly hasReadySessionFor: (hostId: string) => boolean;
+  /**
+   * The authority's published leases, and whether it has attached at all.
+   *
+   * Consumed by the DEFAULT-HOST arm only. That arm's subject is the app-wide
+   * effective host, which is precisely what the authority decides, so its
+   * verdict is the better answer than a directory-membership guess. The
+   * tab-host arm below deliberately does NOT read them: a tab is bound to its
+   * host for life and asks a window-local question — "does a route to my host
+   * exist" — which §1b keeps distinct from the app-wide lease on purpose.
+   *
+   * `attached: false` and a missing lease are ABSENCE OF EVIDENCE, never
+   * death: before this window's kernel attaches every host answers `null`, and
+   * a gate that read that as failure would blank the window on every cold
+   * start. Both fall through to the dialability answer below.
+   */
+  readonly leases: readonly HostLeaseSnapshot[];
+  readonly authorityAttached: boolean;
 }): SurfaceReadiness {
   if (args.scope === "none") return READY;
   if (args.authStatus === "signed-in" && args.requestContextUserId === null) {
     return { kind: "restoring-request-context" };
   }
-  if (args.scope === "default-host") {
-    const activeEntry = args.directoryEntries.find(
-      (candidate) => candidate.hostId === args.activeHostId,
-    );
-    if (
-      args.activeHostId !== null &&
-      args.requestContextUserId !== null &&
-      isHostDialable(
-        activeEntry,
-        activeEntry !== undefined &&
-          args.hasReadySessionFor(activeEntry.hostId),
-      )
-    ) {
-      return READY;
-    }
-    if (!args.hasLocalHost && args.hasMobileNoHost) {
-      return { kind: "mobile-no-host" };
-    }
-    return args.activeHostId === null
-      ? { kind: "loading-host" }
-      : { kind: "unavailable-host" };
-  }
+  if (args.scope === "default-host") return defaultHostReadiness(args);
   if (args.tabHostId === null) return { kind: "unavailable-host" };
   const entry = args.directoryEntries.find(
     (candidate) => candidate.hostId === args.tabHostId,

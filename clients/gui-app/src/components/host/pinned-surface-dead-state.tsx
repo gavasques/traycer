@@ -7,9 +7,26 @@ import { Button } from "@/components/ui/button";
  * The pin is kept. Reselect is the surface's own host picker; this block
  * only adds the "use active host" follow-effective affordance.
  *
- * Status words match `hostOptionStatusWord` so the picker row and banner
- * agree: plan-restricted → "requires upgrade"; otherwise "unreachable".
  * A pin whose host has left the directory does not print the raw id.
+ *
+ * VOCABULARY NOTE (redesign P4.3) — this used to claim its status words match
+ * `hostOptionStatusWord`, "plan-restricted → 'requires upgrade'; otherwise
+ * 'unreachable'". The first half still holds. The second no longer does:
+ * picker rows now speak the lease-derived health vocabulary, where that state
+ * is "offline", and `unreachable` is not a row word at all.
+ *
+ * The divergence is PRE-EXISTING rather than introduced there. The tile family
+ * already disagreed with itself — `tile-host-load-copy.ts` has worded the same
+ * dead lease as "offline" since P3.3, from the lease reason, while this banner
+ * words it from `HostUnavailability` via the reachability/deadline machinery.
+ * P4.3 made Settings agree with the lease vocabulary, which leaves this the
+ * one surface still saying "unreachable" and so makes the older split visible.
+ *
+ * The RENDERED copy is deliberately untouched here: changing it is a product
+ * decision, and it is queued for the phase walkthrough alongside this surface's
+ * other open item (`usePinnedSurfaceDead` inheriting F4's deadline, a D6
+ * behaviour change already flagged there). This note exists so the next reader
+ * inherits the real state instead of a claim that stopped being true.
  */
 export interface PinnedSurfaceDeadStateProps {
   readonly hostLabel: string;

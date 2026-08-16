@@ -4,6 +4,7 @@ import type {
   HostUpdateState,
 } from "@traycer/protocol/host/host-status";
 import type { ServiceStatusSnapshot } from "@traycer-clients/shared/platform/runner-host";
+import type { HostLeaseSnapshot } from "@traycer-clients/shared/host-selection/selection-authority-contract";
 import { hostUnavailability } from "@traycer-clients/shared/host-client/remote-fetcher";
 import { dialableHostEndpointFor } from "@/lib/host/transport-key";
 import {
@@ -83,6 +84,23 @@ export interface BuildHostScopeOptionsInput {
   readonly localService: ServiceStatusSnapshot | undefined;
   readonly hasLiveSession: (hostId: string) => boolean;
   /**
+   * Every lease the selection authority has published, as the store holds
+   * them. Looked up PER HOST below rather than taken as an already-resolved
+   * value, because the lookup is the part that has been got wrong before:
+   * sealed probe P12 degraded `useHostLease`'s `find(hostId)` to `leases[0]`
+   * and survived, since every suite seeded exactly one lease and a wrong-host
+   * answer was indistinguishable from a right one. Anything asserting against
+   * this field owes a two-host arrangement.
+   */
+  readonly leases: readonly HostLeaseSnapshot[];
+  /**
+   * Whether the authority has attached at all. Threaded rather than inferred
+   * from `leases.length === 0`, which cannot tell "not attached yet" from
+   * "attached, and this account genuinely has no hosts" — and the two demand
+   * opposite renderings.
+   */
+  readonly authorityAttached: boolean;
+  /**
    * The account's plan does not include remote hosts. Their relay URLs still
    * appear in the directory, but attaching is refused server-side, so the route
    * is not usable even though it looks like one.
@@ -103,6 +121,7 @@ export function buildHostScopeOptions(
 ): readonly HostScopeOption[] {
   const entries = new Map(input.directory.map((e) => [e.hostId, e]));
   const items = new Map(input.registry.map((i) => [i.hostId, i]));
+  const leases = new Map(input.leases.map((l) => [l.hostId, l]));
   const hostIds = [...new Set([...entries.keys(), ...items.keys()])];
 
   const options = hostIds.map((hostId): HostScopeOption => {
@@ -133,6 +152,8 @@ export function buildHostScopeOptions(
         isLocalMachine,
         hasLiveSession: input.hasLiveSession(hostId),
         service: isLocalMachine ? input.localService : undefined,
+        lease: leases.get(hostId) ?? null,
+        authorityAttached: input.authorityAttached,
         nowMs: input.nowMs,
       }),
       updateState: item?.status.updateState ?? null,

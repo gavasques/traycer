@@ -39,9 +39,19 @@ function registryItem(connectivity: HostConnectivity): HostListItem {
   };
 }
 
+/**
+ * No lease, authority not attached — i.e. the DTO is the only evidence there
+ * is. That is deliberately the base for this file: everything below is about
+ * the LOCAL-SERVICE and CLOUD-DTO steps of the precedence, which are only
+ * reached once the lease step has declined. The lease step's own behaviour
+ * (including that these two values must never be read as death) is covered in
+ * `host-health-lease.test.ts`.
+ */
 const BASE = {
   item: registryItem("offline"),
   hasLiveSession: false,
+  lease: null,
+  authorityAttached: false,
   nowMs: NOW_MS,
 };
 
@@ -133,7 +143,18 @@ describe("deriveHostHealth — the two actionable local states", () => {
 });
 
 describe("deriveHostHealth — connectivity mapping for a remote row", () => {
-  it("maps connectable to Online, live", () => {
+  /**
+   * F26. `connectable` is a cloud lease with a 15-minute TTL and nothing in
+   * this app has dialled the machine, so the row states the report rather than
+   * asserting liveness — and, more importantly, draws NO green dot.
+   *
+   * The dot is the part this pins hardest. `deriveHostPresence` has always
+   * carried the invariant "no green dot without live evidence", and its own
+   * `connectable` arm violated it by naming the stale lease as live evidence.
+   * A host that died dirty therefore kept a green Online for up to a quarter of
+   * an hour, extended further by the 60s keep-warm linger.
+   */
+  it("maps a never-dialled connectable host to Reported reachable, with NO live dot", () => {
     const health = deriveHostHealth({
       ...BASE,
       item: registryItem("connectable"),
@@ -141,9 +162,13 @@ describe("deriveHostHealth — connectivity mapping for a remote row", () => {
       service: undefined,
     });
 
-    expect(health.state).toBe("online");
-    expect(health.label).toBe("Online");
-    expect(health.live).toBe(true);
+    expect(health.state).toBe("reported-reachable");
+    expect(health.label).toBe("Reported reachable");
+    // The overclaim, in both of its forms.
+    expect(health.label).not.toBe("Online");
+    expect(health.live).toBe(false);
+    // Not a fault either — nothing is wrong, we simply have not looked.
+    expect(health.tone).toBe("idle");
   });
 
   it("maps local-only to its own state, labelled Local only, and never Offline", () => {

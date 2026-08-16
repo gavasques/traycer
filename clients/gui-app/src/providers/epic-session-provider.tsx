@@ -43,8 +43,7 @@ import {
 } from "@/lib/registries/epic-session-registry";
 import { useHostClientForHostId } from "@/hooks/host/use-host-client-for-host-id";
 import { shouldMergeEpicRoomSwap } from "@/lib/epics/epic-room-swap";
-
-const ESTABLISHING_DEADLINE_MS = 15_000;
+import { ESTABLISHING_DEADLINE_MS } from "@/lib/host/bounded-load-budgets";
 
 export interface EpicSessionProviderProps {
   readonly epicId: string;

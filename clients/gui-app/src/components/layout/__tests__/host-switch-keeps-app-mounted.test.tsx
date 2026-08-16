@@ -19,11 +19,6 @@ import {
 } from "@/components/layout/host-readiness-controller-context";
 // Route-facing gate name: pin the wiring, not just the inner component.
 import { HostReadyGate } from "@/components/layout/host-ready-gate";
-import { HostStatusStrip } from "@/components/layout/host-status-strip";
-import {
-  HostCompatibilityContext,
-  type HostCompatibility,
-} from "@/lib/host/compatibility-state";
 import { hostRpcRegistry, type HostRpcRegistry } from "@/lib/host";
 import { RunnerHostProvider } from "@/providers/runner-host-provider";
 import { useAuthStore } from "@/stores/auth/auth-store";
@@ -80,14 +75,10 @@ const PRESENTATION: DefaultHostReadinessPresentation = {
   configureShell: () => undefined,
   refreshDirectory: () => undefined,
   openSettings: () => undefined,
-  anyHostDialable: false,
   requestRespawn: () => undefined,
   respawnPending: false,
   compatibility: {
     status: "compatible",
-    errorMessage: null,
-    retrying: false,
-    retry: () => undefined,
     degraded: false,
     unreachable: false,
     hostStatus: {
@@ -95,17 +86,6 @@ const PRESENTATION: DefaultHostReadinessPresentation = {
       busySessionCount: 0,
       hostVersion: "1.0.0",
     },
-  },
-};
-
-const LIVE_COMPAT: HostCompatibility = {
-  status: "compatible",
-  degraded: false,
-  retry: () => undefined,
-  hostStatus: {
-    busy: false,
-    busySessionCount: 0,
-    hostVersion: "1.0.0",
   },
 };
 
@@ -138,6 +118,20 @@ function readScratch(): string {
 
 function typeIntoScratch(text: string): void {
   screen.getByTestId<HTMLInputElement>("app-scratch").value = text;
+}
+
+/**
+ * No window-scope banner is on screen (D11's first acceptance bullet).
+ *
+ * Asserted by ROLE, not by the deleted strip's test id. A `queryByTestId
+ * ("host-status-strip")` would be unfalsifiable now - nothing in the tree can
+ * produce that id any more, so it would pass forever regardless of what any
+ * future code did. `status` is the role an `<output>` live region reports, and
+ * the strip was exactly that: any replacement banner announcing host state at
+ * window scope lands in this query, whatever it calls itself.
+ */
+function expectNoWindowScopeBanner(): void {
+  expect(screen.queryAllByRole("status")).toHaveLength(0);
 }
 
 function controllerFor(
@@ -178,10 +172,9 @@ interface SwitchHarness {
 }
 
 /**
- * Mounts the gate + status strip under a real HostClient so the composite
- * switch trigger (`host-bound` via bind) and the cold-start latch can be
- * exercised together - the acceptance line "switching hosts keeps the app
- * mounted" for both directions.
+ * Mounts the gate under a real HostClient so a genuine `host-bound` switch and
+ * the cold-start latch are exercised together - the acceptance line "switching
+ * hosts keeps the app mounted" for both directions.
  */
 function mountSwitchSurface(
   initialReadiness: SurfaceReadiness,
@@ -214,16 +207,13 @@ function mountSwitchSurface(
   ): ReactNode => (
     <QueryClientProvider client={queryClient}>
       <RunnerHostProvider runnerHost={runnerHost}>
-        <HostCompatibilityContext.Provider value={LIVE_COMPAT}>
-          <HostReadinessControllerContext.Provider
-            value={controllerFor(next, nextPresentation)}
-          >
-            <HostReadyGate>
-              <AppSentinel />
-              <HostStatusStrip />
-            </HostReadyGate>
-          </HostReadinessControllerContext.Provider>
-        </HostCompatibilityContext.Provider>
+        <HostReadinessControllerContext.Provider
+          value={controllerFor(next, nextPresentation)}
+        >
+          <HostReadyGate>
+            <AppSentinel />
+          </HostReadyGate>
+        </HostReadinessControllerContext.Provider>
       </RunnerHostProvider>
     </QueryClientProvider>
   );
@@ -252,12 +242,12 @@ afterEach(() => {
 });
 
 describe("switching hosts keeps the app mounted", () => {
-  it("local→remote shows the strip via the composite host-bound trigger without full-screening", async () => {
-    // Local → remote never produces a non-ready readiness kind (remote
-    // targets pass readiness through as ready the moment the entry is
-    // dialable). The strip's only signal in this direction is the host-bound
-    // change, held until the new host's probe settles. This pin drives a real
-    // HostClient.bind so emitChange({reason:"host-bound"}) fires.
+  it("local→remote keeps the app mounted and narrates nothing at window scope", async () => {
+    // Local → remote never produces a non-ready readiness kind (remote targets
+    // pass readiness through as ready the moment the entry is dialable), so
+    // this drives a real `HostClient.bind` and the switch is a pointer update
+    // with no readiness event at all. That is the whole D2/D11 claim: a switch
+    // needs no narration, because nothing about it is a failure.
     const harness = mountSwitchSurface(
       { kind: "ready" },
       PRESENTATION,
@@ -265,37 +255,33 @@ describe("switching hosts keeps the app mounted", () => {
     );
     expect(screen.getByTestId("app-shell")).toBeTruthy();
     expect(screen.queryByTestId("host-ready-gate")).toBeNull();
-    expect(screen.queryByTestId("host-status-strip")).toBeNull();
     const shellBefore = screen.getByTestId("app-shell");
     typeIntoScratch("work-in-progress");
     expect(sentinelMounts.count).toBe(1);
 
-    // Pre-seed nothing for the remote probe key so the switch signal holds
-    // (hasSettledHostStatusProbe is false until data lands).
     act(() => {
       harness.hostClient.bind(mockRemoteHostEntry);
     });
 
+    // Settle whatever the bind schedules before asserting on silence: asserting
+    // "nothing appeared" on the synchronous frame would pass even if a banner
+    // were one microtask away.
     await waitFor(() => {
-      expect(screen.getByTestId("host-status-strip").dataset.state).toBe(
-        "switching",
-      );
+      expect(screen.getByTestId("app-shell")).toBe(shellBefore);
     });
     // App stays mounted - the SAME node, with the DOM state a user would
     // have put in it, not a fresh one that merely looks the same.
-    expect(screen.getByTestId("app-shell")).toBe(shellBefore);
     expect(readScratch()).toBe("work-in-progress");
     expect(sentinelMounts.count).toBe(1);
     expect(screen.queryByTestId("host-ready-gate")).toBeNull();
-    expect(screen.getByTestId("host-status-strip").textContent).toContain(
-      "Switching to",
-    );
+    expectNoWindowScopeBanner();
   });
 
   it("remote→local does not full-screen the app once the gate has latched", () => {
     // After the first ready, even a local loading-host (the direction that
     // previously replaced the whole shell on switch-back) must keep the app
-    // mounted. Recovery actions live on the strip, not a full-screen card.
+    // mounted. Whatever needs saying about that wait is the window modal's,
+    // mounted outside this tree - never a card that replaces the app.
     const remotePresentation: DefaultHostReadinessPresentation = {
       ...PRESENTATION,
       targetKind: "remote",
@@ -323,10 +309,6 @@ describe("switching hosts keeps the app mounted", () => {
     expect(readScratch()).toBe("work-in-progress");
     expect(sentinelMounts.count).toBe(1);
     expect(screen.queryByTestId("host-ready-gate")).toBeNull();
-    // Readiness-driven wait (loading-host → switching surface) shows the strip
-    // even without relying solely on the composite bind signal.
-    expect(screen.getByTestId("host-status-strip").dataset.state).toBe(
-      "switching",
-    );
+    expectNoWindowScopeBanner();
   });
 });

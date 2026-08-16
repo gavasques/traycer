@@ -7,6 +7,26 @@ import type { AuthStatus } from "@/stores/auth/auth-store";
 
 export type HostReadinessScope = "none" | "default-host" | "tab-host";
 
+/**
+ * COMPATIBILITY IS NOT A READINESS KIND (D13, P3.2).
+ *
+ * There used to be three more members here - `compatibility-checking`,
+ * `compatibility-error`, `incompatible-host` - and a `readinessForCompatibility`
+ * that projected the probe's verdict into this union, so a compat answer could
+ * hold the whole window behind a full-screen card.
+ *
+ * The verdict now travels to the SELECTION AUTHORITY instead
+ * (`compatibility-state.ts` reports it as evidence; the engine derives a
+ * `dead: { reason: "incompatible" }` lease from it, ranked above a live
+ * session). An incompatible host is therefore never usable, never a failover
+ * candidate, and the window narrator - not this gate - says so.
+ *
+ * The consequence is deliberate and bounded: while the probe is in flight the
+ * app mounts against a host that is dialable, and a later incompatible verdict
+ * resolves through the engine (move off it, or ∅ with the modal's update-host
+ * variant) rather than by blocking here. Blocking here is what put a second
+ * narrator on screen for a fact the authority already owns.
+ */
 export type SurfaceReadiness =
   | { readonly kind: "ready" }
   | { readonly kind: "restoring-request-context" }
@@ -15,10 +35,7 @@ export type SurfaceReadiness =
   | { readonly kind: "unavailable-host" }
   | { readonly kind: "provisioning-host" }
   | { readonly kind: "provisioning-error" }
-  | { readonly kind: "removed-host" }
-  | { readonly kind: "compatibility-checking" }
-  | { readonly kind: "compatibility-error" }
-  | { readonly kind: "incompatible-host" };
+  | { readonly kind: "removed-host" };
 
 /**
  * What the default-host surface is currently pointed at.
@@ -90,53 +107,55 @@ export interface DefaultHostReadinessPresentation {
   readonly reinstall: () => void;
   readonly configureShell: () => void;
   /**
-   * The three recoveries for the residual "no host is dialable" card (D7).
+   * The recoveries for a window with nothing to point at, read by the window
+   * modal's `offline` variant.
    *
-   * They are host-MANAGEMENT-free on purpose: that card is reached when the
-   * derivation had nowhere to go, which includes directories holding only
-   * machines this app cannot manage. Re-reading the registry and opening
-   * Settings ▸ Host - which is where hosts are activated now - are what a
-   * user can do about that from anywhere, and the card carried neither: it
-   * shipped with `actions: []`.
+   * They are host-MANAGEMENT-free on purpose: that state is reached when the
+   * derivation had nowhere to go, which includes fleets holding only machines
+   * this app cannot manage. Re-reading the registry and opening Settings ▸ Host
+   * - which is where hosts are activated now - are what a user can do about
+   * that from anywhere.
+   *
+   * They lost their third sibling with the gate's host-unavailable card:
+   * `anyHostDialable`, which chose between two report families by scanning the
+   * directory every render. Its question was directory vocabulary, and the
+   * modal answers the same triage question from leases instead.
    */
   readonly refreshDirectory: () => void;
   readonly openSettings: () => void;
-  /**
-   * Whether AT LEAST ONE entry in the merged directory can currently be
-   * dialed.
-   *
-   * The host-unavailable card files a pre-filled report, and which failure it
-   * names has to be a fact rather than an assumption about how the card was
-   * reached. "No host in the directory could be reached" is false in two
-   * states that reach the very same card: the two-read wait before an
-   * auto-failover, where another host is dialable and about to be taken, and
-   * this machine's own host booting while a remote is listed (which is never
-   * failed away from). Filing a zero-hosts report from either one sends triage
-   * after a directory-wide outage that is not happening.
-   */
-  readonly anyHostDialable: boolean;
   // Owned once by the readiness controller, not per slot: two default-host
   // members in a split must share one respawn mutation so a single click issues
   // exactly one request and locks the action in every slot.
   readonly requestRespawn: () => void;
   readonly respawnPending: boolean;
+  /**
+   * The compat probe's last answer, kept for ONE consumer: the pre-filled
+   * report's health line (`describeCompatHealth`).
+   *
+   * It is diagnostics, not narration. The fields that drove narration -
+   * `errorMessage`, `retry`, `retrying` - went with the surfaces that read
+   * them (the status strip and the gate's two compat cards, P3.2); leaving
+   * them here would be the retry wiring orphaned rather than deleted. What a
+   * user is TOLD about compatibility now comes from the lease's `incompatible`
+   * arm, via the window narrator and the surface chip.
+   */
   readonly compatibility: {
     readonly status: "checking" | "compatible" | "failed" | "incompatible";
-    readonly errorMessage: string | null;
-    readonly retrying: boolean;
-    readonly retry: () => void;
     /**
-     * `compatible` held from an earlier probe whose latest refetch failed. The
-     * surface stays open - the host answered this handshake already - and the
-     * degraded connection is surfaced as a banner instead.
+     * `compatible` held from an earlier probe whose latest refetch failed.
+     * A report says so - "compatible (degraded)" - because triage needs to
+     * know the verdict was held rather than freshly answered. It is no longer
+     * a user-facing state of its own (D11): a host that answered once and is
+     * being re-probed is still working, and the strip that narrated it is
+     * gone.
      */
     readonly degraded: boolean;
     /**
      * `failed` because the probe never reached the host, rather than because
-     * the host rejected the handshake. Drives connection-shaped copy: calling
-     * an unreachable host "incompatible" is what made an offline host
-     * (traycer#858) and a load-stalled host (traycer#860) both read as version
-     * problems.
+     * the host rejected the handshake. Kept apart in the report for the reason
+     * it was always kept apart: calling an unreachable host "incompatible" is
+     * what made an offline host (traycer#858) and a load-stalled host
+     * (traycer#860) both read as version problems.
      */
     readonly unreachable: boolean;
     /**
@@ -178,14 +197,10 @@ const EMPTY_DEFAULT_HOST_PRESENTATION: DefaultHostReadinessPresentation = {
   configureShell: () => undefined,
   refreshDirectory: () => undefined,
   openSettings: () => undefined,
-  anyHostDialable: false,
   requestRespawn: () => undefined,
   respawnPending: false,
   compatibility: {
     status: "compatible",
-    errorMessage: null,
-    retrying: false,
-    retry: () => undefined,
     degraded: false,
     unreachable: false,
     hostStatus: null,
@@ -343,9 +358,9 @@ export function projectDefaultHostReadiness(args: {
   readonly readiness: SurfaceReadiness;
   readonly presentation: DefaultHostReadinessPresentation;
 }): SurfaceReadiness {
-  // `LocalHostGate` intentionally passes remote selections through. Its
-  // compatibility and ensure actions manage the bundled local host, so
-  // projecting those lifecycle states for a remote target would both block a
+  // A remote selection passes straight through. The local-host lifecycle this
+  // projects - install, start, respawn - manages the BUNDLED host on this
+  // machine, so projecting those states for a remote target would both block a
   // dialable remote host and offer an action against the wrong machine. An
   // unresolved target gets the same pass-through unless the app is genuinely
   // booting this machine's own host (see `presentsLocalHostLifecycle`).
@@ -358,16 +373,13 @@ export function projectDefaultHostReadiness(args: {
   if (args.presentation.provisioning) return { kind: "provisioning-host" };
   if (args.presentation.removed) return { kind: "removed-host" };
 
-  if (args.readiness.kind === "ready") {
-    // Compatibility alone decides here. `hostBusy` deliberately does NOT gate
-    // readiness: a busy host is still dialable, and busy is surfaced as the
-    // Refresh / Force-update actions by the presentation layer rather than by
-    // holding the surface closed. It used to appear as a `hostBusy ||` disjunct
-    // in front of this call, which read as a gate but was inert -
-    // `readinessForCompatibility` returns READY for `compatible`, so the busy
-    // branch and the fall-through produced the same answer.
-    return readinessForCompatibility(args.presentation);
-  }
+  // A dialable host is READY here, full stop. The compat probe used to get the
+  // last word on this line (`readinessForCompatibility`), which is how a
+  // version disagreement - a fact about SELECTION - ended up gating a surface.
+  // It is the authority's input now; see the note on `SurfaceReadiness`.
+  //
+  // `hostBusy` has never gated readiness either, and still does not: a busy
+  // host is dialable, and busy is an action-level fact, not a closed surface.
   if (
     args.readiness.kind !== "loading-host" &&
     args.readiness.kind !== "unavailable-host"
@@ -388,35 +400,6 @@ export function projectDefaultHostReadiness(args: {
 }
 
 /**
- * Where a readiness kind is surfaced ONCE the default-host gate has latched
- * (i.e. the app has been ready at least once this window - see
- * `DefaultHostReadyGate`).
- *
- *  - `app`      - children, no strip.
- *  - `switching` - children, plus the amber strip: the app stays mounted and
- *                 interactive while this resolves.
- *  - `error`    - children, plus the red strip carrying the recovery action.
- *                 Deliberately NOT full-screen: tabs are host-bound for life
- *                 and are unaffected by a broken DEFAULT host, so replacing
- *                 the window to report one recreates the jarring break the
- *                 cold-start-only gate exists to remove.
- *  - `splash`   - keeps the full-screen surface even post-latch. Only
- *                 `mobile-no-host` qualifies: a mobile shell with no host at
- *                 all has no app to keep mounted.
- *
- * One exhaustive switch, shared by the gate (which reads `splash` vs the
- * rest) and the strip (which reads `switching` vs `error`), so the two can
- * never disagree about a kind and a NEW kind cannot be added without
- * classifying it here.
- *
- * `restoring-request-context` is in the `switching` row deliberately: it
- * fires whenever `requestContextUserId` goes transiently null while signed
- * in, and the gate's auth bypass does NOT cover it - left unclassified it
- * would be a surviving full-screen path after the latch.
- */
-export type PostLatchSurface = "app" | "switching" | "error" | "splash";
-
-/**
  * Whether the WINDOW NARRATOR owns this readiness kind (status narration,
  * D10).
  *
@@ -430,53 +413,70 @@ export type PostLatchSurface = "app" | "switching" | "error" | "splash";
  *
  * The kinds NOT listed stay with the gate deliberately, each for its own
  * reason: `mobile-no-host` is a shell with no host concept at all (not a
- * lease state); `restoring-request-context` is an auth fact; the
- * `compatibility-*` pair and `provisioning-error`/`removed-host` are local
- * lifecycle terminals that P3.2/P3.4 re-home with the machinery that owns
- * them. Adding a kind here without a matching modal variant would silently
- * delete its narration.
+ * lease state); `restoring-request-context` is an auth fact;
+ * `provisioning-error` and `removed-host` are local lifecycle terminals that
+ * P3.4 re-homes with the machinery that owns them. (The `compatibility-*`
+ * pair that used to be listed here is gone entirely - see `SurfaceReadiness`.)
+ * Adding a kind here without a matching modal variant would silently delete
+ * its narration.
  */
-export function windowNarratorOwns(kind: SurfaceReadiness["kind"]): boolean {
+export type WindowNarratedReadiness = Extract<
+  SurfaceReadiness,
+  {
+    readonly kind: "loading-host" | "unavailable-host" | "provisioning-host";
+  }
+>;
+
+/**
+ * What is left for the GATE to draw: every kind that is neither `ready` nor
+ * spoken for by the window narrator.
+ *
+ * This is the type that makes "one narrator per scope" structural. The gate's
+ * renderers accept only this, so a kind the narrator owns cannot be rendered
+ * here even by accident, and the reverse holds too: move a kind INTO
+ * `windowNarratorOwns` and every gate renderer still handling it becomes a
+ * compile error naming itself. It used to be a runtime predicate, which is
+ * exactly why two full-screen renderers (`unavailableFallback`,
+ * `SlowHostFallback`) sat compiled-but-unreachable after the narrator took
+ * their kinds - nothing could see it.
+ */
+export type GateDrawnReadiness = Exclude<
+  SurfaceReadiness,
+  WindowNarratedReadiness | { readonly kind: "ready" }
+>;
+
+export function windowNarratorOwns(
+  readiness: SurfaceReadiness,
+): readiness is WindowNarratedReadiness {
   return (
-    kind === "loading-host" ||
-    kind === "unavailable-host" ||
-    kind === "provisioning-host"
+    readiness.kind === "loading-host" ||
+    readiness.kind === "unavailable-host" ||
+    readiness.kind === "provisioning-host"
   );
 }
 
-export function postLatchSurfaceFor(
-  kind: SurfaceReadiness["kind"],
-): PostLatchSurface {
-  switch (kind) {
-    case "ready":
-      return "app";
-    case "compatibility-checking":
-    case "loading-host":
-    case "provisioning-host":
-    case "unavailable-host":
-    case "restoring-request-context":
-      return "switching";
-    case "compatibility-error":
-    case "incompatible-host":
-    case "provisioning-error":
-    case "removed-host":
-      return "error";
-    case "mobile-no-host":
-      return "splash";
-  }
-}
-
-function readinessForCompatibility(
-  presentation: DefaultHostReadinessPresentation,
-): SurfaceReadiness {
-  switch (presentation.compatibility.status) {
-    case "checking":
-      return { kind: "compatibility-checking" };
-    case "compatible":
-      return READY;
-    case "failed":
-      return { kind: "compatibility-error" };
-    case "incompatible":
-      return { kind: "incompatible-host" };
-  }
+/**
+ * Whether this kind keeps the FULL-SCREEN surface even after the default-host
+ * gate has latched (i.e. after the app has been ready at least once this
+ * window - see `DefaultHostReadyGate`).
+ *
+ * Only `mobile-no-host` does: a mobile shell with no host concept at all has
+ * no app worth keeping mounted, and it is not reachable from a desktop switch.
+ * Everything else keeps the app mounted, because tabs are bound to their host
+ * for life and are unaffected by a broken DEFAULT host - replacing the window
+ * to report one recreates the jarring break the cold-start-only gate exists to
+ * remove.
+ *
+ * This was a four-valued `PostLatchSurface` while the status strip existed:
+ * two of its rows (`switching`, `error`) named which STRIP variant to draw
+ * beside the children, and the strip was their only reader. With the strip
+ * deleted (D11) one reader is left asking one question, so it is asked
+ * directly. `restoring-request-context` answering `false` here is the same
+ * deliberate classification it had before: it fires whenever
+ * `requestContextUserId` goes transiently null while signed in, and the gate's
+ * auth bypass does NOT cover it, so a `true` would be a surviving full-screen
+ * path after the latch.
+ */
+export function keepsSplashAfterLatch(kind: SurfaceReadiness["kind"]): boolean {
+  return kind === "mobile-no-host";
 }

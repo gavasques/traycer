@@ -16,12 +16,16 @@ const HOST_STATUS_PROBE = {};
 /**
  * The cache slot the compat probe below owns for one host.
  *
- * Exported so surfaces that must observe the probe for a SPECIFIC host id -
- * the host status strip, which holds its "switching" state until the host it
- * just switched TO has settled - read the same slot the probe writes instead
- * of re-deriving the key. `useHostCompatibility()` answers only for whichever
- * host is active at render time, which cannot distinguish "the new host's
- * verdict" from "the old host's verdict, one render before the query re-keys".
+ * Exported so a reader that must observe the probe for a SPECIFIC host id
+ * reads the same slot the probe writes instead of re-deriving the key.
+ * `useHostCompatibility()` answers only for whichever host is active at render
+ * time, which cannot distinguish "the new host's verdict" from "the old host's
+ * verdict, one render before the query re-keys".
+ *
+ * Its last such reader was the status strip's switch trigger, deleted with the
+ * strip (D11). The export is kept for the provider's own cache assertions and
+ * because the per-host question is a real one; a future per-host reader must
+ * still not re-derive this key.
  */
 export function hostStatusProbeQueryKey(hostId: string): readonly unknown[] {
   return queryKeys.hostMethod<HostRpcRegistry, "host.status">(
@@ -354,10 +358,11 @@ function describeCompatVerdictForAuthority(
  *
  * A plain `HostTransportFailureError` (session closed, host down) and any
  * host-originated error are settled answers and fall through to `failed`.
- * Accepts `unknown` so cache-level readers (the status strip inspects the
- * probe's `QueryState.error`) can share this one classification.
+ * Accepts `unknown` rather than a narrowed error type so a cache-level reader,
+ * which only ever holds a `QueryState.error`, can share this one
+ * classification instead of writing a second one.
  */
-export function isPendingHostProbeError(error: unknown): boolean {
+function isPendingHostProbeError(error: unknown): boolean {
   return (
     error instanceof RetryableTransportError ||
     error instanceof HostRequestAbortedError

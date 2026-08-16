@@ -16,8 +16,8 @@ import { hostFailureReportIssueAction } from "@/components/layout/host-failure-r
 import {
   HostReadinessControllerContext,
   isHostDialable,
-  postLatchSurfaceFor,
-  presentsLocalHostLifecycle,
+  keepsSplashAfterLatch,
+  type GateDrawnReadiness,
   targetPresentsLocalHostLifecycle,
   projectDefaultHostReadiness,
   resolveSurfaceReadiness,
@@ -28,19 +28,15 @@ import {
   type HostReadinessController,
   type HostReadinessScope,
   type HostTargetKind,
-  type SurfaceReadiness,
 } from "@/components/layout/host-readiness-controller-context";
 import {
   GATE_BYPASS_PATH_PREFIX,
   HostProvisioningController,
   type HostProvisioningLifecycle,
 } from "@/components/local-host-gate";
-import { LocalHostLoadingContent } from "@/components/local-host-loading";
-import type { HostProgressView } from "@/lib/host/host-progress-copy";
-import { useHostProvisioningProgress } from "@/hooks/host/use-host-provisioning-progress";
 import { useReactiveHostReadiness } from "@/hooks/host/use-reactive-host-readiness";
 import { useRemoteSessionsPollReadiness } from "@/hooks/host/use-remote-sessions-poll-readiness";
-import { describeHostCompatibilityError, useHostBinding } from "@/lib/host";
+import { useHostBinding } from "@/lib/host";
 import { useEffectiveHostId } from "@/hooks/host/use-effective-host-id";
 import {
   useHostCompatibility,
@@ -137,14 +133,6 @@ export function HostReadinessControllerProvider(props: {
       });
     });
   }, [directory]);
-  // The live directory-wide fact behind the host-unavailable card's report
-  // family. Computed here, from the same entries readiness is resolved from,
-  // so the card states what the directory actually says rather than inferring
-  // it from the readiness kind that brought it here.
-  const anyHostDialable = directoryEntries.some((entry) =>
-    isHostDialable(entry, hasReadySessionFor(entry.hostId)),
-  );
-
   return (
     <HostProvisioningController
       enabled={canProvision}
@@ -168,7 +156,6 @@ export function HostReadinessControllerProvider(props: {
           onConfigureShell={props.onConfigureShell}
           onRefreshDirectory={refreshDirectory}
           onOpenSettings={props.onOpenSettings}
-          anyHostDialable={anyHostDialable}
           onRequestRespawn={respawn.mutate}
           respawnPending={respawn.isPending}
         >
@@ -194,7 +181,6 @@ function HostReadinessControllerContents(props: {
   readonly onConfigureShell: () => void;
   readonly onRefreshDirectory: () => void;
   readonly onOpenSettings: () => void;
-  readonly anyHostDialable: boolean;
   readonly onRequestRespawn: () => void;
   readonly respawnPending: boolean;
   readonly children: ReactNode;
@@ -209,7 +195,6 @@ function HostReadinessControllerContents(props: {
         configureShell: props.onConfigureShell,
         refreshDirectory: props.onRefreshDirectory,
         openSettings: props.onOpenSettings,
-        anyHostDialable: props.anyHostDialable,
         requestRespawn: props.onRequestRespawn,
         respawnPending: props.respawnPending,
       }),
@@ -221,7 +206,6 @@ function HostReadinessControllerContents(props: {
       props.onConfigureShell,
       props.onRefreshDirectory,
       props.onOpenSettings,
-      props.anyHostDialable,
       props.onRequestRespawn,
       props.respawnPending,
     ],
@@ -343,7 +327,6 @@ function presentationFromLifecycle(args: {
   readonly configureShell: () => void;
   readonly refreshDirectory: () => void;
   readonly openSettings: () => void;
-  readonly anyHostDialable: boolean;
   readonly requestRespawn: () => void;
   readonly respawnPending: boolean;
 }): DefaultHostReadinessPresentation {
@@ -367,22 +350,27 @@ function presentationFromLifecycle(args: {
     configureShell: args.configureShell,
     refreshDirectory: args.refreshDirectory,
     openSettings: args.openSettings,
-    anyHostDialable: args.anyHostDialable,
     requestRespawn: args.requestRespawn,
     respawnPending: args.respawnPending,
     compatibility: compatibilityPresentation(args.compatibility),
   };
 }
 
+/**
+ * The probe verdict, reduced to what a pre-filled REPORT needs (D13, P3.2).
+ *
+ * It used to carry the copy and the recovery action too - `errorMessage`,
+ * `retry`, `retrying` - because two surfaces narrated compatibility from it.
+ * Both are gone: the verdict reaches the user through the lease's
+ * `incompatible` arm now, and the probe's own `retry` stays where it always
+ * lived, on the compat context, for whoever genuinely needs to re-ask.
+ */
 function compatibilityPresentation(
   compatibility: HostCompatibility,
 ): DefaultHostReadinessPresentation["compatibility"] {
   if (compatibility.status === "failed") {
     return {
       status: "failed",
-      errorMessage: compatibility.error.message,
-      retrying: compatibility.retrying,
-      retry: compatibility.retry,
       degraded: false,
       unreachable: compatibility.unreachable,
       hostStatus: null,
@@ -391,9 +379,6 @@ function compatibilityPresentation(
   if (compatibility.status === "incompatible") {
     return {
       status: "incompatible",
-      errorMessage: describeHostCompatibilityError(compatibility.error),
-      retrying: false,
-      retry: compatibility.retry,
       degraded: false,
       unreachable: false,
       hostStatus: null,
@@ -402,9 +387,6 @@ function compatibilityPresentation(
   if (compatibility.status === "checking") {
     return {
       status: "checking",
-      errorMessage: null,
-      retrying: false,
-      retry: compatibility.retry,
       degraded: false,
       unreachable: false,
       hostStatus: null,
@@ -412,9 +394,6 @@ function compatibilityPresentation(
   }
   return {
     status: "compatible",
-    errorMessage: null,
-    retrying: false,
-    retry: compatibility.retry,
     degraded: compatibility.degraded,
     unreachable: false,
     hostStatus: compatibility.hostStatus,
@@ -430,106 +409,31 @@ export function HostScopeReady(props: {
 }
 
 /**
- * The ONE mapping from a readiness kind to its surface. Both the in-surface
- * slot and the full-screen splash render through here; they differ only in
- * `variant`. The gate used to call `fallbackContent` directly, which skipped
- * the slow-local-host branch below - so a full-screen block on a host that
- * failed to start showed "This tab's host is unavailable." with no Retry at
- * all. A second renderer means a second chance to miss a branch, and the one
- * it missed was the recovery affordance.
+ * The full-screen surface for a readiness kind the WINDOW NARRATOR does not
+ * own - i.e. the only kinds this gate still draws for itself.
+ *
+ * Which kinds those are is a TYPE now, not a runtime check: `GateDrawnReadiness`
+ * is `SurfaceReadiness` minus `ready` minus everything `windowNarratorOwns`
+ * claims. That is what makes the deletions below provable rather than argued -
+ * add a kind to the narrator without removing its case here and this file stops
+ * compiling, instead of quietly reviving a second narrator.
  */
 function SurfaceReadinessFallback(props: {
-  readonly readiness: Exclude<SurfaceReadiness, { readonly kind: "ready" }>;
-  readonly scope: HostReadinessScope;
-  readonly variant: "slot" | "splash";
+  readonly readiness: GateDrawnReadiness;
 }): ReactNode {
   const controller = useHostReadinessController();
   const presentation = controller.defaultHostPresentation;
-  // The mutation LANE, not the presentation's `progress`. The latter is gated
-  // on this renderer's own `convergeReady.isPending`, so it can only ever show
-  // episodes this window started - a first launch, where the desktop's launch
-  // reconciler is the actor, streams real progress that read as a blank card.
-  // Reading the lane here fixes the live surfaces without touching the legacy
-  // wrapper that still derives it the old way (that read is a recorded interim
-  // hazard, extinguished when the wrapper is deleted).
-  const progress = useHostProvisioningProgress();
-  const testId =
-    props.variant === "splash"
-      ? `host-ready-gate-${props.readiness.kind}`
-      : `surface-readiness-${props.readiness.kind}`;
-  if (
-    props.readiness.kind === "unavailable-host" &&
-    props.scope === "default-host" &&
-    presentsLocalHostLifecycle(presentation) &&
-    presentation.localHostState === "unavailable" &&
-    presentation.stage === "slow"
-  ) {
-    return (
-      <SlowHostFallback
-        presentation={presentation}
-        progress={progress}
-        variant={props.variant}
-        testId={testId}
-      />
-    );
-  }
+  // No install-progress read here any more. Every kind that HAD progress to
+  // show (`loading-host`, `provisioning-host`, the slow-host card) belongs to
+  // the window narrator now; the four kinds left are terminals with nothing
+  // streaming behind them.
   return (
     <FallbackFrame
-      variant={props.variant}
-      fallback={fallbackContent(
-        props.readiness,
-        presentation,
-        props.scope,
-        progress,
-      )}
-      testId={testId}
+      fallback={fallbackContent(props.readiness, presentation)}
+      testId={`host-ready-gate-${props.readiness.kind}`}
       messageTestId={
         props.readiness.kind === "mobile-no-host" ? "mobile-no-host" : null
       }
-    />
-  );
-}
-
-function SlowHostFallback(props: {
-  readonly presentation: DefaultHostReadinessPresentation;
-  readonly progress: HostProgressView | null;
-  readonly variant: "slot" | "splash";
-  readonly testId: string;
-}): ReactNode {
-  // Respawn is owned once by the readiness controller, so two default-host slots
-  // share one pending lock and a click issues exactly one request.
-  return (
-    <FallbackFrame
-      variant={props.variant}
-      fallback={{
-        message: null,
-        detail: null,
-        body: (
-          <LocalHostLoadingContent
-            stage="slow"
-            progress={props.progress}
-            onConfigureShell={props.presentation.configureShell}
-            onRetry={props.presentation.requestRespawn}
-            retryPending={props.presentation.respawnPending}
-          />
-        ),
-        // The pre-consolidation `LocalHostUnavailable` card carried this; a
-        // startup failure is exactly where a user needs to report.
-        footer: hostFailureReportIssueAction({
-          title: "Traycer Host is unavailable",
-          message: "Traycer Host did not become available.",
-          code: "HOST_UNAVAILABLE",
-          source: "Host startup",
-          presentation: props.presentation,
-          // This card is reached only with NO live converge error (a live one
-          // routes to `provisioning-error` first), so any retained stage here
-          // belongs to an earlier, already-finished episode.
-          includeRetainedProgress: false,
-        }),
-        actions: [],
-      }}
-      testId={props.testId}
-      messageTestId={null}
     />
   );
 }
@@ -545,9 +449,9 @@ function SlowHostFallback(props: {
  * again (one exception below). Blocking a second time is what made every host
  * switch - and every transient probe failure on a host that was running the
  * whole time - throw away the entire DOM: editors, terminals, scroll
- * positions, popovers. The recovery actions did not disappear with the
- * block; they moved into `HostStatusStrip`, which names the transition and
- * carries Retry / report-issue inside a live app.
+ * positions, popovers. The recovery actions did not disappear with the block:
+ * they are the window modal's now (D10/D11), which derives from the
+ * authority's leases and narrates once, for the window, wherever the app is.
  *
  * Latch semantics: per-window runtime state, so a window reload always
  * re-gates. That is intended - a cold start still gets the full setup surface
@@ -599,7 +503,7 @@ export function DefaultHostReadyGate(props: {
   if (authStatus !== "signed-in") return props.children;
   if (pathname.startsWith(GATE_BYPASS_PATH_PREFIX)) return props.children;
   if (readiness.kind === "ready") return props.children;
-  if (hasBeenReady && postLatchSurfaceFor(readiness.kind) !== "splash") {
+  if (hasBeenReady && !keepsSplashAfterLatch(readiness.kind)) {
     return props.children;
   }
   // The window narrator (the global modal) speaks for these kinds now, so the
@@ -612,7 +516,7 @@ export function DefaultHostReadyGate(props: {
   // The frame stays (header + background) so the block still looks like the
   // app rather than a blank document, and so a user whose modal is suppressed
   // on `/settings` is not left staring at nothing.
-  const narrated = windowNarratorOwns(readiness.kind);
+  const narrated = windowNarratorOwns(readiness);
   return (
     <div
       className="flex min-h-svh w-full flex-col bg-background text-foreground"
@@ -621,29 +525,26 @@ export function DefaultHostReadyGate(props: {
       data-narrated-by-window-modal={narrated ? "true" : "false"}
     >
       <AppHeader variant="host-loading" />
-      {narrated ? null : (
-        <SurfaceReadinessFallback
-          readiness={readiness}
-          scope="default-host"
-          variant="splash"
-        />
-      )}
+      {narrated ? null : <SurfaceReadinessFallback readiness={readiness} />}
     </div>
   );
 }
 
+/**
+ * The full-screen host-boot card, exactly as the standalone `LocalHostLoading`
+ * drew it (max-w-md, shadow-sm, gap-4/py-6) before the gate took over rendering
+ * it - that view predates the split work and must not drift.
+ *
+ * It took a `variant` until P3.2: `slot` was the bounded in-surface form, drawn
+ * without a card because it sat inside a tab's frame. P2.2 deleted the per-pane
+ * readiness boundaries that were its only producer, so the branch had no caller
+ * left; tabs gate on their own host's lease now and render their own tile
+ * states.
+ */
 function FallbackFrame(props: {
   readonly fallback: ReadinessFallback;
   readonly testId: string;
   readonly messageTestId: string | null;
-  /**
-   * `splash` reproduces the full-screen host-boot card exactly as the
-   * standalone `LocalHostLoading` drew it (max-w-md, shadow-sm, gap-4/py-6)
-   * before the gate took over rendering it - that view predates the split work
-   * and must not drift. `slot` is the bounded in-surface fallback, which
-   * deliberately draws no card because it already sits inside a tab's frame.
-   */
-  readonly variant: "slot" | "splash";
 }): ReactNode {
   const hasActionsRow =
     props.fallback.actions.length > 0 || props.fallback.footer !== null;
@@ -694,17 +595,11 @@ function FallbackFrame(props: {
       className="flex min-h-0 min-w-0 flex-1 items-center justify-center bg-background p-6 text-foreground"
       data-testid={props.testId}
     >
-      {props.variant === "splash" ? (
-        <Card className="w-full max-w-md shadow-sm">
-          <CardContent className="flex flex-col items-center gap-4 py-6 text-center text-ui-sm">
-            {content}
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="flex w-full max-w-sm flex-col items-center gap-3 text-center text-ui-sm">
+      <Card className="w-full max-w-md shadow-sm">
+        <CardContent className="flex flex-col items-center gap-4 py-6 text-center text-ui-sm">
           {content}
-        </div>
-      )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
@@ -734,11 +629,20 @@ interface ReadinessFallback {
   readonly actions: ReadonlyArray<ReadinessFallbackAction>;
 }
 
+/**
+ * Four kinds, and the type says so.
+ *
+ * `loading-host`, `provisioning-host` and `unavailable-host` are absent because
+ * `GateDrawnReadiness` excludes them - the window narrator speaks for all three.
+ * Their renderers went with them: `loadingFallback` (its last live kind was the
+ * compat probe, deleted by D13 with the rest of the compat readiness
+ * vocabulary), and `unavailableFallback` + `SlowHostFallback`, which had been
+ * unreachable since the narrator landed and which nothing detected because
+ * reachability was a predicate rather than a type.
+ */
 function fallbackContent(
-  readiness: Exclude<SurfaceReadiness, { readonly kind: "ready" }>,
+  readiness: GateDrawnReadiness,
   presentation: DefaultHostReadinessPresentation,
-  scope: HostReadinessScope,
-  progress: HostProgressView | null,
 ): ReadinessFallback {
   switch (readiness.kind) {
     case "restoring-request-context":
@@ -758,12 +662,6 @@ function fallbackContent(
         footer: null,
         actions: [],
       };
-    case "unavailable-host":
-      return unavailableFallback(scope, presentation);
-    case "loading-host":
-    case "provisioning-host":
-    case "compatibility-checking":
-      return loadingFallback(readiness.kind, presentation, progress);
     case "provisioning-error":
       return provisioningErrorFallback(presentation);
     case "removed-host":
@@ -797,60 +695,7 @@ function fallbackContent(
           },
         ],
       };
-    case "compatibility-error":
-      return compatibilityErrorFallback(presentation);
-    case "incompatible-host":
-      return incompatibleFallback(presentation);
   }
-}
-
-function loadingFallback(
-  kind: "loading-host" | "provisioning-host" | "compatibility-checking",
-  presentation: DefaultHostReadinessPresentation,
-  progress: HostProgressView | null,
-): ReadinessFallback {
-  // Every local-bootstrap wait - including the compatibility probe - shows the
-  // SAME loading body. The old gate passed one `checking={props.loading}` node
-  // for exactly this reason; giving the probe its own text-only screen made
-  // startup drop from a spinner card to a bare line plus a button, which reads
-  // as an error state mid-launch. "Configure shell…" is not lost: the loading
-  // body carries it inside the details disclosure.
-  if (!presentsLocalHostLifecycle(presentation)) {
-    // A remote - or not-yet-resolved - host still settling: the rich
-    // progress/log card below is local-bootstrap specific and would be
-    // misleading here (it offers to respawn a machine this app may not own).
-    // Never "Starting local Traycer Host…" on this arm. That copy is a claim
-    // about THIS machine's host, and this arm is reached precisely when the
-    // wait belongs to some other machine - a remote target, or a selection
-    // the app has not resolved yet. Saying it there described the wrong
-    // computer to the user and sent every resulting bug report at the local
-    // bootstrap path.
-    return {
-      message:
-        kind === "compatibility-checking"
-          ? "Checking Traycer Host compatibility…"
-          : "Connecting to Traycer Host…",
-      detail: null,
-      body: null,
-      footer: null,
-      actions: [],
-    };
-  }
-  return {
-    message: null,
-    detail: null,
-    body: (
-      <LocalHostLoadingContent
-        stage="loading"
-        progress={progress}
-        onConfigureShell={presentation.configureShell}
-        onRetry={presentation.requestRespawn}
-        retryPending={presentation.respawnPending}
-      />
-    ),
-    footer: null,
-    actions: [],
-  };
 }
 
 function provisioningErrorFallback(
@@ -885,261 +730,6 @@ function provisioningErrorFallback(
   };
 }
 
-/**
- * The compat probe failed. WHY it failed decides what this card may claim.
- *
- * A probe that never reached the host says nothing about protocol
- * compatibility - the host may be mid-restart, stalled under load, or up but
- * unable to verify the session because it cannot reach the sign-in service.
- * Calling all of that "could not verify host compatibility" is what put
- * `fetch failed` behind a version-mismatch sentence on an offline machine
- * (traycer#858) and what framed a busy, working host as a compat problem
- * (traycer#860). Only a host that ANSWERED and rejected the handshake gets the
- * compatibility wording.
- */
-function compatibilityErrorFallback(
-  presentation: DefaultHostReadinessPresentation,
-): ReadinessFallback {
-  const unreachable = presentation.compatibility.unreachable;
-  return {
-    message: unreachable
-      ? "Traycer Host is not responding."
-      : "Could not verify host compatibility.",
-    // The reason rides in its own line rather than concatenated onto the
-    // sentence: it is a raw transport/host string, and gluing it on produced
-    // "Could not verify host compatibility. fetch failed."
-    detail: presentation.compatibility.errorMessage,
-    body: null,
-    footer: hostFailureReportIssueAction({
-      title: unreachable
-        ? "Traycer Host is not responding"
-        : "Could not verify Traycer Host compatibility",
-      message: unreachable
-        ? "The app could not reach Traycer Host."
-        : "Traycer Host rejected the compatibility handshake.",
-      code: unreachable ? "HOST_UNREACHABLE" : "HOST_COMPAT_PROBE_REJECTED",
-      // Not a startup failure: this fallback is reached when a host that was
-      // already serving stops answering the probe (traycer#860).
-      source: "Host connection",
-      presentation,
-      // Same reason the source differs: an install stage on a #860-shaped
-      // report points triage at provisioning, which is the wrong place.
-      includeRetainedProgress: false,
-    }),
-    actions: [
-      {
-        label: "Retry",
-        testId: "local-host-compatibility-retry",
-        variant: "outline",
-        disabled: presentation.compatibility.retrying,
-        pending: presentation.compatibility.retrying,
-        onClick: presentation.compatibility.retry,
-      },
-    ],
-  };
-}
-
-function incompatibleFallback(
-  presentation: DefaultHostReadinessPresentation,
-): ReadinessFallback {
-  const footer = hostFailureReportIssueAction({
-    title: "Host update required",
-    message: "Traycer Host requires an update.",
-    code: "HOST_INCOMPATIBLE",
-    // Neither startup nor connection: this host came up and answered the
-    // handshake, and the two sides simply disagree on the version.
-    source: "Host compatibility",
-    presentation,
-    // A host that came up and answered cannot be explained by how some
-    // earlier install attempt died.
-    includeRetainedProgress: false,
-  });
-  const shared = {
-    message: "Host update required",
-    // The explanation, the labelled reason box and the restart error were all
-    // flattened into one joined string. "Host update required" alone does not
-    // say what to do, and an unlabelled concatenated reason reads as noise.
-    detail: presentation.hostBusy
-      ? "The running host has work in progress and is not compatible with this app update. Refresh to check again, or force update the host. Running work may be interrupted."
-      : "This Traycer app update is not compatible with the running host. Update the local host before continuing.",
-    body: <IncompatibleDetail presentation={presentation} />,
-    footer,
-  };
-  if (!presentation.canManageHost) {
-    return { ...shared, actions: [] };
-  }
-  if (presentation.hostBusy) {
-    return {
-      ...shared,
-      actions: [
-        {
-          label: "Refresh",
-          testId: "local-host-incompatible-busy-refresh",
-          variant: "outline",
-          disabled: false,
-          pending: false,
-          onClick: presentation.retryProvisioning,
-        },
-        {
-          label: "Force update host",
-          testId: "local-host-incompatible-busy-force-update",
-          variant: "destructive",
-          disabled: false,
-          pending: false,
-          onClick: presentation.forceProvisioning,
-        },
-      ],
-    };
-  }
-  return {
-    ...shared,
-    actions: [
-      {
-        label: "Update host",
-        testId: "local-host-incompatible-update",
-        variant: "default",
-        disabled: false,
-        pending: false,
-        onClick: presentation.forceProvisioning,
-      },
-    ],
-  };
-}
-
-/**
- * The labelled compatibility reason, plus any restart error kept visually
- * distinct (destructive) rather than concatenated into the same sentence -
- * they answer different questions: why the host is rejected, and why the last
- * attempt to fix it failed.
- */
-function IncompatibleDetail(props: {
-  readonly presentation: DefaultHostReadinessPresentation;
-}): ReactNode {
-  const reason = props.presentation.compatibility.errorMessage;
-  const restartError = props.presentation.provisioningError?.message ?? null;
-  if (reason === null && restartError === null) return null;
-  return (
-    <>
-      {reason === null ? null : (
-        <p
-          className="max-w-full break-words rounded-md bg-muted/50 px-3 py-2 text-left text-ui-xs text-muted-foreground"
-          data-testid="local-host-incompatible-reason"
-        >
-          Reason: {reason}
-        </p>
-      )}
-      {restartError === null ? null : (
-        <p
-          className="max-w-full break-words text-ui-xs text-destructive"
-          data-testid="local-host-incompatible-restart-error"
-        >
-          {restartError}
-        </p>
-      )}
-    </>
-  );
-}
-
-/**
- * A host that is not dialable, in whichever scope asked.
- *
- * The copy is scope-aware because the two scopes are not the same failure and
- * were never the same sentence. "This tab's host is unavailable." called the
- * whole app a tab whenever the DEFAULT host reached this state - and it is
- * the default host that reaches it, since no production surface uses the
- * `tab-host` scope today (`top-level-tab-host.tsx` hardcodes a null tab host;
- * real per-tile deaths render `dead-tile-banner`). The tab wording is kept for
- * the day a real `tab-host` scope exists.
- *
- * With D7's auto-failover in place the default-host arm usually means nothing
- * in the directory is dialable - but not always: the two-read wait before a
- * failover and a booting local host with a dialable remote reach it too, which
- * is why the report family branches on the live `anyHostDialable` fact instead
- * of assuming zero-dialable. Either way this is the state that needs actions.
- * It shipped with none:
- * `actions: []`, `footer: null`, rendered full-screen with the tab strip and
- * the header's settings entry gone. All four here are reachable without a
- * host: re-read the registry, open the picker (mounted outside the gate,
- * `traycer-app.tsx`), open settings (`/settings` bypasses the gate), and
- * report - the one affordance every other failure card already carried.
- */
-function unavailableFallback(
-  scope: HostReadinessScope,
-  presentation: DefaultHostReadinessPresentation,
-): ReadinessFallback {
-  if (scope !== "default-host") {
-    return {
-      message: "This tab's host is unavailable.",
-      detail: null,
-      body: null,
-      footer: null,
-      actions: [],
-    };
-  }
-  const report = presentation.anyHostDialable
-    ? // Something in the directory IS dialable, so this is one host that
-      // cannot be reached - the two-read wait before a failover takes the
-      // other one, or this machine's own host booting while a remote is
-      // listed. Both are real states of this card, and neither is a
-      // directory-wide outage.
-      {
-        title: "Selected Traycer Host is not reachable",
-        message: "The selected Traycer Host could not be reached.",
-        code: "HOST_SELECTED_UNREACHABLE",
-      }
-    : {
-        title: "No Traycer Host is reachable",
-        message: "No host in the directory could be reached.",
-        code: "HOST_NONE_DIALABLE",
-      };
-  return {
-    message: "Traycer Host is unavailable",
-    // Says only what holds on EVERY path that reaches this arm. "Traycer will
-    // switch you automatically" reads well and would be a lie here: the
-    // failover moves a REMOTE selection with a dialable alternative, and this
-    // card is also what a local host that is down renders (its own lifecycle
-    // owns that recovery, and it is never failed away from).
-    detail: presentation.anyHostDialable
-      ? "Traycer can't reach this host right now. Another host is available - switch to it, or retry."
-      : "Traycer can't reach this host right now, and no other host in the directory is reachable either.",
-    body: null,
-    // Two families, chosen by a FACT the directory answers
-    // (`anyHostDialable`), never by the readiness kind that led here - the
-    // card is reached from states that mean different things. Neither is the
-    // slow-local-host card's `HOST_UNAVAILABLE` / "Host startup": that one
-    // means "this machine's host did not come up", and collapsing distinct
-    // causes into one title is the 2026-07-31 triage failure
-    // `hostFailureReportIssueAction` exists to end.
-    footer: hostFailureReportIssueAction({
-      title: report.title,
-      message: report.message,
-      code: report.code,
-      source: "Host connection",
-      presentation,
-      // Any retained install stage belongs to an earlier, finished episode -
-      // pointing triage at provisioning would be the wrong place.
-      includeRetainedProgress: false,
-    }),
-    actions: [
-      {
-        label: "Retry",
-        testId: "host-unavailable-retry",
-        variant: "outline",
-        disabled: false,
-        pending: false,
-        onClick: presentation.refreshDirectory,
-      },
-      {
-        label: "Open settings",
-        testId: "host-unavailable-open-settings",
-        variant: "outline",
-        disabled: false,
-        pending: false,
-        onClick: presentation.openSettings,
-      },
-    ],
-  };
-}
 
 function useHostDirectoryEntries(
   directory: {

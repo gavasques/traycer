@@ -80,14 +80,10 @@ const PRESENTATION: DefaultHostReadinessPresentation = {
   configureShell: () => undefined,
   refreshDirectory: () => undefined,
   openSettings: () => undefined,
-  anyHostDialable: false,
   requestRespawn: () => undefined,
   respawnPending: false,
   compatibility: {
     status: "compatible",
-    errorMessage: null,
-    retrying: false,
-    retry: () => undefined,
     degraded: false,
     unreachable: false,
     hostStatus: null,
@@ -229,13 +225,15 @@ describe("<HostReadyGate />", () => {
     // must NOT unmount the shell. That unmount is what made every host switch
     // (and every transient probe failure on a host that was already running)
     // throw away editors, terminals, scroll, and popovers.
+    // Every non-ready kind EXCEPT `mobile-no-host`, which is the sole splash
+    // exception below. Listed exhaustively rather than filtered from the union
+    // so that adding a kind without deciding its post-latch behavior shows up
+    // here as a missing row.
     const postLatchKinds: ReadonlyArray<SurfaceReadiness["kind"]> = [
       "loading-host",
-      "compatibility-checking",
       "unavailable-host",
       "provisioning-error",
-      "compatibility-error",
-      "incompatible-host",
+      "provisioning-host",
       "removed-host",
       "restoring-request-context",
     ];
@@ -294,32 +292,6 @@ describe("<HostReadyGate />", () => {
     const gate = screen.getByTestId("host-ready-gate");
     expect(gate.dataset.narratedByWindowModal).toBe("true");
     expect(gate.querySelector('[data-slot="card"]')).toBeNull();
-  });
-
-  it("keeps the same loading body through the compatibility probe", () => {
-    // The old gate passed ONE `checking={props.loading}` node, so the probe
-    // looked identical to the rest of startup. A probe-specific text-only
-    // screen made the app drop from a spinner card to a bare line plus a
-    // button mid-launch, which reads as a failure rather than progress.
-    renderGate({ kind: "compatibility-checking" }, PRESENTATION);
-    expect(screen.getByTestId("local-host-loading-spinner")).toBeTruthy();
-    expect(
-      screen.queryByText("Checking Traycer Host compatibility…"),
-    ).toBeNull();
-  });
-
-  it("still names the compatibility probe for a remote host", () => {
-    // The local-bootstrap body (progress bar, bootstrap.log tail) would be
-    // misleading for a remote target, so that arm keeps the plain message -
-    // and must keep saying which wait it is.
-    renderGate(
-      { kind: "compatibility-checking" },
-      { ...PRESENTATION, targetKind: "remote" },
-    );
-    expect(screen.queryByTestId("local-host-loading-spinner")).toBeNull();
-    expect(
-      screen.getByText("Checking Traycer Host compatibility…"),
-    ).toBeTruthy();
   });
 
   it("defers unavailable-host (slow local start) to the window modal: no card, no Retry here", () => {
@@ -407,35 +379,6 @@ describe("<HostReadyGate />", () => {
     ).toBeTruthy();
   });
 
-  it("labels the incompatibility reason and keeps a restart error distinct", () => {
-    // Both were flattened into one joined sentence, which read as noise: they
-    // answer different questions - why the host is rejected, and why the last
-    // attempt to fix it failed.
-    renderGate(
-      { kind: "incompatible-host" },
-      {
-        ...PRESENTATION,
-        canManageHost: true,
-        provisioningError: new Error("restart failed"),
-        compatibility: {
-          ...PRESENTATION.compatibility,
-          status: "incompatible",
-          errorMessage: "host 1.0.0 < required 1.1.0",
-        },
-      },
-    );
-    expect(
-      screen.getByTestId("local-host-incompatible-reason").textContent,
-    ).toContain("Reason: host 1.0.0 < required 1.1.0");
-    expect(
-      screen.getByTestId("local-host-incompatible-restart-error").textContent,
-    ).toBe("restart failed");
-    expect(
-      screen.getByText(/not compatible with the running host/),
-    ).toBeTruthy();
-    expect(screen.getByTestId("local-host-incompatible-update")).toBeTruthy();
-  });
-
   it("keeps recovery actions reachable inside the block", () => {
     // Blocking must not strand a user whose host cannot start: a full-screen
     // surface with no retry is the lockout shape traycer#738 exists to avoid.
@@ -487,7 +430,6 @@ describe("<HostReadyGate />", () => {
         localBootIntent: false,
         localHostState: "unavailable",
         stage: "loading",
-        anyHostDialable: false,
         refreshDirectory,
         openSettings,
       },
@@ -514,7 +456,6 @@ describe("<HostReadyGate />", () => {
         localBootIntent: false,
         localHostState: "unavailable",
         stage: "loading",
-        anyHostDialable: false,
       },
     );
 
@@ -541,7 +482,6 @@ describe("<HostReadyGate />", () => {
         localBootIntent: false,
         localHostState: "unavailable",
         stage: "loading",
-        anyHostDialable: true,
       },
     );
 

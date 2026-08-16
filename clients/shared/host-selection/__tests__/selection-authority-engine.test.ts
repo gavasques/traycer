@@ -2574,3 +2574,128 @@ describe("SelectionAuthorityEngineImpl - P1.3 F14 clear on identity adopt (H)", 
     ports.engine.dispose();
   });
 });
+
+// --------------------------------------------- P3.2: D13 at the derivation
+// (host-lifecycle redesign, ticket P3.2 acceptance).
+//
+// The production guard is `isUsableForSelection`, which excludes every `dead`
+// reason and therefore excluded `incompatible` from the day the arm landed.
+// What did NOT exist was a scenario exercising it: the predicate had a unit
+// test and Activate had a refusal test, but no FAILOVER ever ran with an
+// incompatible host in the candidate set. These are that scenario - a green
+// run here is not evidence of new production behavior, it is evidence the
+// behavior was never asked.
+describe("SelectionAuthorityEngineImpl - P3.2 D13: incompatible is never a candidate", () => {
+  it("failover skips an incompatible remote and takes the healthy host BEHIND it in fleet order", async () => {
+    // No local host, so the choice is made purely among remotes by the third
+    // derivation arm - MRU first, then fleet order. X is seeded BEFORE Y, so an
+    // engine that forgot D13 would take X: the assertion discriminates rather
+    // than merely agreeing with the current implementation.
+    const clock = createFakeAuthorityClock(0);
+    const authority = createTestAuthority({
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: null,
+        hosts: [fleetHost("P", "remote"), fleetHost("X", "remote"), fleetHost("Y", "remote")],
+      },
+      initialIdentityKey: "acct-1",
+      clock,
+    });
+    const { engine } = authority;
+    const incarnation = attachReporter(engine, "A");
+    expect(await engine.activate("A", incarnation, "P")).toEqual({ ok: true });
+    engine.ingestEvidence(
+      "A",
+      incarnation,
+      compatIncompatible("X", null, INCOMPAT_DETAIL),
+    );
+    expect(findLease(engine.snapshot().leases, "X")?.dead?.reason).toBe(
+      "incompatible",
+    );
+
+    killHostWithRefusals(engine, "A", incarnation, "P");
+    clock.advance(0);
+
+    expect(engine.snapshot().effectiveHostId).toBe("Y");
+    expect(lastSelectionChange(authority.events).cause).toBe("failover");
+
+    authority.dispose();
+  });
+
+  it("a PREFERRED host that goes incompatible after an app update falls over, with the switch cause the toast reads", async () => {
+    // C4 hole 2, arm one. The app updates, the running host is suddenly a
+    // version behind, and its verdict arrives while it is the preferred and
+    // effective host. Derivation must move - and the move is what the surface
+    // chip and the one-line "Switched to X" toast narrate (D11), which is why
+    // the cause is asserted and not just the destination.
+    const clock = createFakeAuthorityClock(0);
+    const authority = createTestAuthority({
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: null,
+        hosts: [fleetHost("P", "remote"), fleetHost("Y", "remote")],
+      },
+      initialIdentityKey: "acct-1",
+      clock,
+    });
+    const { engine } = authority;
+    const incarnation = attachReporter(engine, "A");
+    expect(await engine.activate("A", incarnation, "P")).toEqual({ ok: true });
+    expect(engine.snapshot().effectiveHostId).toBe("P");
+
+    engine.ingestEvidence(
+      "A",
+      incarnation,
+      compatIncompatible("P", null, INCOMPAT_DETAIL),
+    );
+    clock.advance(0);
+
+    expect(findLease(engine.snapshot().leases, "P")?.dead?.reason).toBe(
+      "incompatible",
+    );
+    expect(engine.snapshot().effectiveHostId).toBe("Y");
+    expect(lastSelectionChange(authority.events).cause).toBe("failover");
+
+    authority.dispose();
+  });
+
+  it("with no candidates behind it, the same host reaches ∅ carrying the detail the update-host modal names it by", async () => {
+    // C4 hole 2, arm two - and the exact tuple the window narrator consumes.
+    // `deriveNoHostVariant(leases, targetHostId)` names the TARGET first, so
+    // ∅ alone is not enough: the target must still be P, and P's lease must
+    // still carry the structured incompatibility, or the modal falls through
+    // to the generic offline variant and the user is told to wait for a host
+    // that is never coming back on its own.
+    const clock = createFakeAuthorityClock(0);
+    const authority = createTestAuthority({
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: null,
+        hosts: [fleetHost("P", "remote")],
+      },
+      initialIdentityKey: "acct-1",
+      clock,
+    });
+    const { engine } = authority;
+    const incarnation = attachReporter(engine, "A");
+    expect(await engine.activate("A", incarnation, "P")).toEqual({ ok: true });
+
+    engine.ingestEvidence(
+      "A",
+      incarnation,
+      compatIncompatible("P", null, INCOMPAT_DETAIL),
+    );
+    clock.advance(0);
+
+    const snapshot = engine.snapshot();
+    expect(snapshot.effectiveHostId).toBeNull();
+    expect(snapshot.targetHostId).toBe("P");
+    const lease = findLease(snapshot.leases, "P");
+    expect(lease?.dead?.reason).toBe("incompatible");
+    expect(lease?.dead?.reason === "incompatible" ? lease.dead.detail : null).toEqual(
+      INCOMPAT_DETAIL,
+    );
+
+    authority.dispose();
+  });
+});

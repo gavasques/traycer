@@ -37,13 +37,11 @@ import {
   type RuntimeHostMessengerBinding,
 } from "@/lib/host/host-messenger";
 import { createHostQueryInvalidator } from "@/lib/host/query-invalidator";
-import { SelectionEvidenceKernel } from "@traycer-clients/shared/host-selection/selection-evidence-kernel";
-import { selectionAuthorityLog } from "@/lib/host/authority-log";
+import { acquireRendererSelectionKernel } from "@/lib/host/renderer-selection-kernel";
 import {
   mountSelectionAuthorityBridge,
   type SelectionAuthorityBridge,
 } from "@/lib/host/selection-authority-bridge";
-import { transportEvidenceRelay } from "@/lib/host/transport-evidence";
 import { createSessionRetirementSweep } from "@/lib/host/session-retirement";
 import { appLogger } from "@/lib/logger";
 import {
@@ -219,39 +217,27 @@ export function createHostRuntime<Registry extends VersionedRpcRegistry>(
       // only sanctioned `selectById` caller.
       let selectionBridge: SelectionAuthorityBridge | null = null;
 
-      // THE window's evidence kernel (redesign P1.3), constructed and started
-      // HERE rather than inside the bridge for two reasons.
+      // THE window's evidence kernel (redesign P1.3), ACQUIRED rather than
+      // constructed - it belongs to the renderer load, not to this effect.
       //
-      // First, the transports below must be able to report into it from their
-      // very first dial: the buffering client DROPS evidence produced before
-      // the attach begins, and the bridge mounts only after `auth.start()` and
+      // The transports below must be able to report into it from their very
+      // first dial: the buffering client DROPS evidence produced before the
+      // attach begins, and the bridge mounts only after `auth.start()` and
       // `directory.start()` have both resolved - a window that contains those
       // first dials. An engine deriving from an evidence vacuum is the exact
-      // failure P1.1 refused to build.
+      // failure P1.1 refused to build. The relay it binds to is module-scoped
+      // for the matching reason: the remote session POOL is (see
+      // `transport-evidence`).
       //
-      // Second, the relay it binds to is module-scoped because the remote
-      // session POOL is (see `transport-evidence`), so binding must be an
-      // explicit lifetime the composition root owns and releases, not an
-      // implicit side effect of a render-tree mount.
-      const selectionKernel = new SelectionEvidenceKernel({
-        client: runnerHost.selectionAuthority,
-        now: () => Date.now(),
-        log: selectionAuthorityLog,
-      });
-      const releaseEvidenceRelay =
-        transportEvidenceRelay.bind(selectionKernel);
-      void selectionKernel.start().then((result) => {
-        if (result.ok) {
-          return;
-        }
-        // Terminal for this generation by contract: the kernel has published
-        // its detached snapshot, which the bridge turns into an unbound
-        // directory. Recovery is a fresh load or the next `reattachRequired`,
-        // never a retry here.
-        appLogger.warn("[host-runtime] authority attach refused", {
-          kind: result.kind,
-        });
-      });
+      // Owning it here was the F2 defect. `SelectionAuthorityClient` is
+      // attach-once per instance and is built once per renderer load, so
+      // StrictMode's setup -> cleanup -> setup attached a second kernel
+      // against a spent client, got `superseded`, and left the window
+      // permanently detached. `renderer-selection-kernel` matches the two
+      // lifetimes; this effect subscribes and never disposes.
+      const selectionKernel = acquireRendererSelectionKernel(
+        runnerHost.selectionAuthority,
+      );
 
       // Endpoint + bearer now ride the per-request `HostRequestAuthority` the
       // coordinator mints, so neither is closed over here. The remote branch
@@ -423,8 +409,6 @@ export function createHostRuntime<Registry extends VersionedRpcRegistry>(
         } catch (error) {
           appLogger.error("[host-runtime] startup failed", { phase }, error);
           selectionBridge?.dispose();
-          releaseEvidenceRelay();
-          selectionKernel.dispose();
           runtimeMessenger?.dispose();
           runtimeTransportUnsubscribe();
           auth.dispose();
@@ -444,10 +428,11 @@ export function createHostRuntime<Registry extends VersionedRpcRegistry>(
       return () => {
         lifecycle.disposed = true;
         selectionBridge?.dispose();
-        // Unbind BEFORE disposing: a transport mid-report must reach a live
-        // kernel or nothing, never a disposed one.
-        releaseEvidenceRelay();
-        selectionKernel.dispose();
+        // The kernel and its relay binding are NOT torn down here - they
+        // belong to the renderer load (see `acquireRendererSelectionKernel`).
+        // Releasing them on effect cleanup is what made a StrictMode remount
+        // permanently detach the window, and it is also what left warm pooled
+        // sessions reporting into a disposed kernel across any remount.
         runtimeMessenger?.dispose();
         runtimeTransportUnsubscribe();
         activeRuntime.dispose();

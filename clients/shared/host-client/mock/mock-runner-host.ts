@@ -66,7 +66,6 @@ import {
   InMemoryAuthorityIdentitySource,
   InMemoryHostFleetSource,
   InMemoryPreferredHostStore,
-  unavailableLocalHostEnsurePort,
   type InProcessSelectionAuthority,
 } from "../../host-selection/in-process-selection-authority";
 import {
@@ -287,7 +286,28 @@ export class MockRunnerHost implements IRunnerHost {
       // A shell with no host process can neither provision nor take the host
       // deliberately down, and saying so honestly is what makes P1.3's ∅
       // definition come out right here.
-      localHostEnsure: unavailableLocalHostEnsurePort,
+      //
+      // ANSWERED AGAINST THE FIXTURE, not as a constant. A mock built WITH a
+      // `localHost` snapshot is modelling a shell whose local host is already
+      // running - that is the entire content of the fixture - so the ensure
+      // has nothing to do and answers ok. Refusing there instead used to be
+      // invisible, because the engine only asked when the local lease was
+      // already `dead`; once P1.3's F3(b) ruling let derivation ask for a
+      // NEVER-DIALED local host too, the constant refusal fired on every such
+      // mock at boot, drove the local lease to `dead` for the retry cooldown
+      // (registry §5's ∅ made real), and left `effectiveHostId` null - so the
+      // window unbound its host client and every gate/compat surface in the
+      // gui-app suite hung on a probe that could no longer run. The mock was
+      // contradicting its own fixture; `localHost === null` is the only shape
+      // that genuinely cannot provision.
+      localHostEnsure: {
+        ensureReady: () =>
+          Promise.resolve(
+            this.localHost === null
+              ? { ok: false, reason: "local-provisioning-unavailable" }
+              : { ok: true },
+          ),
+      },
       localOutage: inertLocalHostOutageSignal,
       preferredStore: this.selectionPreferredStore,
       clock: systemAuthorityClock,

@@ -20,7 +20,6 @@ import {
   InMemoryPreferredHostStore,
   createInProcessSelectionAuthorityClient,
   inertLocalHostOutageSignal,
-  unavailableLocalHostEnsurePort,
 } from "@traycer-clients/shared/host-selection/in-process-selection-authority";
 import {
   createFakeAuthorityClock,
@@ -88,7 +87,15 @@ function buildAuthority(input: {
   const engine = new SelectionAuthorityEngineImpl({
     fleet,
     identity,
-    localHostEnsure: unavailableLocalHostEnsurePort,
+    // A PROVISIONABLE local host. The `unavailable` port models a machine
+    // whose host cannot be started, and since P1.3's F3(b)/(c) rulings such a
+    // host honestly reads `dead` as soon as the engine's own ensure comes back
+    // unavailable (registry §5's ∅ definition made real). Every test below is
+    // about what the BRIDGE does with a derivation, so leaving that port in
+    // place would silently rewrite the derivation under each of them - the
+    // window lands on ∅ or on the remote, and the bridge assertions end up
+    // measuring the local host's provisionability instead of the seam.
+    localHostEnsure: { ensureReady: () => Promise.resolve({ ok: true }) },
     localOutage: inertLocalHostOutageSignal,
     preferredStore,
     clock,

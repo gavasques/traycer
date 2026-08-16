@@ -73,6 +73,7 @@ import { systemTabOverlaySearchSchema } from "@/lib/system-tab-overlay-search";
 import { useSettingsSectionStore } from "@/stores/tabs/settings-section-store";
 import { useTabsStore } from "@/stores/tabs/store";
 import { runnerQueryKeys } from "@/lib/query-keys/runner-mutation-keys";
+import { useSelectionAuthorityStore } from "@/stores/host/selection-authority-store";
 
 const validSnapshot: LocalHostSnapshot = {
   hostId: "desktop-pid-1",
@@ -379,6 +380,34 @@ function mountGateWithRealUnavailable(
   );
 }
 
+/**
+ * The selection authority's OWN verdict for a host, read out of the renderer
+ * store its bridge writes - the machine code when the authority holds the host
+ * `dead("incompatible")`, and `null` otherwise.
+ *
+ * WHY THE INCOMPATIBILITY TESTS BELOW ASSERT HERE AND NOT ON THE CARD. An
+ * incompatible host is `dead("incompatible")` FOR SELECTION (D13/C4): the
+ * authority drops it from derivation the moment the compat probe reports, so
+ * `effectiveHostId` goes null and the window unbinds. `useHostCompatibility()`
+ * is keyed on the bound host, so with nothing bound it has no verdict left to
+ * render and this gate holds on its `checking` slot. That is the system
+ * working, not a regression - the surface that tells a user their host is too
+ * old is the ∅ modal's update-host variant, which P3.1 owns, and this
+ * component is documented as not rendered in production at all.
+ *
+ * What survives here is the half that actually protects a user, and it is
+ * asserted unchanged: children never mount against such a host, and no host
+ * RPC is ever dispatched to it.
+ */
+function authorityIncompatibleCode(hostId: string): string | null {
+  const lease = useSelectionAuthorityStore
+    .getState()
+    .leases.find((entry) => entry.hostId === hostId);
+  if (lease === undefined || lease.status !== "dead") return null;
+  if (lease.dead.reason !== "incompatible") return null;
+  return lease.dead.detail.code;
+}
+
 function advancePastSlowStartThreshold(): void {
   act(() => {
     vi.advanceTimersByTime(LOCAL_HOST_SLOW_START_THRESHOLD_MS + 10);
@@ -508,7 +537,7 @@ describe("LocalHostGate", () => {
     expect(screen.queryByTestId("gate-children")).toBeNull();
   });
 
-  it("does not provision until the initial local-host snapshot has been observed", async () => {
+  it("never provisions on mount - the authority owns boot intent; only a user gesture calls convergeReady", async () => {
     useAuthStore.getState().setSignedIn(
       {
         userId: "test-user",
@@ -528,13 +557,21 @@ describe("LocalHostGate", () => {
       null,
       makeHostManagement(convergeReady),
     );
-
-    mountGate(host, localEntry);
+    const { readLifecycle } = mountProvisioningLifecycle(host);
 
     expect(convergeReady).not.toHaveBeenCalled();
 
+    // The first local-host snapshot arriving used to be exactly what fired
+    // the retired automatic ensure - it must now be a no-op for convergeReady.
     act(() => {
       host.emitInitialSnapshot();
+    });
+    await Promise.resolve();
+    expect(convergeReady).not.toHaveBeenCalled();
+
+    // The manual path - a user's Retry gesture - still works.
+    act(() => {
+      readLifecycle()?.provisioning.retry();
     });
 
     await waitFor(() => {
@@ -655,7 +692,7 @@ describe("LocalHostGate", () => {
     expect(screen.queryByTestId("gate-children")).toBeNull();
   });
 
-  it("blocks children and shows the protocol reason when the initial host is incompatible", async () => {
+  it("an incompatible initial host blocks children, dispatches no host RPC, and is held dead(incompatible) by the authority", async () => {
     useAuthStore.getState().setSignedIn(
       {
         userId: "test-user",
@@ -680,14 +717,17 @@ describe("LocalHostGate", () => {
       <HostBackedTasksProbe />,
     );
 
-    expect(await screen.findByTestId("local-host-incompatible")).not.toBeNull();
-    expect(
-      screen.getByTestId("local-host-incompatible-reason").textContent,
-    ).toContain("Incompatible methods: worktree.readScriptsAtRef");
-    expect(screen.queryByText(/Force restart/i)).toBeNull();
-    expect(screen.queryByText(/Force update/i)).toBeNull();
-    expect(screen.queryByText(/Retry check/i)).toBeNull();
-    expect(screen.queryByRole("button", { name: "Update host" })).toBeNull();
+    // The verdict reaches the authority, which takes the host out of
+    // selection - the D13/C4 consequence, and the reason the card this used to
+    // assert on is now unreachable here (see `authorityIncompatibleCode`).
+    await waitFor(() => {
+      expect(authorityIncompatibleCode(validSnapshot.hostId)).toBe(
+        "INCOMPATIBLE",
+      );
+    });
+    expect(useSelectionAuthorityStore.getState().effectiveHostId).toBeNull();
+    // Unchanged, and the whole point: nothing mounts against the host and
+    // nothing is dispatched to it.
     expect(screen.queryByTestId("gate-children")).toBeNull();
     expect(activeMessenger?.calls.map((entry) => entry.method)).not.toContain(
       "epic.listTasks",
@@ -753,14 +793,27 @@ describe("LocalHostGate", () => {
       <div data-testid="gate-children">children</div>,
     );
 
-    expect(await screen.findByTestId("local-host-incompatible")).not.toBeNull();
-    expect(
-      screen.getByTestId("local-host-incompatible-reason").textContent,
-    ).toContain("No downgrade bridge for called method");
+    // TERMINAL, not retryable: the authority holds the host dead under the
+    // downgrade code itself rather than leaving it `connecting` while the
+    // probe keeps trying. Asserting the CODE is what keeps this test distinct
+    // from its INCOMPATIBLE sibling - both end at `dead("incompatible")`, and
+    // only the detail says which handshake failure got them there.
+    await waitFor(() => {
+      expect(authorityIncompatibleCode(validSnapshot.hostId)).toBe(
+        "DOWNGRADE_UNSUPPORTED",
+      );
+    });
+    expect(useSelectionAuthorityStore.getState().effectiveHostId).toBeNull();
     expect(screen.queryByTestId("gate-children")).toBeNull();
   });
 
-  it("normal-launch Update host calls convergeReady with force=true", async () => {
+  // The forced-update GESTURE, driven on the lifecycle rather than through the
+  // incompatible card's button. The card is the surface an incompatible host
+  // no longer reaches (see `authorityIncompatibleCode`), so the button's own
+  // rendering is coverage that moves to P3.1's ∅ modal with the surface. What
+  // this component still owns - and what a user's data depends on - is that
+  // the forced path asks for force, and the ordinary path does not.
+  it("the forced-update gesture calls convergeReady with force=true; plain Retry does not", async () => {
     useAuthStore.getState().setSignedIn(
       {
         userId: "test-user",
@@ -776,39 +829,42 @@ describe("LocalHostGate", () => {
         value: { running: true, version: "1.2.4" },
       }),
     );
-    mountGateWithRuntime(
-      new MockRunnerHost({
-        signInUrl: "https://auth.traycer.invalid/sign-in",
-        authnBaseUrl: "http://localhost:5005",
-        localHost: validSnapshot,
-        hosts: [],
-        workspaceFolderPickerPaths: undefined,
-        hasLocalHost: undefined,
-        traycerCli: undefined,
-        hostManagement: makeHostManagement(convergeReady),
-      }),
-      localEntry,
-      () => {
-        throw new HostRpcError({
-          code: "INCOMPATIBLE",
-          message: "Incompatible methods",
-          requestId: "req-status",
-          method: "host.status",
-          fatalDetails: null,
-        });
-      },
-      <div data-testid="gate-children">children</div>,
-    );
+    const host = new MockRunnerHost({
+      signInUrl: "https://auth.traycer.invalid/sign-in",
+      authnBaseUrl: "http://localhost:5005",
+      localHost: validSnapshot,
+      hosts: [],
+      workspaceFolderPickerPaths: undefined,
+      hasLocalHost: undefined,
+      traycerCli: undefined,
+      hostManagement: makeHostManagement(convergeReady),
+    });
+    const { readLifecycle } = mountProvisioningLifecycle(host);
 
-    const update = await screen.findByRole("button", { name: "Update host" });
-    fireEvent.click(update);
-
+    act(() => {
+      readLifecycle()?.provisioning.force();
+    });
     await waitFor(() => {
       expect(convergeReady).toHaveBeenCalledWith(true);
     });
+
+    act(() => {
+      readLifecycle()?.provisioning.retry();
+    });
+    await waitFor(() => {
+      expect(convergeReady).toHaveBeenCalledTimes(2);
+    });
+    expect(convergeReady).toHaveBeenLastCalledWith(false);
   });
 
-  it("busy incompatible host can refresh busy status or force update", async () => {
+  // The busy-keep LATCH and its two gestures. The busy card this used to drive
+  // renders behind `compat.status === "incompatible"`, which an incompatible
+  // host no longer reaches here (see `authorityIncompatibleCode`), so the
+  // panel's copy - "Refresh"/"Force update host" present, "Force restart" and
+  // "Retry update" absent - is coverage that moves to P3.1's surface with the
+  // panel. The latch itself is this hook's, and it is what keeps children off
+  // an unprobed busy host, so it stays pinned here.
+  it("a busy convergeReady latches busy-keep, and the latch survives both a plain Refresh and a forced update", async () => {
     useAuthStore.getState().setSignedIn(
       {
         userId: "test-user",
@@ -818,73 +874,50 @@ describe("LocalHostGate", () => {
       { userId: "test-user", username: "Test User" },
       [],
     );
-    const hostRef: { current: MockRunnerHost | null } = { current: null };
     const convergeReady = vi.fn(
-      (): Promise<MutationOutcome<ConvergeReadyOk>> => {
-        const currentHost = hostRef.current;
-        if (currentHost === null) {
-          return Promise.reject(new Error("host not mounted"));
-        }
-        currentHost.setLocalHost(validSnapshot);
-        return Promise.resolve({
+      (): Promise<MutationOutcome<ConvergeReadyOk>> =>
+        Promise.resolve({
           kind: "busy",
           continuation: "retry-with-force",
           message: "The running host has work in progress.",
-        });
-      },
+        }),
     );
     const host = new MockRunnerHost({
       signInUrl: "https://auth.traycer.invalid/sign-in",
       authnBaseUrl: "http://localhost:5005",
-      localHost: null,
+      localHost: validSnapshot,
       hosts: [],
       workspaceFolderPickerPaths: undefined,
       hasLocalHost: undefined,
       traycerCli: undefined,
       hostManagement: makeHostManagement(convergeReady),
     });
-    hostRef.current = host;
+    const { readLifecycle } = mountProvisioningLifecycle(host);
 
-    mountGateWithRuntime(
-      host,
-      localEntry,
-      () => {
-        throw new HostRpcError({
-          code: "INCOMPATIBLE",
-          message: "Incompatible methods: epic.listTasks",
-          requestId: "req-status",
-          method: "host.status",
-          fatalDetails: null,
-        });
-      },
-      <div data-testid="gate-children">children</div>,
-    );
+    act(() => {
+      readLifecycle()?.provisioning.retry();
+    });
+    await waitFor(() => {
+      expect(convergeReady).toHaveBeenCalledTimes(1);
+      expect(readLifecycle()?.provisioning.hostBusy).toBe(true);
+    });
+    expect(convergeReady).toHaveBeenLastCalledWith(false);
 
-    expect(
-      await screen.findByTestId("local-host-incompatible-busy"),
-    ).not.toBeNull();
-    expect(
-      screen.getByTestId("local-host-incompatible-reason").textContent,
-    ).toContain("Incompatible methods: epic.listTasks");
-    const refresh = screen.getByRole("button", { name: "Refresh" });
-    expect(
-      screen.getByRole("button", { name: "Force update host" }),
-    ).not.toBeNull();
-    expect(screen.queryByText(/Force restart/i)).toBeNull();
-    expect(screen.queryByText(/Retry update/i)).toBeNull();
-
-    fireEvent.click(refresh);
-
+    // Refresh: re-check the busy status without forcing. LATCHED - the point
+    // of `markBusyKeep` is that only a success clears it, so a second busy
+    // answer must not read as recovery.
+    act(() => {
+      readLifecycle()?.provisioning.retry();
+    });
     await waitFor(() => {
       expect(convergeReady).toHaveBeenCalledTimes(2);
     });
     expect(convergeReady).toHaveBeenLastCalledWith(false);
+    expect(readLifecycle()?.provisioning.hostBusy).toBe(true);
 
-    const forceUpdate = await screen.findByRole("button", {
-      name: "Force update host",
+    act(() => {
+      readLifecycle()?.provisioning.force();
     });
-    fireEvent.click(forceUpdate);
-
     await waitFor(() => {
       expect(convergeReady).toHaveBeenCalledTimes(3);
     });
@@ -1498,6 +1531,11 @@ describe("useHostProvisioning lastProgress producer", () => {
     });
     const { queryClient, readLifecycle } = mountProvisioningLifecycle(host);
 
+    // The automatic launch-time ensure is retired - the producer under test
+    // is fed by user-initiated attempts now, so drive the first one directly.
+    act(() => {
+      readLifecycle()?.provisioning.retry();
+    });
     await waitFor(() => {
       expect(convergeReady).toHaveBeenCalledTimes(1);
       expect(readLifecycle()?.provisioning.isProvisioning).toBe(true);
@@ -1549,6 +1587,9 @@ describe("useHostProvisioning lastProgress producer", () => {
     });
     const { queryClient, readLifecycle } = mountProvisioningLifecycle(host);
 
+    act(() => {
+      readLifecycle()?.provisioning.retry();
+    });
     await waitFor(() => {
       expect(convergeReady).toHaveBeenCalledTimes(1);
       expect(readLifecycle()?.provisioning.isProvisioning).toBe(true);
@@ -1604,6 +1645,9 @@ describe("useHostProvisioning lastProgress producer", () => {
     });
     const { queryClient, readLifecycle } = mountProvisioningLifecycle(host);
 
+    act(() => {
+      readLifecycle()?.provisioning.retry();
+    });
     await waitFor(() => {
       expect(convergeReady).toHaveBeenCalledTimes(1);
       expect(settles).toHaveLength(1);
@@ -1689,6 +1733,9 @@ describe("useHostProvisioning lastProgress producer", () => {
     });
     const { queryClient, readLifecycle } = mountProvisioningLifecycle(host);
 
+    act(() => {
+      readLifecycle()?.provisioning.retry();
+    });
     await waitFor(() => {
       expect(convergeReady).toHaveBeenCalledTimes(1);
       expect(readLifecycle()?.provisioning.isProvisioning).toBe(true);
@@ -1748,6 +1795,9 @@ describe("useHostProvisioning lastProgress producer", () => {
     const { queryClient, readLifecycle } = mountProvisioningLifecycle(host);
     const firstLaneStartedAt = "2026-05-15T00:00:10Z";
 
+    act(() => {
+      readLifecycle()?.provisioning.retry();
+    });
     await waitFor(() => {
       expect(convergeReady).toHaveBeenCalledTimes(1);
       expect(settles).toHaveLength(1);

@@ -1761,6 +1761,28 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
       // for them. `connecting` is the honest non-committal answer, and it is
       // what registry §5 names. A restart the engine did NOT ask for still
       // reaches the arm below and still holds.
+      //
+      // WHY NOTHING STAMPED ON THE TOKEN CAN REFINE THIS (F3 completion, and
+      // a refuted design - do not rebuild it). The obvious refinement is to
+      // record the outage signal at mint and yield here when the outage
+      // PREDATED the request, on the grounds that such an outage cannot be
+      // ours. That stamp is provably always false: an ensure is minted from
+      // exactly two arms, and both guarantee a false signal at mint - the
+      // never-dialed arm is guarded on it explicitly (see
+      // `requestLocalEnsureIfWanted`), and `dead` is unreachable while
+      // `inExpectedOutage` is true because THIS ORDER puts the outage arm
+      // above every dead arm. The one residue - a ceiling-lapsed outage whose
+      // start is still recorded - has `inExpectedOutage` answering false
+      // anyway, so a yield would change nothing there either.
+      //
+      // The remaining case, an outage that begins AFTER the mint, is the one
+      // the signal genuinely cannot attribute: our own `convergeReady` busies
+      // that lane, so "it started after I asked" is true of ourselves. Ranking
+      // the outage arm first instead resolves it in the direction that hurts,
+      // and it passes every OTHER test in the suite - measured, not assumed.
+      // The engine suite's `COMPOSITION: an ensure the ENGINE started
+      // outranks the outage signal it busies` pin is what stands between that
+      // green re-rank and shipping ∅ during provisioning.
       return { hostId, status: "connecting", dead: null };
     }
     if (this.inExpectedOutage(hostId, isLocal, now)) {

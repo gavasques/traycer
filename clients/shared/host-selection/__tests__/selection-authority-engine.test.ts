@@ -141,6 +141,25 @@ const INCOMPAT_DETAIL: SelectionIncompatibility = {
 
 const EMPTY_FLEET_SEED = { identityGeneration: 0, localHostId: null, hosts: [] };
 
+/**
+ * A local `ensure` port that answers "ready" immediately.
+ *
+ * The suite's default is {@link unavailableLocalHostEnsurePort}, which models a
+ * machine whose host CANNOT be provisioned - and since the F3(b)/(c) rulings
+ * such a host honestly reads `dead` as soon as the engine's ensure comes back
+ * unavailable (registry §5's ∅ definition, made real; the perpetual
+ * `connecting` it replaced was the lie that blocked ∅ on exactly the platforms
+ * that needed it).
+ *
+ * So every scenario whose SUBJECT is the local host serving - as a fallback, as
+ * a precedence loser that is nonetheless usable, as the host a deliberate
+ * restart cycles - has to say that the host is provisionable. Leaving the
+ * unavailable port in place would make those tests assert the old lie.
+ */
+function readyLocalHostEnsurePort(): LocalHostEnsurePort {
+  return { ensureReady: () => Promise.resolve({ ok: true }) };
+}
+
 // -------------------------------------------------------------------- tests
 
 describe("SelectionAuthorityEngineImpl - attach fence", () => {
@@ -868,8 +887,48 @@ describe("SelectionAuthorityEngineImpl - restart-intent episodes", () => {
   });
 });
 
+describe("SelectionAuthorityEngineImpl - expected-outage budgets are bounded", () => {
+  // EVERY OTHER TEST OF THESE HOLDS SCALES WITH THEM. They advance the clock
+  // relative to the constant (`RESTART_INTENT_EPISODE_MS + 1`, `/2`), which is
+  // right for asserting the BEHAVIOUR - the episode lapses, the lease degrades
+  // - and leaves the DURATION unpinned in both directions: multiplying either
+  // budget by ten thousand keeps the whole suite green while shipping a
+  // year-long `restarting-expected` hold. Pinned here because an expected
+  // outage is a BOUNDED LIE: for its whole length the authority reports a host
+  // it cannot reach as merely cycling, suppressing the death evidence that
+  // would otherwise fail the window over.
+  //
+  // Bands rather than equalities. Both numbers are tunable within the range
+  // connection registry §3 argues for, and an `===` here would be a
+  // change-detector that fires on a legitimate tune while still not saying
+  // what the value has to be TRUE of.
+  it("the restart-intent episode covers a restart cycle without becoming a long-lived lie", () => {
+    // Lower: a restart/apply cycle has to fit, or the exemption never does its
+    // job and a deliberate restart still reads as death. Upper: a host that
+    // never comes back must reach `dead` promptly - the user is waiting on ∅
+    // or a failover, and neither can happen while this holds.
+    expect(RESTART_INTENT_EPISODE_MS).toBeGreaterThanOrEqual(10_000);
+    expect(RESTART_INTENT_EPISODE_MS).toBeLessThanOrEqual(5 * 60_000);
+  });
+
+  it("the local mutation-lane ceiling sits between the quiet and max host budgets", () => {
+    // Anchored to registry §3's own numbers: never shorter than the 60s quiet
+    // window (a lane that IS making progress must not be cut off), never
+    // longer than the 15min update budget (the ceiling exists precisely so a
+    // lane that never reports completion cannot pin a lease forever).
+    //
+    // THE UPPER BOUND IS DELIBERATELY TIGHT - it IS §3's documented max budget,
+    // so any increase fails here. That is the intent, not an oversight: this
+    // band pins the documented contract rather than a comfortable range, and a
+    // legitimate upward tune means amending §3 first. If this assertion is in
+    // your way, widen the REGISTRY, not the band.
+    expect(LOCAL_EXPECTED_OUTAGE_CEILING_MS).toBeGreaterThanOrEqual(60_000);
+    expect(LOCAL_EXPECTED_OUTAGE_CEILING_MS).toBeLessThanOrEqual(15 * 60_000);
+  });
+});
+
 describe("SelectionAuthorityEngineImpl - local outage signal", () => {
-  it("holds the local host's lease in restarting-expected while the signal is true, and the ceiling caps it", () => {
+  it("holds the local host's lease in restarting-expected while the signal is true, and the ceiling caps it", async () => {
     const clock = createFakeAuthorityClock(0);
     const fleet = new InMemoryHostFleetSource({
       revision: 0,
@@ -890,13 +949,25 @@ describe("SelectionAuthorityEngineImpl - local outage signal", () => {
     const engine = new SelectionAuthorityEngineImpl({
       fleet,
       identity,
-      localHostEnsure: unavailableLocalHostEnsurePort,
+      // PROVISIONABLE, and settled BEFORE the outage edges below. The subject
+      // here is a deliberate restart of a host that is up - which is the only
+      // shape a user restart can have - so the construction-time ensure D14
+      // draws for a never-dialed local host must have answered first. Left
+      // in flight, its lease arm (which deliberately outranks this signal, so
+      // provisioning never shows ∅) would answer every assertion below and the
+      // outage hold would never be reached at all. That arm's own coverage is
+      // the next test.
+      localHostEnsure: readyLocalHostEnsurePort(),
       localOutage: outage,
       clock,
       newIncarnationId: createIncrementingIncarnationIds(),
       preferredStore: new InMemoryPreferredHostStore(),
       log: silentAuthorityLog,
     });
+    await Promise.resolve();
+    expect(findLease(engine.snapshot().leases, "local-1")?.status).toBe(
+      "connecting",
+    );
 
     outageState = true;
     for (const listener of Array.from(outageListeners)) listener(true);
@@ -912,6 +983,79 @@ describe("SelectionAuthorityEngineImpl - local outage signal", () => {
 
     clock.advance(LOCAL_EXPECTED_OUTAGE_CEILING_MS + 1);
     expect(findLease(engine.snapshot().leases, "local-1")?.status).not.toBe("restarting-expected");
+
+    engine.dispose();
+  });
+
+  it("COMPOSITION: an ensure the ENGINE started outranks the outage signal it busies - the local lease stays connecting and ∅ never shows while provisioning", async () => {
+    const clock = createFakeAuthorityClock(0);
+    const fleet = new InMemoryHostFleetSource({
+      revision: 0,
+      identityGeneration: 0,
+      localHostId: "local-1",
+      hosts: [fleetHost("local-1", "local")],
+    });
+    const identity = {
+      current: () => ({ identityKey: "acct-1", generation: 0 }),
+      onChanged: () => ({ dispose: () => undefined }),
+    };
+    let outageState = false;
+    const outageListeners = new Set<(inExpectedOutage: boolean) => void>();
+    const outage: LocalHostOutageSignal = {
+      inExpectedOutage: () => outageState,
+      onChanged: (listener) => {
+        outageListeners.add(listener);
+        return { dispose: () => outageListeners.delete(listener) };
+      },
+    };
+    const ensure = createDeferredEnsure();
+    const engine = new SelectionAuthorityEngineImpl({
+      fleet,
+      identity,
+      localHostEnsure: ensure.port,
+      localOutage: outage,
+      clock,
+      newIncarnationId: createIncrementingIncarnationIds(),
+      preferredStore: new InMemoryPreferredHostStore(),
+      log: silentAuthorityLog,
+    });
+    // Derivation wants the local host and it has never been dialed, so D14's
+    // one sanctioned process action fires and stays outstanding.
+    expect(ensure.calls.count).toBe(1);
+
+    // THE EDGE THIS PINS. `LocalHostEnsurePort` is wired to
+    // `HostController.convergeReady`, which busies the very mutation lane
+    // `LocalHostOutageSignal` reports - so the engine's own provisioning
+    // request raises this signal, and the raised signal is INDISTINGUISHABLE
+    // from a user restart landing in the same window (F3(c): "the engine's own
+    // ensure busies the lane at request, so 'the outage began after my
+    // request' is true of ourselves"; one boolean cannot carry provenance).
+    //
+    // The arm order resolves it in the direction that cannot hurt: while the
+    // engine is waiting on its own answer the local lease reads `connecting`,
+    // which is usable, so a user whose host is being started FOR them is never
+    // shown the ∅ modal. Ranking the outage arm first instead passes every
+    // other test in this file - measured, not assumed - and would ship exactly
+    // that regression. The mis-attributed user restart is the accepted
+    // residual, bounded by the request: it self-heals below.
+    outageState = true;
+    for (const listener of Array.from(outageListeners)) listener(true);
+    const held = findLease(engine.snapshot().leases, "local-1");
+    if (held === undefined) throw new Error("expected a lease for local-1");
+    expect(held.status).toBe("connecting");
+    expect(isUsableForSelection(held)).toBe(true);
+    expect(engine.snapshot().effectiveHostId).toBe("local-1");
+    expect(ensure.calls.count).toBe(1);
+
+    // Self-healing: once the request the engine was waiting on answers, the
+    // arm is gone and the lane's own signal governs the lease again. The
+    // window keeps pointing at the cycling host (the D5/M6 HOLD), which is the
+    // whole reason `restarting-expected` is a hold rather than eligibility.
+    await ensure.resolve(true);
+    expect(findLease(engine.snapshot().leases, "local-1")?.status).toBe(
+      "restarting-expected",
+    );
+    expect(engine.snapshot().effectiveHostId).toBe("local-1");
 
     engine.dispose();
   });
@@ -1447,7 +1591,7 @@ describe("SelectionAuthorityEngineImpl - A3: compat ranks are incarnation-scoped
 });
 
 describe("SelectionAuthorityEngineImpl - A4: identity transition keeps an active local outage", () => {
-  it("a deliberate local restart spanning a sign-out is not blindly cleared, and the ceiling still counts from the ORIGINAL start", () => {
+  it("a deliberate local restart spanning a sign-out is not blindly cleared, and the ceiling still counts from the ORIGINAL start", async () => {
     const clock = createFakeAuthorityClock(0);
     const fleet = new InMemoryHostFleetSource({
       revision: 0,
@@ -1476,15 +1620,18 @@ describe("SelectionAuthorityEngineImpl - A4: identity transition keeps an active
       },
     };
     const engine = new SelectionAuthorityEngineImpl({
+      // Provisionable, and settled before the restart - see the D5 suite's
+      // note: a host a user restarts is a host that was up.
+      localHostEnsure: readyLocalHostEnsurePort(),
       fleet,
       identity,
-      localHostEnsure: unavailableLocalHostEnsurePort,
       localOutage: outage,
       clock,
       newIncarnationId: createIncrementingIncarnationIds(),
       preferredStore: new InMemoryPreferredHostStore(),
       log: silentAuthorityLog,
     });
+    await Promise.resolve();
 
     outageState = true;
     for (const listener of Array.from(outageListeners)) listener(true);
@@ -1611,17 +1758,22 @@ describe("SelectionAuthorityEngineImpl - derivation precedence (P1.2)", () => {
       },
       initialIdentityKey: "acct-1",
       clock,
+      // A PROVISIONABLE local host, which is what makes this a precedence test
+      // at all. The suite default cannot start L, so L reaches `dead` the
+      // moment the construction-time ensure answers (registry §5) - and a test
+      // whose whole point is "both candidates are usable, the preferred one
+      // wins" would then be proving only that the loser was unusable.
+      localHostEnsure: readyLocalHostEnsurePort(),
     });
     const { engine } = authority;
     const seqA = engine.allocateAttachSeq("A");
     const attachA = engine.attach("A", attachRequest(seqA, []));
     if (!attachA.ok) throw new Error("expected attach to succeed");
 
-    // L has no evidence at all, so its lease is the default "connecting" -
-    // usable by `isUsableForSelection` (only `dead` and `restarting-expected`
-    // are excluded). Both P and L are therefore usable at the moment of
-    // activation, which is what makes this a precedence test rather than a
-    // "no other candidate" test.
+    // L is usable by `isUsableForSelection` (only `dead` and
+    // `restarting-expected` are excluded). Both P and L are therefore usable
+    // at the moment of activation, which is what makes this a precedence test
+    // rather than a "no other candidate" test.
     const localLease = findLease(engine.snapshot().leases, "L");
     if (localLease === undefined) throw new Error("expected a lease for L");
     expect(isUsableForSelection(localLease)).toBe(true);
@@ -1859,6 +2011,11 @@ describe("SelectionAuthorityEngineImpl - P1.3 failover scenarios", () => {
       },
       initialIdentityKey: "acct-1",
       clock,
+      // L IS THE FALLBACK, so this machine's host has to be startable. With
+      // the suite's unavailable port L reads `dead` once the engine's ensure
+      // answers, and the assertion below would be measuring ∅ - a real and
+      // correct outcome (registry §5), but a different scenario.
+      localHostEnsure: readyLocalHostEnsurePort(),
     });
     const { engine } = authority;
     const incarnation = attachReporter(engine, "A");
@@ -1884,6 +2041,8 @@ describe("SelectionAuthorityEngineImpl - P1.3 failover scenarios", () => {
       },
       initialIdentityKey: "acct-1",
       clock,
+      // L is the fallback the window serves from until P earns its way back.
+      localHostEnsure: readyLocalHostEnsurePort(),
     });
     const { engine } = authority;
     const incarnation = attachReporter(engine, "A");
@@ -1922,6 +2081,11 @@ describe("SelectionAuthorityEngineImpl - P1.3 failover scenarios", () => {
       },
       initialIdentityKey: "acct-1",
       clock,
+      // L is the fallback the failover lands on; C is the third host M6 must
+      // keep the window from hopping to. Both need L to be startable, or the
+      // failover would land on C in the first place and there would be no
+      // second hop to forbid.
+      localHostEnsure: readyLocalHostEnsurePort(),
     });
     const { engine } = authority;
     const incarnation = attachReporter(engine, "A");
@@ -1979,6 +2143,9 @@ describe("SelectionAuthorityEngineImpl - P1.3 failover scenarios", () => {
       },
       initialIdentityKey: "acct-1",
       clock,
+      // L is the fallback the window is sitting on when the Activate lands -
+      // the FailedOver phase this bypasses damping from.
+      localHostEnsure: readyLocalHostEnsurePort(),
     });
     const { engine } = authority;
     const incarnation = attachReporter(engine, "A");

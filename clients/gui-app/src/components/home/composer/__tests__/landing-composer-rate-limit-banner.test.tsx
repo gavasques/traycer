@@ -264,6 +264,8 @@ vi.mock("@/hooks/host/use-composer-placement", () => ({
 vi.mock("@/lib/host", () => ({
   useHostBinding: () => null,
   useHostClient: () => null,
+  // The SPINE, a separate export since redesign P2.1.
+  useHostRuntimeClient: () => null,
 }));
 
 function profile(

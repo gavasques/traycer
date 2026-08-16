@@ -25,6 +25,7 @@ import {
 } from "@/lib/host-rpc-policy/host-method-policy-table";
 import { createAppQueryClient } from "@/lib/query-client";
 import { getConditionPollEpisodeCoordinator } from "@/lib/query/condition-poll-episode-coordinator";
+import { useSelectionAuthorityStore } from "@/stores/host/selection-authority-store";
 import {
   HARNESS_CATALOG_REFRESH_AFTER_MS,
   harnessCatalogEntryNeedsRefresh,
@@ -46,7 +47,26 @@ const hostBindingMock = vi.hoisted(() => ({
 vi.mock("@/lib/host/runtime", () => ({
   useHostBinding: () => hostBindingMock.current,
   useHostClient: () => hostBindingMock.current?.hostClient ?? null,
+  // The spine, a separate export since redesign P2.1.
+  useHostRuntimeClient: () => hostBindingMock.current?.hostClient ?? null,
 }));
+
+/**
+ * `useDefaultHostClient` resolves the SELECTION LAYER's effective host through
+ * the spine (redesign P2.1), so a fixture that only binds the client leaves
+ * every default-host query addressing ∅. Naming the effective host is now part
+ * of building an app-wide host fixture.
+ */
+function setEffectiveHostId(hostId: string | null): void {
+  useSelectionAuthorityStore.getState().applyKernelSnapshot({
+    attached: true,
+    preferredHostId: hostId,
+    targetHostId: hostId,
+    effectiveHostId: hostId,
+    leases: [],
+    selectionRevision: 1,
+  });
+}
 
 const UNAVAILABLE_INITIAL_MS = 30 * 1000;
 const UNAVAILABLE_SECOND_MS = 60 * 1000;
@@ -183,6 +203,7 @@ function createCatalogFixture(
     createRequestContextFixture({ origin: "renderer", bearerToken: "tok-1" }),
   );
   hostBindingMock.current = { hostClient: client };
+  setEffectiveHostId(mockLocalHostEntry.hostId);
   const Wrapper = (props: { readonly children: ReactNode }): ReactNode => (
     <QueryClientProvider client={queryClient}>
       {props.children}
@@ -201,6 +222,7 @@ describe("useGuiHarnessesQuery table cadence", () => {
     focusManager.setFocused(undefined);
     vi.useRealTimers();
     hostBindingMock.current = null;
+    useSelectionAuthorityStore.getState().reset();
     cleanup();
   });
 
@@ -408,6 +430,7 @@ describe("useGuiHarnessModelsQuery (interval removal regression)", () => {
   afterEach(() => {
     vi.useRealTimers();
     hostBindingMock.current = null;
+    useSelectionAuthorityStore.getState().reset();
     cleanup();
   });
 
@@ -526,6 +549,7 @@ describe("useGuiHarnessCatalog (batched interval removal regression)", () => {
   afterEach(() => {
     vi.useRealTimers();
     hostBindingMock.current = null;
+    useSelectionAuthorityStore.getState().reset();
     cleanup();
   });
 
@@ -643,6 +667,7 @@ describe("useGuiHarnessCatalog cache-only label reader (MED5)", () => {
   afterEach(() => {
     vi.useRealTimers();
     hostBindingMock.current = null;
+    useSelectionAuthorityStore.getState().reset();
     cleanup();
   });
 
@@ -746,6 +771,7 @@ describe("useGuiHarnessCatalog cache-only label reader (MED5)", () => {
 describe("…ForClient catalog hooks are scoped to the client argument, not the app-wide default", () => {
   afterEach(() => {
     hostBindingMock.current = null;
+    useSelectionAuthorityStore.getState().reset();
     cleanup();
   });
 
@@ -898,6 +924,7 @@ describe("…ForClient catalog hooks are scoped to the client argument, not the 
         defaultHostCalls,
       ),
     };
+    setEffectiveHostId("default-host");
 
     const { result } = renderHook(
       () =>
@@ -937,6 +964,7 @@ describe("…ForClient catalog hooks are scoped to the client argument, not the 
         defaultHostCalls,
       ),
     };
+    setEffectiveHostId("default-host");
 
     const { result } = renderHook(
       () =>
@@ -1033,6 +1061,7 @@ describe("harnessCatalogEntryNeedsRefresh", () => {
 describe('useGuiHarnessCatalogForClient modelsFetch: "cached-only"', () => {
   afterEach(() => {
     hostBindingMock.current = null;
+    useSelectionAuthorityStore.getState().reset();
     cleanup();
   });
 

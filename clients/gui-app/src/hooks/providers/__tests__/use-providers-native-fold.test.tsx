@@ -36,6 +36,8 @@ vi.mock("@/lib/host", async () => {
   return {
     ...actual,
     useHostClient: () => mockClientHolder.client,
+    // The SPINE, a separate export since redesign P2.1.
+    useHostRuntimeClient: () => mockClientHolder.client,
   };
 });
 

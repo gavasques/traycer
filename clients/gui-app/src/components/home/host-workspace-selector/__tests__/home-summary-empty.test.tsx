@@ -202,6 +202,8 @@ vi.mock("@/lib/host", () => ({
     directory: { selectById: mocks.selectHost },
   }),
   useHostClient: () => mocks.hostClient.current,
+  // The SPINE, a separate export since redesign P2.1.
+  useHostRuntimeClient: () => mocks.hostClient.current,
 }));
 
 vi.mock("@tanstack/react-router", () => ({

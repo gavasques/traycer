@@ -97,6 +97,8 @@ vi.mock("@/hooks/worktree/use-worktree-list-bindings-for-epic-query", () => ({
 }));
 vi.mock("@/lib/host", () => ({
   useHostClient: () => mocks.defaultClient,
+  // The SPINE, a separate export since redesign P2.1.
+  useHostRuntimeClient: () => mocks.defaultClient,
 }));
 vi.mock("@/lib/epic-selectors", () => ({
   useArtifactFolderChain: (artifactId: string) => mocks.folderChain(artifactId),

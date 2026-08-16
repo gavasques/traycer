@@ -6,6 +6,8 @@ vi.mock("sonner", () => ({
 
 vi.mock("@/lib/host/runtime", () => ({
   useHostClient: () => ({}),
+  // The SPINE, a separate export since redesign P2.1.
+  useHostRuntimeClient: () => ({}),
 }));
 
 const capturedOptions: Record<string, unknown> = {};

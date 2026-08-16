@@ -34,6 +34,15 @@ const messengerRef = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/host/runtime", () => ({
+  // The SPINE and the app-wide client are separate exports since redesign
+  // P2.1; this stub stands in for both, which is what `useHostClientFor` and
+  // `useHostClientForHostId` each reach for.
+  useHostRuntimeClient: () => {
+    if (globalClientRef.value === null) {
+      throw new Error("test global client not configured");
+    }
+    return globalClientRef.value;
+  },
   useHostClient: () => {
     if (globalClientRef.value === null) {
       throw new Error("test global client not configured");

@@ -78,6 +78,8 @@ const mockAuth = {
 vi.mock("@/lib/host", () => ({
   useHostBinding: () => null,
   useHostClient: () => hostState.client,
+  // The SPINE, a separate export since redesign P2.1.
+  useHostRuntimeClient: () => hostState.client,
   useAuthService: () => mockAuth,
 }));
 

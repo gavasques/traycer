@@ -31,6 +31,8 @@ vi.mock("sonner", () => ({
 
 vi.mock("@/lib/host", () => ({
   useHostClient: () => hostClient,
+  // The SPINE, a separate export since redesign P2.1.
+  useHostRuntimeClient: () => hostClient,
   useHostDirectory: () => ({
     findById: () => (directoryState.available ? mockLocalHostEntry : null),
   }),

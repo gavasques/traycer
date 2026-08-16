@@ -272,10 +272,13 @@ describe("HostRuntime lifecycle", () => {
       runtime.hostClient.getRequestContext()?.credentials.getBearerToken(),
     ).toBe("tok-1");
     expect(runtime.hostClient.getActiveHostId()).toBe("mock-local");
-    // bind() invalidates previous(null) + next(mock-local) on selection
-    // change; the initial setRequestContext also invalidates the host
-    // scope (mock-local) on the auth-changed event.
-    expect(invalidator.calls).toContain("mock-local");
+    // `start()` applies the context and THEN the selection. The context
+    // application is an identity transition and still sweeps - against the
+    // host bound at that moment, which is none yet, hence the `null` root.
+    // Applying the selection adds nothing after it: a host becoming effective
+    // is not a lifecycle event for that host (redesign D17 / invariant 3), so
+    // there is no `"mock-local"` sweep here at all.
+    expect(invalidator.calls).toEqual([null]);
   });
 
   it("invalidates and rebinds context when the provider emits a new identity", () => {

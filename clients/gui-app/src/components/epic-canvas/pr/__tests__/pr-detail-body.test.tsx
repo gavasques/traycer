@@ -71,6 +71,8 @@ vi.mock("@/lib/host", () => ({
   // these tests already assert nothing about. `PrDetailFilesTab` has its own
   // file for the diff/stale/unavailable states.
   useHostClient: () => null,
+  // The SPINE, a separate export since redesign P2.1.
+  useHostRuntimeClient: () => null,
 }));
 
 vi.mock("@/lib/epic-selectors", async (importActual) => ({

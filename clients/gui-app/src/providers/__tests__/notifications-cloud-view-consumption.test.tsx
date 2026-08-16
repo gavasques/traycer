@@ -49,6 +49,8 @@ function requireHostClient(): HostClient<HostRpcRegistry> {
 vi.mock("@/lib/host", () => ({
   useHostBinding: () => ({ hostClient: requireHostClient() }),
   useHostClient: () => requireHostClient(),
+  // The SPINE, a separate export since redesign P2.1.
+  useHostRuntimeClient: () => requireHostClient(),
   useAuthService: () => mockAuth,
 }));
 

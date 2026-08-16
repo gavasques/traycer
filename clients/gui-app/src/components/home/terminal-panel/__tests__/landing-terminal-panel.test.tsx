@@ -110,6 +110,8 @@ vi.mock("@/hooks/terminal/use-terminal-list-for-query", () => ({
 }));
 vi.mock("@/lib/host", () => ({
   useHostClient: () => mocks.defaultClient,
+  // The SPINE, a separate export since redesign P2.1.
+  useHostRuntimeClient: () => mocks.defaultClient,
   useHostDirectory: () => ({
     findById: (hostId: string) => ({ hostId, websocketUrl: "ws://test" }),
   }),

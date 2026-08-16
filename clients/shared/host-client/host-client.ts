@@ -222,18 +222,87 @@ export class HostClient<Registry extends VersionedRpcRegistry> {
     // holding it stays open. Each property access resolves the current entry;
     // the creation-time one only serves once the host leaves the directory,
     // where capture rejects it as stale either way.
-    const resolveEntry = (): HostDirectoryEntry =>
-      this.findHostById(entry.hostId) ?? entry;
+    //
+    // The id stays FROZEN even then: a surface pinned to this host must keep
+    // announcing which host it addresses while the row is missing, or a
+    // placement re-validation reads `null` and mistakes a momentarily absent
+    // row for "the caller moved".
+    return this.createPinnedRequester(
+      () => this.findHostById(entry.hostId) ?? entry,
+      () => entry.hostId,
+    );
+  }
+
+  /**
+   * THE uniform `hostId -> client` resolution (redesign D17). Identical
+   * machinery to {@link createRequester} - one pinned requester, one live
+   * entry lookup per access - reached by ID rather than by a captured row, so
+   * a window-global consumer resolves the selection layer's `effectiveHostId`
+   * through exactly the path a pinned consumer resolves its own host through.
+   * Nothing here reads the active slot, which is what lets P4.2 delete the
+   * slot without a second resolution path having to be built first.
+   *
+   * `null` is ∅ - "no host is effective" - not "follow whatever is bound".
+   * The id-pinned requester also reports `getActiveHostId() === null` while
+   * the named row is UNRESOLVED, and its requests reject with the same
+   * preflight error an unbound client has always produced. That is deliberate
+   * rather than incidental: `HostDirectoryService.selectById` binds `null` for
+   * an id it cannot resolve, so this reproduces the answer the active slot
+   * gave, and a consumer gating on "is a host addressable yet" keeps gating on
+   * the same value. A pinned requester freezes its id instead, because it was
+   * handed a row that existed; this one was handed an intent that may not have
+   * landed.
+   *
+   * Unresolved is not a dead end, and how it un-sticks is worth naming for
+   * P4.2. The requester re-reads the row on every access, so one that ARRIVES
+   * late is picked up with nothing to re-resolve - but a React consumer still
+   * has to be told to look again, and the only thing telling it today is
+   * `bind()`'s change event (`useReactiveHostReadiness` subscribes to it).
+   * Deleting the slot must therefore leave a "this host's row changed" signal
+   * behind, or a window pointed at a host that was still booting stays
+   * disabled after it finishes. That signal belongs to the registry P4.1
+   * builds, not to a revived slot.
+   */
+  createRequesterForHostId(hostId: string | null): HostClient<Registry> {
+    const resolveEntry = (): HostDirectoryEntry | null =>
+      hostId === null ? null : this.findHostById(hostId);
+    return this.createPinnedRequester(resolveEntry, () =>
+      resolveEntry() === null ? null : hostId,
+    );
+  }
+
+  /**
+   * The one requester mechanism both entry points above are built from.
+   *
+   * Every request-shaped member is re-pointed at its `...For` sibling with the
+   * resolved entry supplied explicitly; everything else binds to this client,
+   * which owns the messenger, the coordinator, the authority registry and the
+   * request context. A requester is therefore a ROUTING view over one client,
+   * never a second client - and the entry is resolved at property-access time
+   * so an activation that lands mid-chain cannot silently redirect a call the
+   * caller already aimed.
+   */
+  private createPinnedRequester(
+    resolveEntry: () => HostDirectoryEntry | null,
+    readActiveHostId: () => string | null,
+  ): HostClient<Registry> {
     return new Proxy(this, {
       get: (target, property, receiver) => {
         if (property === "getActiveHost") {
           return () => resolveEntry();
         }
         if (property === "getActiveHostId") {
-          return () => entry.hostId;
+          return readActiveHostId;
         }
         if (property === "request") {
-          return target.requestFor.bind(target, resolveEntry());
+          // A closure rather than a `bind` only because the trailing `signal`
+          // cannot be pre-bound; the entry is still captured HERE, at property
+          // access, so all four request members resolve at the same instant.
+          const entry = resolveEntry();
+          return <Method extends keyof Registry & string>(
+            method: Method,
+            params: RequestOfMethod<Registry, Method>,
+          ) => target.requestForWithSignal(entry, method, params, undefined);
         }
         if (property === "requestWithSignal") {
           return target.requestForWithSignal.bind(target, resolveEntry());
@@ -244,6 +313,9 @@ export class HostClient<Registry extends VersionedRpcRegistry> {
             resolveEntry(),
           );
         }
+        if (property === "cancelActiveRead") {
+          return target.cancelActiveReadFor.bind(target, resolveEntry());
+        }
         const value = Reflect.get(target, property, receiver);
         return typeof value === "function" ? value.bind(target) : value;
       },
@@ -251,9 +323,34 @@ export class HostClient<Registry extends VersionedRpcRegistry> {
   }
 
   /**
-   * Selects a host (or clears selection with `null`). When the active host
-   * id changes, invalidates the host-scoped cache for the previous host
-   * (so stale entries are dropped) and notifies subscribers.
+   * Records which host the selection layer currently calls effective, and
+   * notifies subscribers.
+   *
+   * A CHANGE OF EFFECTIVE HOST IS NOT A LIFECYCLE EVENT FOR EITHER HOST
+   * (redesign D17 / invariant 3). It used to be: this method cancelled and
+   * aborted every in-flight request to the outgoing host, dropped its whole
+   * query scope, and force-refetched the incoming host's. All three assumed
+   * the bound host was the ONLY host anyone talks to. It never was - routed
+   * requesters have always addressed other hosts, and surface pins made it
+   * routine - so the sweep reached surfaces that had not moved and had no say
+   * in the move: a tile pinned to the outgoing host lost its in-flight RPCs
+   * and its cache to an activation elsewhere in the app, and tiles already
+   * observing the incoming host had their in-flight work cancelled by the
+   * refetch sweep meant to serve queries that had not mounted yet.
+   *
+   * So deselection now does NOTHING to the outgoing host: it keeps serving
+   * its pinned consumers, its in-flight requests are unowned by any slot, and
+   * releasing an idle client is the keep-warm linger's job (a decision about
+   * USE) rather than deselection's (a decision about ATTENTION). And nothing
+   * is swept for the incoming host either - host-scoped query keys carry the
+   * host id, so a consumer that re-points to it re-keys and fetches on demand.
+   * The sweep was never what made that happen; it only made it happen louder,
+   * for every cached entry at once.
+   *
+   * What remains is the same-host TRANSPORT move below, which is not a
+   * selection event at all (the route to one host changed under everyone
+   * addressing it, pinned consumers included), and the slot itself, which
+   * P4.2 deletes along with this method.
    */
   bind(entry: HostDirectoryEntry | null): void {
     const previous = this.activeHost;
@@ -287,18 +384,6 @@ export class HostClient<Registry extends VersionedRpcRegistry> {
     }
 
     this.activeHost = entry;
-    if (previous !== null) {
-      this.cancelThenAbortHost(previous.hostId, () => undefined);
-    }
-    this.invalidator.invalidateHostScope(
-      previous === null ? null : previous.hostId,
-      { refetchActive: false },
-    );
-    if (entry !== null) {
-      this.invalidator.invalidateHostScope(entry.hostId, {
-        refetchActive: true,
-      });
-    }
     this.emitChange({
       previousHostId: previous === null ? null : previous.hostId,
       currentHostId: entry === null ? null : entry.hostId,
@@ -501,11 +586,27 @@ export class HostClient<Registry extends VersionedRpcRegistry> {
     method: Method,
     params: RequestOfMethod<Registry, Method>,
   ): void {
-    if (this.activeHost === null || this.requestContext === null) {
+    this.cancelActiveReadFor(this.activeHost, method, params);
+  }
+
+  /**
+   * {@link cancelActiveRead} for an explicitly named host, so a requester
+   * cancels the read IT issued rather than one on whatever the slot happens
+   * to hold. The coordinator's cancellation key is `(hostId, userId, method,
+   * params)`, so routing this through the slot would let a pinned surface's
+   * cancel land on another host's identical read - or, once its own host
+   * stopped being effective, on nothing at all.
+   */
+  cancelActiveReadFor<Method extends keyof Registry & string>(
+    entry: HostDirectoryEntry | null,
+    method: Method,
+    params: RequestOfMethod<Registry, Method>,
+  ): void {
+    if (entry === null || this.requestContext === null) {
       return;
     }
     this.requestCoordinator.cancelActiveRead(
-      this.activeHost.hostId,
+      entry.hostId,
       this.requestContext.identity.userId,
       method,
       params,

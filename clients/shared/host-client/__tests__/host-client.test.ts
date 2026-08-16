@@ -183,20 +183,20 @@ class StubWebSocket implements WebSocketLike {
 }
 
 describe("HostClient", () => {
-  it("invalidates host-scoped queries and emits on bind/unbind", () => {
+  // Was "invalidates host-scoped queries and emits on bind/unbind". A change
+  // of effective host now announces and sweeps NOTHING (redesign D17 /
+  // invariant 3): the outgoing host keeps serving its pinned consumers, and
+  // the incoming host's consumers re-key onto its host-scoped query keys and
+  // fetch on demand. The announcement is all that is left, and P4.2 deletes
+  // that too.
+  it("announces bind/unbind without sweeping any host's query scope", () => {
     const { client, invalidator, events } = buildHostClientWithMock();
 
     client.bind(mockLocalHostEntry);
     client.bind(mockRemoteHostEntry);
     client.bind(null);
 
-    expect(invalidator.calls).toEqual([
-      null,
-      "mock-local",
-      "mock-local",
-      "mock-remote",
-      "mock-remote",
-    ]);
+    expect(invalidator.calls).toEqual([]);
     expect(events.map((e) => e.reason)).toEqual([
       "host-bound",
       "host-bound",

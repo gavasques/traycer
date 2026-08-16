@@ -251,6 +251,8 @@ vi.mock("@/providers/use-runner-host", () => ({
 vi.mock("@/lib/host", () => ({
   useHostBinding: () => null,
   useHostClient: () => null,
+  // The SPINE, a separate export since redesign P2.1.
+  useHostRuntimeClient: () => null,
 }));
 
 vi.mock(

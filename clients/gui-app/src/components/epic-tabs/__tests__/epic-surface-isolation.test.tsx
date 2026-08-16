@@ -91,6 +91,10 @@ vi.mock("@/lib/host/runtime", async (importOriginal) => {
     }),
     useHostBinding: () => ({ hostClient: activeHostClient }),
     useHostClient: () => activeHostClient,
+    // An `importOriginal` spread hands back the REAL spine hook, which throws
+    // outside a provider; `useHostRuntimeClient` is a separate export since
+    // redesign P2.1 and must be overridden explicitly.
+    useHostRuntimeClient: () => activeHostClient,
   };
 });
 

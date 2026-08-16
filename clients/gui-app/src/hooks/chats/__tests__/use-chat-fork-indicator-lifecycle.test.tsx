@@ -30,14 +30,25 @@ function requireHostClient(): HostClient<HostRpcRegistry> {
   return client;
 }
 
+// Both layers, and BOTH hooks on each: an `importActual` spread hands back
+// the REAL spine hook (`useHostRuntimeClient`, a separate export since
+// redesign P2.1), which throws outside a provider.
 vi.mock("@/lib/host", async (importActual) => {
   const actual = await importActual<typeof import("@/lib/host")>();
-  return { ...actual, useHostClient: () => requireHostClient() };
+  return {
+    ...actual,
+    useHostClient: () => requireHostClient(),
+    useHostRuntimeClient: () => requireHostClient(),
+  };
 });
 
 vi.mock("@/lib/host/runtime", async (importActual) => {
   const actual = await importActual<typeof import("@/lib/host/runtime")>();
-  return { ...actual, useHostClient: () => requireHostClient() };
+  return {
+    ...actual,
+    useHostClient: () => requireHostClient(),
+    useHostRuntimeClient: () => requireHostClient(),
+  };
 });
 
 // The indicator hook resolves its own client from a host id (so the surfaces

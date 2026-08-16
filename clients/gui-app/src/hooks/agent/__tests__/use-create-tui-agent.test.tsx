@@ -24,11 +24,15 @@ const fakeHostClient = {
 
 vi.mock("@/lib/host", () => ({
   useHostClient: () => fakeHostClient,
+  // The SPINE, a separate export since redesign P2.1.
+  useHostRuntimeClient: () => fakeHostClient,
   useHostBinding: () => ({ hostClient: fakeHostClient }),
 }));
 
 vi.mock("@/lib/host/runtime", () => ({
   useHostClient: () => fakeHostClient,
+  // The SPINE, a separate export since redesign P2.1.
+  useHostRuntimeClient: () => fakeHostClient,
   useHostBinding: () => ({ hostClient: fakeHostClient }),
 }));
 

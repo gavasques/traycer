@@ -13,6 +13,7 @@ import type {
 } from "@traycer/protocol/host/index";
 import type { HostRpcRegistry } from "@/lib/host";
 import { useHostBinding } from "@/lib/host/runtime";
+import { useEffectiveHostId } from "@/hooks/host/use-effective-host-id";
 import {
   useHostQuery,
   type UseHostQueryOptions,
@@ -204,7 +205,21 @@ const EMPTY_GUI_MODEL_REQUESTS: ReadonlyArray<{
  * host's composer store.
  */
 export function useDefaultHostClient(): HostClient<HostRpcRegistry> | null {
-  return useHostBinding()?.hostClient ?? null;
+  const binding = useHostBinding();
+  const effectiveHostId = useEffectiveHostId();
+  // Resolves the effective host through the pinned-requester mechanism rather
+  // than handing back the spine (redesign D17 / P2.1): an app-wide catalog
+  // surface asks the host the app is ON, and must keep asking THAT host for
+  // the rest of the call even if the app moves mid-probe. `null` still means
+  // only "no host runtime here" - the ∅ case is a requester that addresses no
+  // host, which disables these queries exactly as an unbound client did.
+  return useMemo(
+    () =>
+      binding === null
+        ? null
+        : binding.hostClient.createRequesterForHostId(effectiveHostId),
+    [binding, effectiveHostId],
+  );
 }
 
 export function useGuiHarnessesQuery(

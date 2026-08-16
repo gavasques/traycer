@@ -219,6 +219,8 @@ vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
 // (provider-less suite).
 vi.mock("@/lib/host", () => ({
   useHostClient: () => null,
+  // The SPINE, a separate export since redesign P2.1.
+  useHostRuntimeClient: () => null,
 }));
 
 // Rows are built as WHOLE `CloudChatSummary` values, not as the subset the

@@ -97,6 +97,8 @@ vi.mock("@/components/ui/select", () => ({
 vi.mock("@/lib/host", () => ({
   useHostBinding: () => ({ directory: { selectById: mocks.selectById } }),
   useHostClient: () => null,
+  // The SPINE, a separate export since redesign P2.1.
+  useHostRuntimeClient: () => null,
 }));
 
 vi.mock("@/hooks/host/use-effective-host-id", () => ({

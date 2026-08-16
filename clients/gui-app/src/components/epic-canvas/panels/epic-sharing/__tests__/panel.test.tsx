@@ -157,6 +157,8 @@ vi.mock("@/hooks/chats/use-cloud-chat-queries", async (importOriginal) => {
 
 vi.mock("@/lib/host/runtime", () => ({
   useHostClient: () => ({ getActiveHostId: () => "active-host" }),
+  // The SPINE, a separate export since redesign P2.1.
+  useHostRuntimeClient: () => ({ getActiveHostId: () => "active-host" }),
 }));
 
 vi.mock("@/hooks/epic/use-epic-session-host-client", () => ({

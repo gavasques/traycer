@@ -173,6 +173,8 @@ vi.mock("@/hooks/agent/use-create-tui-agent", () => ({
 
 vi.mock("@/lib/host/runtime", () => ({
   useHostClient: () => ({ getActiveHostId: () => "host-1" }),
+  // The SPINE, a separate export since redesign P2.1.
+  useHostRuntimeClient: () => ({ getActiveHostId: () => "host-1" }),
 }));
 
 vi.mock("@/hooks/host/use-host-client-for", () => ({

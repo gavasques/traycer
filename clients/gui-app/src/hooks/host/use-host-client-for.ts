@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { HostClient } from "@traycer-clients/shared/host-client/host-client";
 import type { HostDirectoryEntry } from "@traycer-clients/shared/host-client/host-directory";
 import type { HostRpcRegistry } from "@traycer/protocol/host/index";
-import { useHostClient } from "@/lib/host/runtime";
+import { useHostRuntimeClient } from "@/lib/host/runtime";
 
 /**
  * Builds a stateless `HostRequester` facade that issues RPCs against `target`
@@ -46,7 +46,11 @@ export function buildTransientHostClient(
 export function useHostClientFor(
   target: HostDirectoryEntry | null,
 ): HostClient<HostRpcRegistry> | null {
-  const globalClient = useHostClient();
+  // The SPINE, not the app-wide client: this builds a requester for an
+  // explicitly named host, so taking the effective host's requester here
+  // would make the memo churn on every activation and would resolve one host
+  // through another host's routing view.
+  const globalClient = useHostRuntimeClient();
   const requestContext = globalClient.getRequestContext();
   const userId = globalClient.getRequestContextUserId();
 

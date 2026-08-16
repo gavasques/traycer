@@ -12,6 +12,8 @@ vi.mock("@tanstack/react-query", () => ({
 const mockGetActiveHostId = vi.fn<() => string | null>(() => "host-1");
 vi.mock("@/lib/host/runtime", () => ({
   useHostClient: () => ({ getActiveHostId: mockGetActiveHostId }),
+  // The SPINE, a separate export since redesign P2.1.
+  useHostRuntimeClient: () => ({ getActiveHostId: mockGetActiveHostId }),
 }));
 
 const capturedOptions: Record<

@@ -24,6 +24,8 @@ vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
 }));
 vi.mock("@/lib/host", () => ({
   useHostClient: () => mocks.client,
+  // The SPINE, a separate export since redesign P2.1.
+  useHostRuntimeClient: () => mocks.client,
 }));
 vi.mock("@/hooks/rate-limits/use-configured-rate-limit-providers", () => ({
   useConfiguredRateLimitProviders: () => mocks.configured,

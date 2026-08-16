@@ -16,8 +16,10 @@ const globalClientRef = vi.hoisted(() => ({
   value: null as HostClient<HostRpcRegistry> | null,
 }));
 
+// `useHostClientFor` builds a requester for an EXPLICITLY named host, so it
+// reads the spine (redesign P2.1) - never the effective host's own requester.
 vi.mock("@/lib/host/runtime", () => ({
-  useHostClient: () => {
+  useHostRuntimeClient: () => {
     if (globalClientRef.value === null) {
       throw new Error("test global client not configured");
     }

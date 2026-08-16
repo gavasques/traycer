@@ -535,6 +535,8 @@ vi.mock("@/hooks/chats/use-chat-publication-targets", () => ({
 
 vi.mock("@/lib/host/runtime", () => ({
   useHostClient: () => testState.activeHostClient,
+  // The SPINE, a separate export since redesign P2.1.
+  useHostRuntimeClient: () => testState.activeHostClient,
 }));
 
 vi.mock("@/hooks/host/use-host-client-for", () => ({

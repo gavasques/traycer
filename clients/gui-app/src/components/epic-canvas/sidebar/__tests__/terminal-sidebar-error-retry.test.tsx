@@ -14,6 +14,8 @@ const listState = vi.hoisted<{ isFetching: boolean }>(() => ({
 
 vi.mock("@/lib/host", () => ({
   useHostClient: () => null,
+  // The SPINE, a separate export since redesign P2.1.
+  useHostRuntimeClient: () => null,
 }));
 
 vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({

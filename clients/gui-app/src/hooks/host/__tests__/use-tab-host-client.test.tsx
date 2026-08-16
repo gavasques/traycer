@@ -32,12 +32,28 @@ function getGlobalClient(): HostClient<HostRpcRegistry> {
   return globalClientRef.value;
 }
 
+/** Mirrors `lib/host/runtime.ts`'s `useHostClient`: the effective host id
+ *  resolved through the spine's uniform requester. */
+function getFollowingClient(): HostClient<HostRpcRegistry> {
+  const spine = getGlobalClient();
+  return spine.createRequesterForHostId(spine.getActiveHostId());
+}
+
 vi.mock("@/lib/host", () => ({
-  useHostClient: getGlobalClient,
+  useHostClient: getFollowingClient,
+  // `useHostClientForHostId` reads BOTH through the barrel: the spine for
+  // the directory lookups, the effective host for the following branch.
+  useHostRuntimeClient: getGlobalClient,
 }));
 
+// `useHostRuntimeClient` is the SPINE a host id resolves against;
+// `useHostClient` is the effective host already resolved through it
+// (redesign P2.1). Every case here passes an explicit tab host id, so the
+// following-client mirror keeps the mock's shape honest rather than serving a
+// case.
 vi.mock("@/lib/host/runtime", () => ({
-  useHostClient: getGlobalClient,
+  useHostRuntimeClient: getGlobalClient,
+  useHostClient: getFollowingClient,
 }));
 
 vi.mock("@/hooks/host/use-host-directory-list-query", () => ({

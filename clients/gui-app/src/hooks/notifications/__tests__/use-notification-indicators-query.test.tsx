@@ -82,7 +82,13 @@ vi.mock("@/lib/host", async (importActual) => {
 // provider, which throws outside `<HostRuntimeProvider>`.
 vi.mock("@/lib/host/runtime", async (importActual) => {
   const actual = await importActual<typeof import("@/lib/host/runtime")>();
-  return { ...actual, useHostClient: () => requireHostClient() };
+  return {
+    ...actual,
+    useHostClient: () => requireHostClient(),
+    // The spine must be overridden too: the `importActual` spread would
+    // otherwise hand back the REAL hook, which throws outside a provider.
+    useHostRuntimeClient: () => requireHostClient(),
+  };
 });
 
 vi.mock("@/lib/notifications/notification-feed-mode", () => ({

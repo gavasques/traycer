@@ -15,6 +15,8 @@ const mockHostClient = {
 
 vi.mock("@/lib/host", () => ({
   useHostClient: () => mockHostClient,
+  // The SPINE, a separate export since redesign P2.1.
+  useHostRuntimeClient: () => mockHostClient,
 }));
 
 vi.mock("@/hooks/host/use-reactive-host-readiness", () => ({

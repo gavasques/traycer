@@ -74,6 +74,8 @@ vi.mock("@tanstack/react-router", () => ({
 
 vi.mock("@/lib/host", () => ({
   useHostClient: () => ({ request: mocks.request }),
+  // The SPINE, a separate export since redesign P2.1.
+  useHostRuntimeClient: () => ({ request: mocks.request }),
 }));
 
 // Distinct from `useHostClient`'s default-host client - a relative-link

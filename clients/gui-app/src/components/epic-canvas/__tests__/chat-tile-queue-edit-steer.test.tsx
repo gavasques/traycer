@@ -90,6 +90,8 @@ vi.mock("@/lib/host", () => ({
     revalidateCurrentContext: () => Promise.resolve({ kind: "valid" as const }),
   }),
   useHostClient: () => MOCK_HOST_CLIENT,
+  // The SPINE, a separate export since redesign P2.1.
+  useHostRuntimeClient: () => MOCK_HOST_CLIENT,
 }));
 
 vi.mock("@/hooks/host/use-tab-host-client", () => ({

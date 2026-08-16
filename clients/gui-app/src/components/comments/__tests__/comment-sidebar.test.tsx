@@ -33,7 +33,14 @@ const hostClientRef: { current: HostClient<HostRpcRegistry> | null } = {
 // cards' mutation hooks import it directly, and only this target covers both.
 vi.mock("@/lib/host/runtime", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/host/runtime")>();
-  return { ...actual, useHostClient: () => hostClientRef.current };
+  // An `importOriginal` spread hands back the REAL spine hook, which throws
+  // outside a provider; `useHostRuntimeClient` is a separate export since
+  // redesign P2.1 and must be overridden explicitly.
+  return {
+    ...actual,
+    useHostClient: () => hostClientRef.current,
+    useHostRuntimeClient: () => hostClientRef.current,
+  };
 });
 
 // Read behavior for the next `epic.listCommentThreads` call. Tests swap this

@@ -455,11 +455,15 @@ export class AuthService {
   private sessionRecoveryTimer: number | null = null;
   private sessionRecoveryDelayMs: number = SESSION_RECOVERY_INITIAL_DELAY_MS;
   private sessionRecoveryAttempt: number = 0;
-  // A superseded-save undo whose conditional delete FAILED: the stale pair is
-  // still durable. The recovery loop must complete this delete before it may
-  // adopt anything from the store — adopting first would resurrect exactly
-  // the zombie credential the attempt fence dropped.
-  private pendingUndoToken: string | null = null;
+  // Superseded-save undos whose conditional deletes have not LANDED yet
+  // (in flight or failed): each stale pair may still be durable. Every
+  // adoption path must drain this set before trusting anything it reads —
+  // adopting first would resurrect exactly the zombie credential the
+  // attempt fence dropped. A SET with per-token removal, not a single
+  // slot: overlapping undos (A superseded by B superseded by C) must not
+  // let one undo's settled `kept` clear the record of another undo that is
+  // still failing — that would lose the failing token forever.
+  private readonly pendingUndoTokens = new Set<string>();
 
   constructor(options: AuthServiceOptions) {
     this.runnerHost = options.runnerHost;
@@ -1076,7 +1080,7 @@ export class AuthService {
     }
     // Same adoption-time fence re-check as the reconcile tail: an undo that
     // registered while this tick's validation was in flight must win.
-    if (this.pendingUndoToken !== null) {
+    if (this.pendingUndoTokens.size > 0) {
       this.scheduleSessionRecovery("recovery:pending-undo");
       return;
     }
@@ -2280,7 +2284,7 @@ export class AuthService {
     // was triggered by that very write's watcher echo. If an undo registered
     // while validation was in flight, this pass adopts nothing and the
     // recovery loop finishes the delete first.
-    if (this.pendingUndoToken !== null) {
+    if (this.pendingUndoTokens.size > 0) {
       this.scheduleSessionRecovery("reconcile:pending-undo");
       return;
     }
@@ -2587,11 +2591,13 @@ export class AuthService {
     // undone has already fired the store watcher, so a reconcile can start
     // while this delete is still in flight — it must hit the fence during
     // that window too. The fence's own retry is a concurrent idempotent
-    // compare-and-delete, so the overlap is harmless.
-    this.pendingUndoToken = token;
+    // compare-and-delete, so the overlap is harmless. On success only THIS
+    // token is removed — never a blanket clear, which would drop the record
+    // of a sibling undo that is still failing.
+    this.pendingUndoTokens.add(token);
     try {
       await this.tokenStore.deleteIfToken(token);
-      this.pendingUndoToken = null;
+      this.pendingUndoTokens.delete(token);
     } catch (error) {
       this.markStoreUnavailable("undo-superseded-save", error);
     }
@@ -2617,29 +2623,28 @@ export class AuthService {
   }
 
   /**
-   * `true` means the store is clean: no pending undo, or the retry just
-   * settled it (`kept` is settled too — someone else's pair owns the file
-   * now and the stale one is gone). `false` means the conditional delete is
-   * STILL failing and nothing durable may be adopted this pass.
+   * Drains the pending-undo set token by token. `true` means the store is
+   * clean: nothing pending, or every retry just settled (`kept` is settled
+   * too — someone else's pair owns the file now and that stale one is
+   * gone). `false` means at least one conditional delete is STILL failing
+   * and nothing durable may be adopted this pass. Removal is strictly
+   * per-token: a settled undo never clears a sibling's record.
    */
   private async retryPendingCredentialUndo(): Promise<boolean> {
-    const token = this.pendingUndoToken;
-    if (token === null) {
-      return true;
+    for (const token of [...this.pendingUndoTokens]) {
+      try {
+        const result = await this.tokenStore.deleteIfToken(token);
+        this.pendingUndoTokens.delete(token);
+        appLogger.info("[auth] completed pending superseded-save undo", {
+          result,
+        });
+      } catch (error) {
+        appLogger.warn("[auth] pending superseded-save undo still failing", {
+          error: describeLogError(error),
+        });
+      }
     }
-    try {
-      const result = await this.tokenStore.deleteIfToken(token);
-      this.pendingUndoToken = null;
-      appLogger.info("[auth] completed pending superseded-save undo", {
-        result,
-      });
-      return true;
-    } catch (error) {
-      appLogger.warn("[auth] pending superseded-save undo still failing", {
-        error: describeLogError(error),
-      });
-      return false;
-    }
+    return this.pendingUndoTokens.size === 0;
   }
 
   /**

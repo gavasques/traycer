@@ -12,11 +12,13 @@ const mocks = vi.hoisted(() => ({
   useAuthLinkLoginCode: vi.fn(),
   useAuthLinkLoginStatus: vi.fn(),
   useRespondLinkLoginMutation: vi.fn(),
+  evictLinkLoginCode: vi.fn(),
 }));
 
 vi.mock("@/hooks/auth/use-link-login-code-query", () => ({
   LINK_LOGIN_REMINT_MS: 50_000,
   useAuthLinkLoginCode: mocks.useAuthLinkLoginCode,
+  useEvictLinkLoginCode: () => mocks.evictLinkLoginCode,
 }));
 
 vi.mock("@/hooks/auth/use-link-login-status-query", () => ({
@@ -161,8 +163,9 @@ describe("LinkPhonePanel", () => {
       expect.anything(),
     );
     // The rejected claim released the server's per-user lock; the panel
-    // immediately requests a fresh code instead of waiting out the interval.
-    expect(codeQuery.refetch).toHaveBeenCalled();
+    // immediately requests a fresh code via the EVICTING restart (a bare
+    // refetch could re-serve the dead entry from cache).
+    expect(mocks.evictLinkLoginCode).toHaveBeenCalled();
   });
 
   it("rotation replaces the watched code with the newly displayed one", () => {
@@ -203,11 +206,17 @@ describe("LinkPhonePanel", () => {
     const lastMintCall = mocks.useAuthLinkLoginCode.mock.calls.at(-1) as
       unknown[] | undefined;
     expect(lastMintCall?.[0]).toBe(false);
-    // Only the explicit user action mints again.
+    // Only the explicit user action mints again — via the EVICTING restart
+    // (a bare refetch would re-serve the dead entry from cache), which also
+    // re-enables the mint query so the empty cache must fetch fresh.
     act(() => {
       screen.getByTestId("link-phone-show-new").click();
     });
-    expect(codeQuery.refetch).toHaveBeenCalledTimes(1);
+    expect(mocks.evictLinkLoginCode).toHaveBeenCalledTimes(1);
+    expect(codeQuery.refetch).not.toHaveBeenCalled();
+    const reenabledCall = mocks.useAuthLinkLoginCode.mock.calls.at(-1) as
+      unknown[] | undefined;
+    expect(reenabledCall?.[0]).toBe(true);
   });
 
   it("an EXTERNAL rejection reads as rejected, with the same explicit restart", () => {
@@ -224,7 +233,8 @@ describe("LinkPhonePanel", () => {
     act(() => {
       screen.getByTestId("link-phone-show-new").click();
     });
-    expect(codeQuery.refetch).toHaveBeenCalledTimes(1);
+    expect(mocks.evictLinkLoginCode).toHaveBeenCalledTimes(1);
+    expect(codeQuery.refetch).not.toHaveBeenCalled();
   });
 
   it("claim-pending during rotation of a LIVE code keeps the QR — the claim may be its own", () => {

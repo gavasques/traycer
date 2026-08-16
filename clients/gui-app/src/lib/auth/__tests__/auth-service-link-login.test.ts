@@ -402,6 +402,122 @@ describe("link-login attempt fence", () => {
     }
   });
 
+  it("overlapping undos never lose a failing token: A's settled kept must not clear B's pending delete", async () => {
+    const { service, host } = makeService();
+    const { script, restore } = installLinkFetch();
+    const realStore: ITokenStore = host.tokenStore;
+    // Per-token save gates: A and B each pause at the durable-store boundary
+    // and are released independently, so their writes and undos interleave.
+    const slots = new Map<
+      string,
+      {
+        gate: Promise<void>;
+        release: () => void;
+        entered: Promise<void>;
+        markEntered: () => void;
+      }
+    >();
+    const slotFor = (token: string) => {
+      let slot = slots.get(token);
+      if (slot === undefined) {
+        let release: () => void = () => undefined;
+        let markEntered: () => void = () => undefined;
+        const gate = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const entered = new Promise<void>((resolve) => {
+          markEntered = resolve;
+        });
+        slot = { gate, release, entered, markEntered };
+        slots.set(token, slot);
+      }
+      return slot;
+    };
+    const originalSignIn = realStore.signIn.bind(realStore);
+    Object.defineProperty(realStore, "signIn", {
+      configurable: true,
+      value: async (
+        tokens: { readonly token: string; readonly refreshToken: string },
+        identity: StoredCredentialsIdentity,
+      ): Promise<void> => {
+        const slot = slotFor(tokens.token);
+        slot.markEntered();
+        await slot.gate;
+        return originalSignIn(tokens, identity);
+      },
+    });
+    // Only B's conditional delete fails; A's settles as kept.
+    let bDeleteBroken = true;
+    const realDeleteIfToken = realStore.deleteIfToken.bind(realStore);
+    Object.defineProperty(realStore, "deleteIfToken", {
+      configurable: true,
+      value: (expectedToken: string): Promise<"deleted" | "kept"> =>
+        expectedToken === "attempt-b-token" && bDeleteBroken
+          ? Promise.reject(new Error("EIO: credentials file unwritable"))
+          : realDeleteIfToken(expectedToken),
+    });
+    try {
+      script.validationResponse = () => json(PROFILE_BODY, 200);
+      script.tokenResponse = () =>
+        json(
+          {
+            token: "attempt-a-token",
+            refreshToken: "attempt-a-r",
+            familyId: "f",
+          },
+          200,
+        );
+      const linkA = service.signInWithLinkCode("ABCDE-FGHJK");
+      await vi.advanceTimersByTimeAsync(1_100);
+      await slotFor("attempt-a-token").entered;
+
+      // B supersedes A and runs to ITS OWN gated save.
+      script.tokenResponse = () =>
+        json(
+          {
+            token: "attempt-b-token",
+            refreshToken: "attempt-b-r",
+            familyId: "f",
+          },
+          200,
+        );
+      const linkB = service.signInWithLinkCode("ABCDE-FGHJK");
+      await vi.advanceTimersByTimeAsync(1_100);
+
+      // C supersedes B and fails immediately.
+      Object.defineProperty(host.deviceFlow, "start", {
+        configurable: true,
+        value: () => Promise.resolve(null),
+      });
+      const attemptC = service.signIn();
+      await vi.advanceTimersByTimeAsync(10);
+      await attemptC;
+
+      // A's write lands, then B's overwrites it. A's undo then compares and
+      // settles `kept` (B owns the file) — with a single-slot fence that
+      // settle used to null the record of B's STILL-FAILING delete.
+      slotFor("attempt-a-token").release();
+      slotFor("attempt-b-token").release();
+      expect((await linkA).kind).toBe("failed");
+      expect((await linkB).kind).toBe("failed");
+
+      // B is durable and its delete keeps failing: nothing may be adopted,
+      // even though the token validates (stubbed 200).
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(useAuthStore.getState().status).not.toBe("signed-in");
+      expect((await realStore.get())?.token).toBe("attempt-b-token");
+
+      // Heal: B's token was never lost — the drain deletes it and the
+      // zombie never signs in.
+      bDeleteBroken = false;
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(await realStore.get()).toBeNull();
+      expect(useAuthStore.getState().status).not.toBe("signed-in");
+    } finally {
+      restore();
+    }
+  });
+
   it("terminal denial of the CURRENT attempt projects the ordinary failure", async () => {
     const { service } = makeService();
     const { script, restore } = installLinkFetch();

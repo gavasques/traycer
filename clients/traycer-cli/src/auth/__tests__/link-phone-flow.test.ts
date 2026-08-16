@@ -22,9 +22,7 @@ vi.mock("qrcode", () => ({
 // payload builder stays real, since the printed payload is asserted on.
 vi.mock("../../../../shared/auth/link-login", async (importOriginal) => {
   const actual =
-    await importOriginal<
-      typeof import("../../../../shared/auth/link-login")
-    >();
+    await importOriginal<typeof import("../../../../shared/auth/link-login")>();
   return {
     ...actual,
     mintLinkLoginCodeViaHttp: vi.fn(),
@@ -160,9 +158,7 @@ async function runWithPolls(
   ctx: CommandContext,
   ticks: number,
 ): Promise<PromiseSettledResult<unknown>> {
-  const settled = Promise.allSettled([
-    runLinkPhoneFlow(ctx, { showQr: true }),
-  ]);
+  const settled = Promise.allSettled([runLinkPhoneFlow(ctx, { showQr: true })]);
   for (let i = 0; i < ticks; i++) {
     await vi.advanceTimersByTimeAsync(POLL_MS);
   }
@@ -354,9 +350,9 @@ describe("runLinkPhoneFlow", () => {
   it("refuses to run where no human can answer", async () => {
     const ctx = makeCtx({ json: true, quiet: false, nonInteractive: false });
 
-    await expect(
-      runLinkPhoneFlow(ctx, { showQr: true }),
-    ).rejects.toThrowError(/interactive terminal/);
+    await expect(runLinkPhoneFlow(ctx, { showQr: true })).rejects.toThrowError(
+      /interactive terminal/,
+    );
     expect(mintMock).not.toHaveBeenCalled();
   });
 

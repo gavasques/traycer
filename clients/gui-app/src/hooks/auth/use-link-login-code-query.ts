@@ -1,6 +1,8 @@
+import { useCallback } from "react";
 import {
   queryOptions,
   useQuery,
+  useQueryClient,
   type UseQueryResult,
 } from "@tanstack/react-query";
 import type { MintLinkLoginCodeResponse } from "@traycer/protocol/auth/link-login";
@@ -21,15 +23,21 @@ function linkLoginCodeQueryOptions(
   userId: string | null,
   active: boolean,
 ) {
-  if (auth === null || userId === null || !active) {
+  if (auth === null || userId === null) {
     return queryOptions<MintLinkLoginCodeResponse | null>({
       queryKey: authQueryKeys.linkLoginCodeMissing(),
       queryFn: () => Promise.resolve(null),
       enabled: false,
     });
   }
+  // `active` gates via `enabled`, NEVER by switching to the missing key: a
+  // deactivated observer must stay on the REAL mint entry, so an explicit
+  // cache eviction + re-enable (the watch hook's `restart`) operates on the
+  // query the surface actually renders. With a key switch, show-new was a
+  // refetch of the null placeholder query — it could never mint.
   return queryOptions<MintLinkLoginCodeResponse | null>({
     queryKey: authQueryKeys.linkLoginCode(auth, userId),
+    enabled: active,
     queryFn: async ({ signal }) => {
       const result = await auth.mintLinkLoginCode(signal);
       if (result.kind !== "ok") {
@@ -77,4 +85,30 @@ export function useAuthLinkLoginCode(
   );
   const auth = binding === null ? null : binding.auth;
   return useQuery(linkLoginCodeQueryOptions(auth, userId, active));
+}
+
+/**
+ * Evicts the cached mint outright. The user-driven restart after a dead code
+ * MUST evict, not refetch: a manual refetch from a disabled observer fires
+ * the request but the surface re-adopts the still-fresh cache entry on
+ * re-enable — the dead code renders again and the minted one is wasted
+ * (measured on the portal surface, same TanStack behavior here). With the
+ * entry removed, re-enabling has nothing to serve and must adopt a
+ * genuinely new code.
+ */
+export function useEvictLinkLoginCode(): () => void {
+  const queryClient = useQueryClient();
+  const binding = useHostBinding();
+  const userId = useAuthStore((s) =>
+    s.status === "signed-in" ? (s.contextMetadata?.userId ?? null) : null,
+  );
+  const auth = binding === null ? null : binding.auth;
+  return useCallback(() => {
+    if (auth === null || userId === null) {
+      return;
+    }
+    queryClient.removeQueries({
+      queryKey: authQueryKeys.linkLoginCode(auth, userId),
+    });
+  }, [auth, queryClient, userId]);
 }

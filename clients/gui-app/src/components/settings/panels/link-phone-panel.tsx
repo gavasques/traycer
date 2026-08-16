@@ -312,9 +312,12 @@ export function LinkPhonePanel() {
   const signedIn = useAuthStore((s) => s.status === "signed-in");
   const [approvedDone, setApprovedDone] = useState(false);
   const respond = useRespondLinkLoginMutation();
-  const { claim, code, deadKind } = useLinkLoginWatch(
-    signedIn && !approvedDone,
-  );
+  const {
+    claim,
+    code,
+    deadKind,
+    restart: restartCode,
+  } = useLinkLoginWatch(signedIn && !approvedDone);
   const minted = code.data ?? null;
   // `claim-pending` is a state, not an error: the user's single live claim
   // is awaiting the decision on ANOTHER surface. Rendered only when this
@@ -328,9 +331,10 @@ export function LinkPhonePanel() {
     code.error.kind === "claim-pending" &&
     (minted === null || deadKind !== null);
 
-  const restart = () => {
+  const resumeAfterApproval = () => {
     setApprovedDone(false);
-    void code.refetch();
+    // The approved code was consumed; its cache entry must not be re-served.
+    restartCode();
   };
 
   const decide = (approve: boolean) => {
@@ -346,10 +350,12 @@ export function LinkPhonePanel() {
             return;
           }
           // Rejected (or the record vanished): resume with a fresh code.
-          void code.refetch();
+          // The user's own click authorizes the re-mint; the evicting
+          // restart guarantees the dead code cannot be re-served from cache.
+          restartCode();
         },
         onError: () => {
-          void code.refetch();
+          restartCode();
         },
       },
     );
@@ -378,7 +384,8 @@ export function LinkPhonePanel() {
           }}
           respondPending={respond.isPending}
           onDecide={decide}
-          onRestart={restart}
+          onRestart={resumeAfterApproval}
+          onShowNew={restartCode}
         />
       </div>
     </SettingsPanelShell>
@@ -403,6 +410,8 @@ function LinkPhonePanelBody(props: {
   readonly respondPending: boolean;
   readonly onDecide: (approve: boolean) => void;
   readonly onRestart: () => void;
+  /** The evicting restart — the ONLY way a dead code is replaced. */
+  readonly onShowNew: () => void;
 }) {
   if (!props.signedIn) {
     return (
@@ -433,7 +442,7 @@ function LinkPhonePanelBody(props: {
       <SupersededCard
         kind={props.deadKind}
         retrying={props.code.isRefetching}
-        onShowNew={props.code.refetch}
+        onShowNew={props.onShowNew}
       />
     );
   }

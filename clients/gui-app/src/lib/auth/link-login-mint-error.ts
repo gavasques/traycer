@@ -9,7 +9,7 @@ const MINT_FAILURE_MESSAGES: Record<LinkLoginMintFailureKind, string> = {
   unauthorized: "Your session could not authorize a link code.",
   "claim-pending": "A sign-in request is already awaiting your approval.",
   "no-session-family":
-    "This session cannot mint link codes — sign in again first.",
+    "This session can't create link codes — sign in again first.",
   "network-error": "Could not reach the sign-in service.",
 };
 

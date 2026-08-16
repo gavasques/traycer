@@ -1,7 +1,10 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import type { UseQueryResult } from "@tanstack/react-query";
 import type { MintLinkLoginCodeResponse } from "@traycer/protocol/auth/link-login";
-import { useAuthLinkLoginCode } from "@/hooks/auth/use-link-login-code-query";
+import {
+  useAuthLinkLoginCode,
+  useEvictLinkLoginCode,
+} from "@/hooks/auth/use-link-login-code-query";
 import {
   useAuthLinkLoginStatus,
   type LinkLoginStatusDatum,
@@ -42,6 +45,15 @@ export interface LinkLoginWatch {
   readonly code: UseQueryResult<MintLinkLoginCodeResponse | null>;
   /** External termination of the displayed code, rendered — never reacted to. */
   readonly deadKind: LinkLoginDeadKind | null;
+  /**
+   * The ONLY way a surface replaces a dead (or consumed) code: evicts the
+   * cached mint and re-enables rotation, so the re-enabled query has nothing
+   * stale to serve and must adopt a genuinely new code. A bare `refetch()`
+   * is NOT equivalent — it fires the request but the re-enabled observer
+   * serves the still-fresh cache entry, re-rendering the dead code and
+   * wasting the minted one.
+   */
+  readonly restart: () => void;
 }
 
 function claimFromStatus(
@@ -89,16 +101,22 @@ function deadKindFromStatus(
  */
 export function useLinkLoginWatch(enabled: boolean): LinkLoginWatch {
   const [watchedCode, setWatchedCode] = useState<string | null>(null);
+  // The code a user-driven restart is replacing: while it is still the
+  // watched one, its death is no longer rendered (the replacement is in
+  // flight) and the mint query is re-enabled despite it.
+  const [restartedFrom, setRestartedFrom] = useState<string | null>(null);
 
   const status = useAuthLinkLoginStatus(enabled ? watchedCode : null);
   const claim = claimFromStatus(watchedCode, status.data);
-  const deadKind =
+  const externallyDead =
     claim === null && watchedCode !== null
       ? deadKindFromStatus(status.data)
       : null;
+  const restartPending =
+    restartedFrom !== null && restartedFrom === watchedCode;
 
   const code = useAuthLinkLoginCode(
-    enabled && claim === null && deadKind === null,
+    enabled && claim === null && (externallyDead === null || restartPending),
   );
   const minted = code.data ?? null;
 
@@ -107,7 +125,21 @@ export function useLinkLoginWatch(enabled: boolean): LinkLoginWatch {
   // until the decision resolves it, and the mint query is paused anyway.
   if (claim === null && minted !== null && watchedCode !== minted.code) {
     setWatchedCode(minted.code);
+    if (restartedFrom !== null) {
+      setRestartedFrom(null);
+    }
   }
 
-  return { claim, code, deadKind };
+  const evict = useEvictLinkLoginCode();
+  const restart = useCallback(() => {
+    evict();
+    setRestartedFrom(watchedCode);
+  }, [evict, watchedCode]);
+
+  return {
+    claim,
+    code,
+    deadKind: restartPending ? null : externallyDead,
+    restart,
+  };
 }

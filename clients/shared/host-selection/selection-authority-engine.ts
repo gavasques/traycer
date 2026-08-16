@@ -155,6 +155,23 @@ export function createIncrementingIncarnationIds(): () => string {
   };
 }
 
+/**
+ * Where `preferredHostId` survives an app restart, IDENTITY-SCOPED (G1).
+ *
+ * Reads are synchronous because the engine loads the preference inside the
+ * identity transaction that establishes the identity - a later async
+ * completion would derive once against the wrong preference and correct
+ * itself with a visible move. The file is tiny and written only on Activate
+ * or a deregister-clear, so the cost is a rare small write, not a hot path.
+ *
+ * `identityKey: null` (signed out) has no bucket to read or write: there is
+ * no account whose choice could be remembered.
+ */
+export interface PreferredHostStore {
+  load(identityKey: string | null): string | null;
+  save(identityKey: string | null, hostId: string | null): void;
+}
+
 export interface SelectionAuthorityEngineOptions {
   readonly fleet: HostFleetSource;
   readonly identity: AuthorityIdentitySource;
@@ -164,6 +181,7 @@ export interface SelectionAuthorityEngineOptions {
    */
   readonly localHostEnsure: LocalHostEnsurePort;
   readonly localOutage: LocalHostOutageSignal;
+  readonly preferredStore: PreferredHostStore;
   readonly clock: AuthorityClock;
   readonly newIncarnationId: () => string;
   readonly log: AuthorityLog;
@@ -334,6 +352,26 @@ function leasesEqual(
   return true;
 }
 
+/**
+ * Refines the cause of a DERIVED move. Explicit causes (`activate`,
+ * `deregister-clear`, `fleet-shift`) are facts the caller knows and pass
+ * through untouched; `failover` is the marker every evidence-driven path
+ * passes, and only here - with the new tuple in hand - can it be told apart
+ * from its mirror: landing ON the target is a recovery, leaving it is a
+ * failover. P1.3 refines nothing about this; it adds the damping that decides
+ * WHEN a move is allowed, not what to call it.
+ */
+function resolveCause(
+  requested: SelectionChangeCause,
+  selection: SelectionState,
+): SelectionChangeCause {
+  if (requested !== "failover") return requested;
+  if (selection.effectiveHostId === null) return "failover";
+  return selection.effectiveHostId === selection.targetHostId
+    ? "recovery"
+    : "failover";
+}
+
 /** The empty fleet an identity transition swaps to when no matching snapshot exists. */
 function emptyFleet(identityGeneration: number): HostFleetSnapshot {
   return {
@@ -365,6 +403,20 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
    */
   private revision = 0;
 
+  /**
+   * The user's intent (D1), and the ONLY persisted half of the selection.
+   * Written by exactly two paths: `activate` (the single UI writer) and the
+   * deregister-clear below (the single sanctioned system write).
+   */
+  private preferredHostId: string | null = null;
+  /**
+   * Hosts that have BEEN effective, most recent first - the "most-recently
+   * -effective usable remote" the derivation's third arm names (registry §4).
+   * Runtime state: it describes this process's own observation order, and a
+   * persisted copy would let a machine the user has not seen in weeks
+   * outrank one they used an hour ago on another device.
+   */
+  private readonly mruEffectiveHostIds: string[] = [];
   private selection: SelectionState = EMPTY_SELECTION;
   private leases: readonly HostLeaseSnapshot[] = [];
 
@@ -428,6 +480,9 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
       }),
     );
     this.applyIdentity(options.identity.current());
+    // AFTER the identity seed: the preference is scoped to whoever is signed
+    // in, so it cannot be read before that is known.
+    this.preferredHostId = options.preferredStore.load(this.identityKey);
 
     this.portSubscriptions.push(
       options.fleet.onChanged((snapshot) => {
@@ -570,19 +625,36 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
     if (attachment === null || attachment.incarnationId !== incarnationId) {
       return Promise.resolve({ ok: false, reason: "not-attached" });
     }
-    // INTERIM BACKING (P1.2 - preferred + derivation). Writing preferred is
-    // the whole of P1.2: fleet validation (`unknown-host`), the compat
-    // refusal (`incompatible`), identity-scoped persistence and the
-    // re-derivation that makes `ok: true` truthful ("resolves only after
-    // validate, persist, and re-derivation"). Refusing every well-formed
-    // request until then is the honest answer - `unrecognized` is exactly the
-    // contract's arm for "this authority does not implement that write yet",
-    // and no caller can mistake it for a completed activation.
-    this.options.log.debug("[selection-authority] activate refused (P1.2)", {
-      reporterId,
-      hostId,
-    });
-    return Promise.resolve({ ok: false, reason: "unrecognized" });
+    // F14: the write is DIRECTORY-VALIDATED. Refusing an id the fleet does not
+    // hold is what stops any path - a stale picker row, a replayed gesture -
+    // from re-asserting a host that was deregistered.
+    if (!this.fleet.hosts.some((entry) => entry.hostId === hostId)) {
+      return Promise.resolve({ ok: false, reason: "unknown-host" });
+    }
+    // D13/C4: an incompatible host is never selectable. Settings offers
+    // Update instead. A host that becomes incompatible AFTER being preferred
+    // keeps the preference and fails over until it is updated - that is a
+    // derivation outcome, not a refusal, and it is why this checks the
+    // CURRENT verdict rather than remembering one.
+    const lease = this.leases.find((entry) => entry.hostId === hostId) ?? null;
+    if (
+      lease !== null &&
+      lease.status === "dead" &&
+      lease.dead.reason === "incompatible"
+    ) {
+      return Promise.resolve({ ok: false, reason: "incompatible" });
+    }
+    // Deliberately NOT refused: a registered host that is merely offline.
+    // Preferred is intent, not liveness (D1/D5).
+    if (this.preferredHostId !== hostId) {
+      this.preferredHostId = hostId;
+      this.options.preferredStore.save(this.identityKey, hostId);
+      // Commit before resolving: the contract promises `ok: true` only after
+      // validate, persist AND re-derivation, so the selection event has
+      // already been emitted when the caller sees success.
+      this.commit("activate");
+    }
+    return Promise.resolve({ ok: true });
   }
 
   // ----------------------------------------------------------- subscription
@@ -882,7 +954,35 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
     this.appliedFleetRevision = snapshot.revision;
     this.fleet = snapshot;
     this.pruneEvidenceOutsideFleet();
-    this.commit("fleet-shift");
+    this.commit(this.clearPreferredOutsideFleet() ? "deregister-clear" : "fleet-shift");
+  }
+
+  /**
+   * The single sanctioned SYSTEM write to preferred (invariant 1), and F14's
+   * load-time degradation - one rule, because they are the same fact observed
+   * at different times: the preferred host is no longer in the account's
+   * fleet. Deregistering it while the app runs and finding it already gone at
+   * startup both land here, and both clear to null so nothing can re-assert a
+   * stale id.
+   *
+   * An EMPTY fleet never triggers it. "No hosts" is what this port publishes
+   * before its first genuine registry answer and while an identity transition
+   * is in flight, and a preference must not be destroyed by the absence of an
+   * answer - the same distinction the directory drew between "the registry
+   * omitted the host" and "the registry was never reached". Holding a stale
+   * preference costs nothing meanwhile: with no lease it is not usable, so
+   * derivation ignores it, and the next non-empty snapshot settles it.
+   */
+  private clearPreferredOutsideFleet(): boolean {
+    const preferredHostId = this.preferredHostId;
+    if (preferredHostId === null) return false;
+    if (this.fleet.hosts.length === 0) return false;
+    if (this.fleet.hosts.some((entry) => entry.hostId === preferredHostId)) {
+      return false;
+    }
+    this.preferredHostId = null;
+    this.options.preferredStore.save(this.identityKey, null);
+    return true;
   }
 
   /** Compat verdicts and tombstone ids are cleared on fleet removal. */
@@ -904,6 +1004,7 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
     // transition the authority backward (§3b).
     if (identity.generation <= this.identityGeneration) return;
     const isSeed = this.identityGeneration === UNSET_IDENTITY_GENERATION;
+    const outgoingIdentityKey = this.identityKey;
     this.identityGeneration = identity.generation;
     this.identityKey = identity.identityKey;
     if (isSeed) {
@@ -911,7 +1012,7 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
       // adopted without a transition (and without a re-attach trigger).
       return;
     }
-    this.runIdentityTransition();
+    this.runIdentityTransition(outgoingIdentityKey);
   }
 
   /**
@@ -920,7 +1021,14 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
    * the EMPTY fleet otherwise, emit - and only after that commit, emit
    * `reattachRequired` at its OWN fresh unique revision.
    */
-  private runIdentityTransition(): void {
+  private runIdentityTransition(outgoingIdentityKey: string | null): void {
+    // G1: sign-out WIPES the preference rather than merely scoping it, so a
+    // shared machine cannot show the previous user's host choice back to
+    // them, and the incoming account inherits nothing. Persistence exists to
+    // survive a restart, not a user switch.
+    this.options.preferredStore.save(outgoingIdentityKey, null);
+    this.preferredHostId = this.options.preferredStore.load(this.identityKey);
+    this.mruEffectiveHostIds.length = 0;
     for (const record of this.reporters.values()) {
       // Generation high-waters survive (rule 4); only the attachment dies.
       record.attachment = null;
@@ -971,22 +1079,88 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
 
   // ------------------------------------------------------------ derivation
 
-  private deriveSelection(): SelectionState {
-    // M5: the target is the preferred host, or the LOCAL host when preferred
-    // is null, or null when neither exists. Windows cannot derive this - it
-    // needs the local host's identity, which is fleet knowledge.
-    //
-    // INTERIM BACKING (P1.2 / P1.3): `preferredHostId` has no writer until
-    // P1.2, and `effectiveHostId` stays null until P1.3's failover engine
-    // derives it from lease states + the ensure outcome. Nothing consumes the
-    // authority's selection yet, so a null effective is inert rather than a
-    // wrong answer - and the target below is already the end-state rule.
-    const preferredHostId = this.selection.preferredHostId;
+  /**
+   * `derive(preferred, fleet)` from selection model §1, as a PURE function of
+   * the preference, the fleet and the leases just computed:
+   *
+   *   usable(preferred) → preferred
+   *   usable(local)     → local
+   *   any usable remote → most-recently-effective one
+   *   otherwise         → null  (∅ → the global modal)
+   *
+   * P1.3 owns the failover MACHINE on top of this - death streaks driving
+   * candidate switches, the local `ensure` request, and the damping windows.
+   * Nothing here waits, retries or debounces: it answers "given what is known
+   * right now, which host serves this app".
+   */
+  private deriveSelection(
+    leases: readonly HostLeaseSnapshot[],
+  ): SelectionState {
+    const preferredHostId = this.preferredHostId;
+    // M5: the target is the preference, or the local host when there is none.
+    const localHostId = this.fleet.localHostId;
     return {
       preferredHostId,
-      targetHostId: preferredHostId ?? this.fleet.localHostId,
-      effectiveHostId: null,
+      targetHostId: preferredHostId ?? localHostId,
+      effectiveHostId: this.deriveEffective(
+        preferredHostId,
+        localHostId,
+        leases,
+      ),
     };
+  }
+
+  private deriveEffective(
+    preferredHostId: string | null,
+    localHostId: string | null,
+    leases: readonly HostLeaseSnapshot[],
+  ): string | null {
+    if (preferredHostId !== null && this.isUsable(preferredHostId, leases)) {
+      return preferredHostId;
+    }
+    if (localHostId !== null && this.isUsable(localHostId, leases)) {
+      return localHostId;
+    }
+    return this.mostRecentlyEffectiveUsableRemote(localHostId, leases);
+  }
+
+  /** A host is usable only if the fleet holds it AND its lease says so. */
+  private isUsable(
+    hostId: string,
+    leases: readonly HostLeaseSnapshot[],
+  ): boolean {
+    const lease = leases.find((entry) => entry.hostId === hostId);
+    return lease !== undefined && isUsableForSelection(lease);
+  }
+
+  /**
+   * The third arm. MRU order first; when this process has never had an
+   * effective remote (a cold start that cannot reach the local host), fall
+   * back to the fleet's own order - which the fleet port sorts by hostId, so
+   * the answer is deterministic rather than dependent on registry ordering.
+   */
+  private mostRecentlyEffectiveUsableRemote(
+    localHostId: string | null,
+    leases: readonly HostLeaseSnapshot[],
+  ): string | null {
+    for (const hostId of this.mruEffectiveHostIds) {
+      if (hostId === localHostId) continue;
+      if (this.isUsable(hostId, leases)) return hostId;
+    }
+    for (const lease of leases) {
+      if (lease.hostId === localHostId) continue;
+      if (isUsableForSelection(lease)) return lease.hostId;
+    }
+    return null;
+  }
+
+  /** Records an effective host at the head of the MRU order. */
+  private noteEffective(hostId: string | null): void {
+    if (hostId === null) return;
+    const at = this.mruEffectiveHostIds.indexOf(hostId);
+    if (at === 0) return;
+    if (at > 0) this.mruEffectiveHostIds.splice(at, 1);
+    this.mruEffectiveHostIds.unshift(hostId);
   }
 
   private deriveLeases(): readonly HostLeaseSnapshot[] {
@@ -1157,10 +1331,17 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
    * its snapshot between staging and draining.
    */
   private stage(cause: SelectionChangeCause): void {
-    const selection = this.deriveSelection();
+    // Leases FIRST: derivation is a function of them, so computing the
+    // selection off the previously-emitted set would answer one transaction
+    // late. Emission order is still selection-then-leases (consecutive
+    // revisions), so a client never sees leases for a selection it has not
+    // been told about.
+    const leases = this.deriveLeases();
+    const selection = this.deriveSelection(leases);
     if (!selectionEquals(selection, this.selection)) {
       const previousEffectiveHostId = this.selection.effectiveHostId;
       this.selection = selection;
+      this.noteEffective(selection.effectiveHostId);
       this.eventQueue.push({
         kind: "selection",
         event: {
@@ -1170,12 +1351,11 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
             targetHostId: selection.targetHostId,
             effectiveHostId: selection.effectiveHostId,
             previousEffectiveHostId,
-            cause,
+            cause: resolveCause(cause, selection),
           },
         },
       });
     }
-    const leases = this.deriveLeases();
     if (!leasesEqual(leases, this.leases)) {
       this.leases = leases;
       this.eventQueue.push({

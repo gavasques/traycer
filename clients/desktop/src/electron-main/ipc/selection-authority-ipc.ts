@@ -44,6 +44,10 @@ import {
   DesktopHostFleetSource,
   DesktopLocalHostOutageSignal,
 } from "../selection/desktop-selection-ports";
+import {
+  DesktopPreferredHostStore,
+  resolvePreferredHostFilePath,
+} from "../selection/preferred-host-store";
 import { onHostControllerStatusBroadcast } from "./host-controller-status-broadcast";
 import type { RunnerIpcBridge } from "./runner-ipc-bridge";
 
@@ -98,6 +102,10 @@ export function registerSelectionAuthorityIpc(bridge: RunnerIpcBridge): void {
       bridge.options.hostController,
     ),
     localOutage,
+    preferredStore: new DesktopPreferredHostStore(
+      resolvePreferredHostFilePath(),
+      authorityLog,
+    ),
     clock: systemAuthorityClock,
     newIncarnationId: createIncrementingIncarnationIds(),
     log: authorityLog,

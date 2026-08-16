@@ -22,6 +22,7 @@ import {
 import {
   InMemoryAuthorityIdentitySource,
   InMemoryHostFleetSource,
+  InMemoryPreferredHostStore,
   inertLocalHostOutageSignal,
   unavailableLocalHostEnsurePort,
 } from "../in-process-selection-authority";
@@ -132,6 +133,7 @@ export interface TestAuthority {
   readonly engine: SelectionAuthorityEngineImpl;
   readonly fleet: InMemoryHostFleetSource;
   readonly identity: InMemoryAuthorityIdentitySource;
+  readonly preferredStore: InMemoryPreferredHostStore;
   readonly clock: FakeAuthorityClock;
   readonly events: RecordedEngineEvent[];
   dispose(): void;
@@ -161,11 +163,13 @@ export function createTestAuthority(input: {
   const identity = new InMemoryAuthorityIdentitySource(
     input.initialIdentityKey,
   );
+  const preferredStore = new InMemoryPreferredHostStore();
   const engine = new SelectionAuthorityEngineImpl({
     fleet,
     identity,
     localHostEnsure: unavailableLocalHostEnsurePort,
     localOutage: inertLocalHostOutageSignal,
+    preferredStore,
     clock: input.clock,
     newIncarnationId: createIncrementingIncarnationIds(),
     log: silentAuthorityLog,
@@ -175,6 +179,7 @@ export function createTestAuthority(input: {
     engine,
     fleet,
     identity,
+    preferredStore,
     clock: input.clock,
     events,
     dispose: () => {

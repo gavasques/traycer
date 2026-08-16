@@ -809,7 +809,7 @@ describe("selection authority IPC binding", () => {
   });
 
   describe("activate", () => {
-    it("resolves not-attached for a stale incarnation and unrecognized for the live one (P1.2 interim)", async () => {
+    it("resolves not-attached for a stale incarnation and unknown-host for a live one naming a host outside the fleet (F14)", async () => {
       const { bridge, registry } = await buildBridge({});
       const windowA = buildWindow();
       registry.add("window-a", 101, windowA);
@@ -828,9 +828,12 @@ describe("selection authority IPC binding", () => {
         activate(sender(101), staleIncarnationId, "some-host"),
       ).resolves.toEqual({ ok: false, reason: "not-attached" });
 
+      // P1.2: the write is directory-validated at the engine, so a live
+      // incarnation naming a host the fleet does not hold is refused with
+      // `unknown-host` - the arm that stops a stale id being re-asserted.
       await expect(
         activate(sender(101), second.incarnationId, "some-host"),
-      ).resolves.toEqual({ ok: false, reason: "unrecognized" });
+      ).resolves.toEqual({ ok: false, reason: "unknown-host" });
 
       bridge.dispose();
     });

@@ -7,6 +7,7 @@ import {
 import {
   InMemoryAuthorityIdentitySource,
   InMemoryHostFleetSource,
+  InMemoryPreferredHostStore,
   createInProcessSelectionAuthorityClient,
   inertLocalHostOutageSignal,
   unavailableLocalHostEnsurePort,
@@ -37,6 +38,7 @@ describe("in-process selection authority - end to end over a real engine", () =>
       identity,
       localHostEnsure: unavailableLocalHostEnsurePort,
       localOutage: inertLocalHostOutageSignal,
+    preferredStore: new InMemoryPreferredHostStore(),
       clock,
       newIncarnationId: createIncrementingIncarnationIds(),
       log: silentAuthorityLog,
@@ -94,6 +96,7 @@ describe("in-process selection authority - end to end over a real engine", () =>
       identity,
       localHostEnsure: unavailableLocalHostEnsurePort,
       localOutage: inertLocalHostOutageSignal,
+    preferredStore: new InMemoryPreferredHostStore(),
       clock,
       newIncarnationId: createIncrementingIncarnationIds(),
       log: silentAuthorityLog,

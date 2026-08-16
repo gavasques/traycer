@@ -65,6 +65,7 @@ import {
   inertLocalHostOutageSignal,
   InMemoryAuthorityIdentitySource,
   InMemoryHostFleetSource,
+  InMemoryPreferredHostStore,
   unavailableLocalHostEnsurePort,
   type InProcessSelectionAuthority,
 } from "../../host-selection/in-process-selection-authority";
@@ -200,6 +201,8 @@ export class MockRunnerHost implements IRunnerHost {
     hosts: [],
   });
   readonly selectionIdentity = new InMemoryAuthorityIdentitySource(null);
+  /** Identity-scoped preferred-host persistence for the in-window authority. */
+  readonly selectionPreferredStore = new InMemoryPreferredHostStore();
   private readonly selectionAuthorityMount: InProcessSelectionAuthority;
   readonly selectionAuthority: SelectionAuthorityClient;
   private retainedStepUpCredential: RetainedStepUpCredential | null = null;
@@ -268,6 +271,7 @@ export class MockRunnerHost implements IRunnerHost {
       // definition come out right here.
       localHostEnsure: unavailableLocalHostEnsurePort,
       localOutage: inertLocalHostOutageSignal,
+      preferredStore: this.selectionPreferredStore,
       clock: systemAuthorityClock,
       newIncarnationId: createIncrementingIncarnationIds(),
       log: silentAuthorityLog,

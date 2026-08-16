@@ -20,6 +20,7 @@ import {
 } from "../selection-authority-engine";
 import {
   InMemoryHostFleetSource,
+  InMemoryPreferredHostStore,
   inertLocalHostOutageSignal,
   unavailableLocalHostEnsurePort,
 } from "../in-process-selection-authority";
@@ -783,6 +784,7 @@ describe("SelectionAuthorityEngineImpl - local outage signal", () => {
       localOutage: outage,
       clock,
       newIncarnationId: createIncrementingIncarnationIds(),
+      preferredStore: new InMemoryPreferredHostStore(),
       log: silentAuthorityLog,
     });
 
@@ -862,6 +864,7 @@ describe("SelectionAuthorityEngineImpl - identity transitions", () => {
       localOutage: inertLocalHostOutageSignal,
       clock,
       newIncarnationId: createIncrementingIncarnationIds(),
+      preferredStore: new InMemoryPreferredHostStore(),
       log: silentAuthorityLog,
     });
     const { events } = recordEngineEvents(engine);
@@ -942,6 +945,7 @@ describe("SelectionAuthorityEngineImpl - identity transitions", () => {
       localOutage: inertLocalHostOutageSignal,
       clock,
       newIncarnationId: createIncrementingIncarnationIds(),
+      preferredStore: new InMemoryPreferredHostStore(),
       log: silentAuthorityLog,
     });
     const { events } = recordEngineEvents(engine);
@@ -1070,11 +1074,61 @@ describe("SelectionAuthorityEngineImpl - reporter detach", () => {
   });
 });
 
-describe("SelectionAuthorityEngineImpl - activate (P1.2 interim)", () => {
-  it("a stale incarnation answers not-attached; a live incarnation answers unrecognized", async () => {
+describe("SelectionAuthorityEngineImpl - activate (P1.2)", () => {
+  it("refuses a stale incarnation and an unknown host, and accepts a fleet host by writing preferred + emitting cause activate", async () => {
     const clock = createFakeAuthorityClock(0);
     const authority = createTestAuthority({
-      initialFleet: { identityGeneration: 0, localHostId: null, hosts: [fleetHost("H", "remote")] },
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: null,
+        hosts: [fleetHost("H", "remote")],
+      },
+      initialIdentityKey: "acct-1",
+      clock,
+    });
+    const { engine, events, preferredStore } = authority;
+    const seqA = engine.allocateAttachSeq("A");
+    const attachA = engine.attach("A", attachRequest(seqA, []));
+    if (!attachA.ok) throw new Error("expected attach to succeed");
+
+    expect(await engine.activate("A", "some-other-incarnation", "H")).toEqual({
+      ok: false,
+      reason: "not-attached",
+    });
+    // F14: a directory-validated write refuses an id the fleet does not hold,
+    // so no path can re-assert a deregistered host.
+    expect(await engine.activate("A", attachA.incarnationId, "ghost")).toEqual({
+      ok: false,
+      reason: "unknown-host",
+    });
+
+    expect(await engine.activate("A", attachA.incarnationId, "H")).toEqual({
+      ok: true,
+    });
+    expect(engine.snapshot().preferredHostId).toBe("H");
+    // Persisted under the signed-in identity, and re-derivation has already
+    // been emitted by the time `ok: true` resolves.
+    expect(preferredStore.load("acct-1")).toBe("H");
+    const selectionEvents = events.filter((event) => event.kind === "selection");
+    const last = selectionEvents[selectionEvents.length - 1];
+    if (last === undefined || last.kind !== "selection") {
+      throw new Error("expected a selection event");
+    }
+    expect(last.change.cause).toBe("activate");
+    expect(last.change.preferredHostId).toBe("H");
+    expect(last.change.effectiveHostId).toBe("H");
+
+    authority.dispose();
+  });
+
+  it("refuses a host whose current compat verdict is incompatible (D13)", async () => {
+    const clock = createFakeAuthorityClock(0);
+    const authority = createTestAuthority({
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: null,
+        hosts: [fleetHost("H", "remote")],
+      },
       initialIdentityKey: "acct-1",
       clock,
     });
@@ -1082,12 +1136,17 @@ describe("SelectionAuthorityEngineImpl - activate (P1.2 interim)", () => {
     const seqA = engine.allocateAttachSeq("A");
     const attachA = engine.attach("A", attachRequest(seqA, []));
     if (!attachA.ok) throw new Error("expected attach to succeed");
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      compatIncompatible("H", null, INCOMPAT_DETAIL),
+    );
 
-    const stale = await engine.activate("A", "some-other-incarnation", "H");
-    expect(stale).toEqual({ ok: false, reason: "not-attached" });
-
-    const live = await engine.activate("A", attachA.incarnationId, "H");
-    expect(live).toEqual({ ok: false, reason: "unrecognized" });
+    expect(await engine.activate("A", attachA.incarnationId, "H")).toEqual({
+      ok: false,
+      reason: "incompatible",
+    });
+    expect(engine.snapshot().preferredHostId).toBeNull();
 
     authority.dispose();
   });
@@ -1110,7 +1169,9 @@ describe("SelectionAuthorityEngineImpl - fleet shift", () => {
     if (last.kind !== "selection") throw new Error("expected a selection event");
     expect(last.change.cause).toBe("fleet-shift");
     expect(last.change.targetHostId).toBe("L");
-    expect(last.change.effectiveHostId).toBeNull();
+    // Derivation is real from P1.2: with no preference, the usable local host
+    // is both the target (M5) and the effective host.
+    expect(last.change.effectiveHostId).toBe("L");
 
     authority.dispose();
   });
@@ -1136,6 +1197,7 @@ describe("SelectionAuthorityEngineImpl - listener isolation", () => {
       localOutage: inertLocalHostOutageSignal,
       clock,
       newIncarnationId: createIncrementingIncarnationIds(),
+      preferredStore: new InMemoryPreferredHostStore(),
       log: silentAuthorityLog,
     });
 
@@ -1310,6 +1372,7 @@ describe("SelectionAuthorityEngineImpl - A4: identity transition keeps an active
       localOutage: outage,
       clock,
       newIncarnationId: createIncrementingIncarnationIds(),
+      preferredStore: new InMemoryPreferredHostStore(),
       log: silentAuthorityLog,
     });
 
@@ -1338,6 +1401,54 @@ describe("SelectionAuthorityEngineImpl - A4: identity transition keeps an active
     expect(findLease(engine.snapshot().leases, "local-1")?.status).not.toBe("restarting-expected");
 
     engine.dispose();
+  });
+});
+
+describe("SelectionAuthorityEngineImpl - closure round: drain guard orders delivery across listeners", () => {
+  it("every listener receives revision N before ANY listener receives revision N+1, even when listener 1 re-enters synchronously", () => {
+    const clock = createFakeAuthorityClock(0);
+    const authority = createTestAuthority({
+      initialFleet: { identityGeneration: 0, localHostId: null, hosts: [fleetHost("H1", "remote")] },
+      initialIdentityKey: "acct-1",
+      clock,
+    });
+    const { engine, fleet } = authority;
+
+    const delivered: Array<{ listenerIndex: number; revision: number }> = [];
+    let reentered = false;
+    // Listener 1 re-enters the engine mid-delivery by publishing a fleet
+    // snapshot, which stages a second leasesChanged event. The drain guard
+    // (`if (this.draining) return;`) is what stops that nested transaction
+    // from being delivered inline, ahead of listener 2 seeing the first one.
+    engine.onLeasesChanged((event) => {
+      delivered.push({ listenerIndex: 0, revision: event.revision });
+      if (!reentered) {
+        reentered = true;
+        fleet.publish(0, null, [
+          fleetHost("H1", "remote"),
+          fleetHost("H2", "remote"),
+          fleetHost("H3", "remote"),
+        ]);
+      }
+    });
+    engine.onLeasesChanged((event) => {
+      delivered.push({ listenerIndex: 1, revision: event.revision });
+    });
+
+    fleet.publish(0, null, [fleetHost("H1", "remote"), fleetHost("H2", "remote")]);
+
+    expect(delivered.length).toBe(4);
+    const firstRevision = delivered[0].revision;
+    const secondRevision = delivered[2].revision;
+    expect(secondRevision).toBeGreaterThan(firstRevision);
+    expect(delivered).toEqual([
+      { listenerIndex: 0, revision: firstRevision },
+      { listenerIndex: 1, revision: firstRevision },
+      { listenerIndex: 0, revision: secondRevision },
+      { listenerIndex: 1, revision: secondRevision },
+    ]);
+
+    authority.dispose();
   });
 });
 

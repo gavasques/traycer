@@ -35,6 +35,7 @@ import {
 import {
   SelectionAuthorityEngineImpl,
   type AuthorityLog,
+  type PreferredHostStore,
   type SelectionAuthorityEngineOptions,
 } from "./selection-authority-engine";
 
@@ -193,6 +194,29 @@ export class InMemoryAuthorityIdentitySource implements AuthorityIdentitySource 
     for (const listener of Array.from(this.listeners)) {
       listener(this.identity);
     }
+  }
+}
+
+/**
+ * A {@link PreferredHostStore} kept in memory - browser/dev and tests. It is
+ * identity-bucketed like the durable one, so the "another account inherits
+ * nothing" property is exercised here too rather than only on desktop.
+ */
+export class InMemoryPreferredHostStore implements PreferredHostStore {
+  private readonly byIdentity = new Map<string, string>();
+
+  load(identityKey: string | null): string | null {
+    if (identityKey === null) return null;
+    return this.byIdentity.get(identityKey) ?? null;
+  }
+
+  save(identityKey: string | null, hostId: string | null): void {
+    if (identityKey === null) return;
+    if (hostId === null) {
+      this.byIdentity.delete(identityKey);
+      return;
+    }
+    this.byIdentity.set(identityKey, hostId);
   }
 }
 

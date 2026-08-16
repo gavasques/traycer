@@ -27,7 +27,10 @@ import {
   createNativeClipboardReadGate,
 } from "./file-drops-bridge";
 import { buildZoomBridge } from "./zoom-bridge";
-import { buildSelectionAuthorityBridge } from "./selection-authority-bridge";
+import {
+  buildSelectionAuthorityBridge,
+  buildSelectionFleetRefresh,
+} from "./selection-authority-bridge";
 import { readSyncString } from "./sync-bootstrap";
 
 /**
@@ -80,6 +83,7 @@ contextBridge.exposeInMainWorld("runnerHost", {
   power: buildPowerBridge(),
   ...buildZoomBridge(),
   selectionAuthority: buildSelectionAuthorityBridge(),
+  refreshSelectionFleet: buildSelectionFleetRefresh(),
   hostManagement: buildHostManagementBridge(),
   hostTray: buildHostTrayCommandSubscriber(),
   hostControllerStatus: buildHostControllerStatusSubscriber(),

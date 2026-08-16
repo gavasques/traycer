@@ -559,6 +559,7 @@ function buildFakeBridge(
       onChange: () => ({ dispose: () => undefined }),
     },
     selectionAuthority: createInertSelectionAuthorityClient(),
+    refreshSelectionFleet: () => Promise.resolve(),
   };
 
   return {

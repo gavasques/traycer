@@ -78,6 +78,20 @@ function subscribeParsed<T>(
   };
 }
 
+/**
+ * The membership edge (F6), exposed BESIDE the authority client rather than on
+ * it: the settled client contract is the window's attach/evidence/activate
+ * surface, and "the registry changed" is neither - it is a shell capability
+ * that only exists where the authority runs in another process. A shell whose
+ * authority is in-window refreshes its own directory and needs no channel.
+ */
+export function buildSelectionFleetRefresh(): () => Promise<void> {
+  return () =>
+    ipcRenderer.invoke(
+      SelectionAuthorityChannels.invoke.refreshFleet,
+    ) as Promise<void>;
+}
+
 function createIpcTransport(): SelectionAuthorityClientTransport {
   return {
     allocateAttachSeq: () =>

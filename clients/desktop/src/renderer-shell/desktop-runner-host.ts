@@ -246,6 +246,7 @@ export interface DesktopPreloadBridge {
    * buffering, so the renderer only has to attach and subscribe.
    */
   selectionAuthority: SelectionAuthorityClient;
+  refreshSelectionFleet: () => Promise<void>;
 }
 
 export interface DesktopFileDropsBridge {
@@ -603,6 +604,7 @@ export class DesktopRunnerHost implements IRunnerHost {
   readonly hostTray: IHostTray;
   readonly hostControllerStatus: DesktopHostControllerStatusBridge;
   readonly selectionAuthority: SelectionAuthorityClient;
+  private readonly refreshSelectionFleet: () => Promise<void>;
   readonly deviceFlow: IDeviceFlowHost;
 
   private readonly bridge: DesktopPreloadBridge;
@@ -630,6 +632,7 @@ export class DesktopRunnerHost implements IRunnerHost {
     // re-wrapping it here could only add a second identity for the same
     // generation.
     this.selectionAuthority = options.bridge.selectionAuthority;
+    this.refreshSelectionFleet = options.bridge.refreshSelectionFleet;
     this.zoom = {
       ladder: options.bridge.zoom.ladder,
       get: () => options.bridge.zoom.get(),
@@ -794,6 +797,10 @@ export class DesktopRunnerHost implements IRunnerHost {
 
   requestMicrophoneAccess(): Promise<"granted" | "denied"> {
     return this.bridge.requestMicrophoneAccess();
+  }
+
+  refreshHostFleet(): Promise<void> {
+    return this.refreshSelectionFleet();
   }
 
   openMicrophoneSettings(): Promise<void> {

@@ -207,6 +207,24 @@ export class MockRunnerHost implements IRunnerHost {
   readonly selectionAuthority: SelectionAuthorityClient;
   private retainedStepUpCredential: RetainedStepUpCredential | null = null;
 
+  /**
+   * The authority runs IN-WINDOW here, so membership changes reach it through
+   * the fleet source directly and there is no stale main-process copy to
+   * invalidate (F6's gap is a consequence of the process split, not of the
+   * design). Republishing the current snapshot keeps the call meaningful
+   * rather than making it a lie: a caller that says "membership changed" still
+   * gets one atomic fleet transaction out of it.
+   */
+  refreshHostFleet(): Promise<void> {
+    const current = this.selectionFleet.snapshot();
+    this.selectionFleet.publish(
+      current.identityGeneration,
+      current.localHostId,
+      current.hosts,
+    );
+    return Promise.resolve();
+  }
+
   readonly tray: MockTrayState = new MockTrayState();
   readonly hostPicker: MockHostPicker = new MockHostPicker();
   readonly workspaceFolders: IWorkspaceFoldersHost = {

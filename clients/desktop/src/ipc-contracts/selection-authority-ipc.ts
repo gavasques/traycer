@@ -15,6 +15,7 @@
  *   invoke  runnerHost:selection:attach
  *   invoke  runnerHost:selection:reportEvidence
  *   invoke  runnerHost:selection:activate
+ *   invoke  runnerHost:selection:refreshFleet
  *   event   runnerHost:event:selection:selectionChanged
  *   event   runnerHost:event:selection:leasesChanged
  *   event   runnerHost:event:selection:reattachRequired
@@ -133,6 +134,27 @@ export interface SelectionAuthorityInvokeMap {
   activate: {
     args: [incarnationId: string, hostId: string];
     result: ActivateResult;
+  };
+  /**
+   * "The registry changed - re-read it" (P1.2 cold review F6).
+   *
+   * Main's fleet is refreshed on identity change, local-host change and
+   * startup only, and the no-poller ruling stands: polling the registry from
+   * main is what the audit's duplicated 60s pollers were. But a REMOTE
+   * membership mutation happens in the renderer (a deregistration, a fresh
+   * registration) and main has no way to hear about it, so deregistering the
+   * preferred remote left main holding it as a live candidate, and a host
+   * registered a moment ago was refused `unknown-host` by Activate's
+   * directory validation.
+   *
+   * So the edge is EXPLICIT rather than periodic: the mutation that changed
+   * membership says so. Unscoped and idempotent - it carries no membership of
+   * its own, it only asks main to go and read, so a duplicate call costs one
+   * fetch and a stale caller cannot assert anything false.
+   */
+  refreshFleet: {
+    args: [];
+    result: void;
   };
 }
 

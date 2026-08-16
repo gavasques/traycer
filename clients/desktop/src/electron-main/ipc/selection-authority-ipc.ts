@@ -113,6 +113,7 @@ export function registerSelectionAuthorityIpc(bridge: RunnerIpcBridge): void {
 
   registerAttachSeqSync(bridge, engine);
   registerInvokes(bridge, engine);
+  registerFleetRefresh(bridge, fleet);
   registerFanOut(bridge, engine);
   registerDetachSignals(bridge, engine);
 
@@ -143,6 +144,29 @@ function registerAttachSeqSync(
     }
     return engine.allocateAttachSeq(reporterId);
   });
+}
+
+/**
+ * The membership edge (P1.2 cold review F6). Deliberately takes no argument
+ * and returns nothing: the renderer is not telling main WHAT changed - it has
+ * no authority over membership - only that main's copy is now stale. Main goes
+ * and reads the registry itself, publishing one atomic snapshot through the
+ * ordinary fleet path, so every existing race rule (generation stamping,
+ * revision monotonicity, one-snapshot-one-transaction) applies unchanged.
+ *
+ * Failures are swallowed into the fleet source's own logging: `refresh()`
+ * publishes what it could resolve, and a caller that could not be told "the
+ * refetch failed" is better off than one that turns a transient registry blip
+ * into a user-visible error on an operation that already succeeded.
+ */
+function registerFleetRefresh(
+  bridge: RunnerIpcBridge,
+  fleet: DesktopHostFleetSource,
+): void {
+  bridge.handleInvoke(
+    SelectionAuthorityChannels.invoke.refreshFleet,
+    (): Promise<void> => fleet.refresh(),
+  );
 }
 
 function registerInvokes(

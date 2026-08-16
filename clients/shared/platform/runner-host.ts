@@ -427,6 +427,26 @@ export interface IRunnerHost {
   readonly selectionAuthority: SelectionAuthorityClient;
 
   /**
+   * Tells the selection authority that registered-host MEMBERSHIP changed, so
+   * it re-reads the registry (P1.2 cold review F6).
+   *
+   * The authority refreshes its fleet on identity change, local-host change
+   * and startup; it deliberately does NOT poll, because duplicated 60s
+   * registry pollers are one of the things this redesign deletes. That leaves
+   * one gap, and it is a real one: remote membership is mutated from the
+   * RENDERER (a deregistration, a fresh registration), which the authority has
+   * no way to observe. Without this edge, deregistering the preferred remote
+   * left it standing as a live candidate, and Activate refused a host
+   * registered a moment earlier with `unknown-host`.
+   *
+   * Idempotent and unscoped by design: it asserts nothing about membership -
+   * only that the authority's copy is stale - so a duplicate or late call
+   * costs one refetch and can never publish something false. Callers are the
+   * membership mutations themselves, not surfaces reacting to them.
+   */
+  refreshHostFleet(): Promise<void>;
+
+  /**
    * Tray-side host command channel forwarded from the shell tray to the
    * renderer. Present on shells that surface a native tray (desktop) and
    * `null` everywhere else. The renderer keeps a subscription mounted so

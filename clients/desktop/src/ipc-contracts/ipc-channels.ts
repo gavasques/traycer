@@ -279,6 +279,7 @@ export const RunnerHostInvoke = {
   selectionAttach: "runnerHost:selection:attach",
   selectionReportEvidence: "runnerHost:selection:reportEvidence",
   selectionActivate: "runnerHost:selection:activate",
+  selectionRefreshFleet: "runnerHost:selection:refreshFleet",
   zoomGet: "runnerHost:zoom:get",
   zoomSet: "runnerHost:zoom:set",
   zoomStepIn: "runnerHost:zoom:stepIn",
@@ -378,6 +379,7 @@ export const SelectionAuthorityChannels = {
     attach: RunnerHostInvoke.selectionAttach,
     reportEvidence: RunnerHostInvoke.selectionReportEvidence,
     activate: RunnerHostInvoke.selectionActivate,
+    refreshFleet: RunnerHostInvoke.selectionRefreshFleet,
   },
   event: {
     selectionChanged: RunnerHostEvent.selectionChanged,

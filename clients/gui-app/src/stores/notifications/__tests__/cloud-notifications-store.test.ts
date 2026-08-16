@@ -19,7 +19,10 @@ import {
   hostStreamRpcRegistry,
   type HostStreamRpcRegistry,
 } from "@traycer/protocol/host/registry";
-import { HOST_STREAM_REOPEN_INITIAL_BACKOFF_MS } from "@/lib/host/stream-reopen";
+import {
+  createHostReconnectEngine,
+  HOST_STREAM_REOPEN_INITIAL_BACKOFF_MS,
+} from "@traycer-clients/shared/host-client/host-connection-reconnect-engine";
 import {
   cloudNotificationFeedId,
   openCloudNotificationsStream,
@@ -27,6 +30,8 @@ import {
   useCloudNotificationsStore,
 } from "@/stores/notifications/cloud-notifications-store";
 import { NO_TRANSPORT_EVIDENCE } from "@traycer-clients/shared/host-selection/transport-evidence";
+
+const reconnectEngine = createHostReconnectEngine();
 
 const summary: HostNotificationsCloudFeedSummary = {
   totalCount: 1,
@@ -486,7 +491,13 @@ describe("cloud notifications store", () => {
   it("opens the distinct cloud method and creates a fresh session after terminal failure", () => {
     vi.useFakeTimers();
     const client = new ControlledWsStreamClient();
-    const close = openCloudNotificationsStream(client, null, null, null);
+    const close = openCloudNotificationsStream(
+      reconnectEngine,
+      client,
+      null,
+      null,
+      null,
+    );
 
     expect(client.subscribedMethods).toEqual([
       "host.notifications.cloudFeed.subscribe",
@@ -508,7 +519,13 @@ describe("cloud notifications store", () => {
   it("does not retry an incompatible cloud-feed method", () => {
     vi.useFakeTimers();
     const client = new ControlledWsStreamClient();
-    const close = openCloudNotificationsStream(client, null, null, null);
+    const close = openCloudNotificationsStream(
+      reconnectEngine,
+      client,
+      null,
+      null,
+      null,
+    );
 
     client.sessions[0].emitClosed(fatalClose("INCOMPATIBLE"));
     vi.advanceTimersByTime(2 * HOST_STREAM_REOPEN_INITIAL_BACKOFF_MS);
@@ -525,6 +542,7 @@ describe("cloud notifications store", () => {
     const client = new ControlledWsStreamClient();
     const onEntitlementDenied = vi.fn();
     const close = openCloudNotificationsStream(
+      reconnectEngine,
       client,
       null,
       onEntitlementDenied,
@@ -544,7 +562,13 @@ describe("cloud notifications store", () => {
 
   it("parses authoritative frames and remains unavailable before its first snapshot", () => {
     const client = new ControlledWsStreamClient();
-    const close = openCloudNotificationsStream(client, null, null, null);
+    const close = openCloudNotificationsStream(
+      reconnectEngine,
+      client,
+      null,
+      null,
+      null,
+    );
     const session = client.sessions[0];
 
     session.emitServerFrame({
@@ -587,7 +611,13 @@ describe("cloud notifications store", () => {
   it("reports baseline rows as a snapshot even when there are no arrivals", () => {
     const client = new ControlledWsStreamClient();
     const onSnapshot = vi.fn();
-    const close = openCloudNotificationsStream(client, null, null, onSnapshot);
+    const close = openCloudNotificationsStream(
+      reconnectEngine,
+      client,
+      null,
+      null,
+      onSnapshot,
+    );
     const row = cloudRow("entry-a", 4, "host-a");
 
     client.sessions[0].emitServerFrame({
@@ -606,7 +636,13 @@ describe("cloud notifications store", () => {
   it("does not forward a lower-version snapshot after rejecting its rewind", () => {
     const client = new ControlledWsStreamClient();
     const onSnapshot = vi.fn();
-    const close = openCloudNotificationsStream(client, null, null, onSnapshot);
+    const close = openCloudNotificationsStream(
+      reconnectEngine,
+      client,
+      null,
+      null,
+      onSnapshot,
+    );
     const accepted = cloudRow("entry-current", 10, "host-a");
 
     client.sessions[0].emitServerFrame({
@@ -637,12 +673,19 @@ describe("cloud notifications store", () => {
 
   it("ignores a snapshot from a relay controller whose ownership epoch was replaced", () => {
     const oldClient = new ControlledWsStreamClient();
-    const closeOld = openCloudNotificationsStream(oldClient, null, null, null);
+    const closeOld = openCloudNotificationsStream(
+      reconnectEngine,
+      oldClient,
+      null,
+      null,
+      null,
+    );
     const oldSession = oldClient.sessions[0];
 
     useCloudNotificationsStore.getState().reset();
     const replacementClient = new ControlledWsStreamClient();
     const closeReplacement = openCloudNotificationsStream(
+      reconnectEngine,
       replacementClient,
       null,
       null,

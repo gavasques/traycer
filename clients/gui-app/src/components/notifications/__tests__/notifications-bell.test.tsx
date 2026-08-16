@@ -10,6 +10,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import * as Y from "yjs";
 import { MockRunnerHost } from "@traycer-clients/shared/host-client/mock/mock-runner-host";
 import { mockLocalHostEntry } from "@traycer-clients/shared/host-client/mock/mock-host-directory";
+import { createHostReconnectEngine } from "@traycer-clients/shared/host-client/host-connection-reconnect-engine";
 import { NotificationsBell } from "@/components/notifications/notifications-bell";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Analytics, AnalyticsEvent } from "@/lib/analytics";
@@ -50,6 +51,8 @@ import {
   type NotificationRoomEntryMap,
 } from "@traycer/protocol/notifications/notification-room";
 import { NO_TRANSPORT_EVIDENCE } from "@traycer-clients/shared/host-selection/transport-evidence";
+
+const reconnectEngine = createHostReconnectEngine();
 
 const activeHostIdRef = vi.hoisted(() => ({
   value: null as string | null,
@@ -113,7 +116,7 @@ interface FakeHandle {
 }
 
 function fakeFactory(): {
-  factory: Parameters<typeof openNotificationsStream>[0];
+  factory: Parameters<typeof openNotificationsStream>[1];
   handle: () => FakeHandle;
 } {
   let current: FakeHandle | null = null;
@@ -299,7 +302,7 @@ describe("NotificationsBell", () => {
   it("does not focus the first header action on pointer open", async () => {
     const runnerHost = createRunnerHost();
     const { factory, handle } = fakeFactory();
-    openNotificationsStream(factory, null);
+    openNotificationsStream(reconnectEngine, factory, null);
     mountBell(runnerHost, undefined);
 
     act(() => {
@@ -381,7 +384,7 @@ describe("NotificationsBell", () => {
   it("renders the quiet-dot for quietDot state and no indicator for unknown/clear", () => {
     const runnerHost = createRunnerHost();
     const { factory, handle } = fakeFactory();
-    openNotificationsStream(factory, null);
+    openNotificationsStream(reconnectEngine, factory, null);
     mountBell(runnerHost, undefined);
 
     // Host summary null → unknown kind, but renders like clear (no dot).

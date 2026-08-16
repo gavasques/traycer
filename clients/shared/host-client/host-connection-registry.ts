@@ -1,4 +1,8 @@
 import type { HostLeaseSnapshot } from "../host-selection/selection-authority-contract";
+import {
+  createHostReconnectEngine,
+  type HostReconnectEngine,
+} from "./host-connection-reconnect-engine";
 import type { TimerHandle } from "../host-transport/timer-handle";
 import type { Disposable } from "../platform/uri-callback";
 import type { HostDirectoryEntry } from "./host-directory";
@@ -83,6 +87,14 @@ export interface HostConnectionLease {
   readonly entry: () => HostDirectoryEntry | null;
   /** Fires when this host's row or lease moves. */
   readonly onChanged: (listener: () => void) => () => void;
+  /**
+   * THE reconnect policy for this host (§6). Every stream owner addressing
+   * this host reaches its rebuild pacing, reopen lanes and wake episodes
+   * through here, so the policy exists once per lease instead of once per
+   * owner - which is what "exactly one reconnection policy per transport
+   * kind" means operationally.
+   */
+  readonly reconnect: HostReconnectEngine;
   readonly release: () => void;
 }
 
@@ -104,6 +116,8 @@ interface HostRecord {
   entry: HostDirectoryEntry | null;
   /** Last lease this host published, same purpose. */
   lease: HostLeaseSnapshot | null;
+  /** This host's ONE reconnect engine; see {@link HostConnectionLease}. */
+  readonly reconnect: HostReconnectEngine;
   readonly listeners: Set<() => void>;
 }
 
@@ -178,6 +192,7 @@ export function resetHostConnectionRegistry(): void {
   // Records with no subscriber and no holder have nothing left to keep them.
   for (const [hostId, record] of [...records]) {
     if (record.refCount === 0 && record.listeners.size === 0) {
+      record.reconnect.dispose();
       records.delete(hostId);
     }
   }
@@ -192,6 +207,7 @@ export function resetHostConnectionRegistry(): void {
 export function resetHostConnectionRegistryForTest(): void {
   resetHostConnectionRegistry();
   for (const record of records.values()) {
+    record.reconnect.dispose();
     record.listeners.clear();
   }
   records.clear();
@@ -287,6 +303,7 @@ function recordFor(hostId: string): HostRecord {
     lingerTimer: null,
     entry: readEntry(hostId),
     lease: readLease(hostId),
+    reconnect: createHostReconnectEngine(),
     listeners: new Set(),
   };
   records.set(hostId, record);
@@ -310,6 +327,7 @@ function releaseRecord(record: HostRecord): void {
       return;
     }
     if (records.get(record.hostId) === record) {
+      record.reconnect.dispose();
       records.delete(record.hostId);
     }
   }, HOST_CONNECTION_LINGER_MS);
@@ -361,6 +379,7 @@ export function acquireHostConnection(hostId: string): HostConnectionLease {
   let released = false;
   return {
     hostId,
+    reconnect: record.reconnect,
     status: () => readLease(hostId),
     entry: () => readEntry(hostId),
     onChanged: (listener) => subscribeHostRowChanged(hostId, listener),

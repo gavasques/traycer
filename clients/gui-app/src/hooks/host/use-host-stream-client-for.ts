@@ -23,7 +23,7 @@ import type { HostClient } from "@traycer-clients/shared/host-client/host-client
 import type { HostRpcRegistry } from "@traycer/protocol/host/index";
 import { appHostCredentialMintFlow } from "@/lib/auth/host-credential-provisioning";
 import { useHostClient } from "@/lib/host/runtime";
-import { createStreamRebuildBackoff } from "@/lib/host/stream-rebuild-backoff";
+import { processReconnectEngine } from "@traycer-clients/shared/host-client/host-connection-reconnect-engine";
 import { transportEvidenceRelay } from "@/lib/host/transport-evidence";
 import { appLogger } from "@/lib/logger";
 import { useRunnerHost } from "@/providers/use-runner-host";
@@ -331,7 +331,13 @@ export function useHostStreamClientBindingFor(
   // an incompatible protocol or a plan restriction closes every fresh dial the
   // same way, and without backoff that is a mint/dial/handshake loop running
   // for as long as the selection stands, with nothing on screen to explain it.
-  const [rebuildBackoff] = useState(createStreamRebuildBackoff);
+  // Same engine, same reason as the app-wide provider: the policy is the
+  // registry's, the pacer is this hook instance's (its client retargets
+  // whenever its caller names another host, and `markBuilt` clears the streak
+  // on that identity change).
+  const [rebuildBackoff] = useState(() =>
+    processReconnectEngine().createRebuildPacer(),
+  );
 
   // Builds AND owns the client's lifecycle inside this ONE effect, rather
   // than a `useMemo` (as this hook did before S1's session cache) - see

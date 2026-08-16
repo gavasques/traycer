@@ -23,7 +23,7 @@ import type { StreamRuntimeBinding } from "@/lib/host/stream-runtime-context";
 import { useReactiveHostReadiness } from "@/hooks/host/use-reactive-host-readiness";
 import { useReactiveOwnerIdentityKey } from "@/hooks/host/use-reactive-owner-identity-key";
 import { useStreamWakeReconnect } from "@/lib/host/stream-wake-reconnect";
-import { createStreamRebuildBackoff } from "@/lib/host/stream-rebuild-backoff";
+import { processReconnectEngine } from "@traycer-clients/shared/host-client/host-connection-reconnect-engine";
 import { useRunnerHost } from "@/providers/use-runner-host";
 import {
   AVAILABILITY_RECOVERY_COOLDOWN_MS,
@@ -99,12 +99,20 @@ export function HostStreamProvider(props: HostStreamProviderProps): ReactNode {
   // teardown-close apart from a genuine underneath-close and skip a redundant
   // (and otherwise infinitely-looping) rebuild.
   const teardownInProgressRef = useRef(false);
-  // Backoff for the liveness guard's rebuilds - the shared policy, because the
-  // transient per-host binding hook runs the identical guard against a host a
-  // person picked (`lib/host/stream-rebuild-backoff`). Held via `useState`'s
-  // one-shot initializer rather than `useRef(create())`, which would rebuild
-  // and discard the closure on every render.
-  const [rebuildBackoff] = useState(createStreamRebuildBackoff);
+  // Backoff for the liveness guard's rebuilds. Held via `useState`'s one-shot
+  // initializer rather than `useRef(create())`, which would rebuild and
+  // discard the closure on every render.
+  //
+  // The rebuild policy now lives in the connection registry's reconnect engine
+  // (redesign P4.1 / connection-registry §6) instead of a module this provider
+  // owned. The PACER is still per-owner - the streak measures "rebuilding THIS
+  // client keeps failing", and this provider keeps ONE client that retargets
+  // across hosts rather than one client per host, so a per-host pacer would
+  // split a single client's streak in half. Cross-endpoint carry-over is
+  // handled where it always was, by `markBuilt`'s identity comparison.
+  const [rebuildBackoff] = useState(() =>
+    processReconnectEngine().createRebuildPacer(),
+  );
 
   // Builds AND owns the client's lifecycle inside this ONE effect, rather
   // than a `useMemo` (as this provider did before S1's session cache) - see

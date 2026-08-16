@@ -65,6 +65,7 @@ import type {
   HostRestartRequestResult,
   IDeviceFlowHost,
   IHostPicker,
+  IDeviceDescriber,
   ILinkCodeScanner,
   INotificationHost,
   IRunnerHost,
@@ -112,6 +113,12 @@ export interface MobileRunnerHostOptions {
    * ML Kit plugin import stays out of this module's web-safe dependency set.
    */
   readonly linkCodeScanner: ILinkCodeScanner | null;
+  /**
+   * Native device self-description for the approver's prompt, or `null` on
+   * the web entry. Constructed by the entry point for the same web-safety
+   * reason as the scanner.
+   */
+  readonly deviceDescriber: IDeviceDescriber | null;
 }
 
 const STEP_UP_EXPIRY_SKEW_MS = 5_000;
@@ -165,6 +172,7 @@ export class MobileRunnerHost implements IRunnerHost {
   readonly hostManagement = null;
   readonly hostTray = null;
   readonly linkCodeScanner: ILinkCodeScanner | null;
+  readonly deviceDescriber: IDeviceDescriber | null;
   readonly deviceFlow: IDeviceFlowHost;
   private retainedStepUpCredential: RetainedStepUpCredential | null = null;
   private readonly systemResume = new MobileSystemResume();
@@ -174,6 +182,7 @@ export class MobileRunnerHost implements IRunnerHost {
     this.authnBaseUrl = options.authnBaseUrl;
     this.relayBaseUrl = options.relayBaseUrl;
     this.linkCodeScanner = options.linkCodeScanner;
+    this.deviceDescriber = options.deviceDescriber;
     this.notifications = buildNotifications(options.pushRegistration);
     this.tokenStore = new MobileTokenStore(
       this.secureStorage,

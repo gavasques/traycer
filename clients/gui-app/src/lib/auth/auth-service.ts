@@ -2757,7 +2757,18 @@ export class AuthService {
     useAuthStore.getState().setSigningIn();
 
     const authnBaseUrl = this.runnerHost.authnBaseUrl;
-    const claimed = await claimLinkLoginCodeViaHttp(authnBaseUrl, code);
+    // Device identity for the approver's prompt, best first: the shell's
+    // native self-description ("iPhone 16 Pro") where one exists, else the
+    // WebView UA. Carried in the claim BODY because the phone's native HTTP
+    // layer rewrites the transport User-Agent to a generic one that names
+    // nothing.
+    const describer = this.runnerHost.deviceDescriber;
+    const described = describer === null ? null : await describer.describe();
+    const claimed = await claimLinkLoginCodeViaHttp(
+      authnBaseUrl,
+      code,
+      described ?? navigator.userAgent,
+    );
     if (this.isDisposed() || this.activeAttempt !== attempt) {
       return { kind: "failed" };
     }
@@ -2825,11 +2836,17 @@ export class AuthService {
         }
         case "authorization-pending":
           transportFailures = 0;
+          // Snap back to the server-directed floor: a transient slow-down
+          // must not leave the cadence ratcheted up for the rest of the
+          // wait — approval is imminent in this state by definition.
+          intervalMs = Math.max(1_000, pollIntervalSeconds * 1_000);
           continue;
         case "slow-down":
           transportFailures = 0;
+          // Follow the directive in both directions rather than ratcheting
+          // monotonically upward.
           intervalMs = Math.max(
-            intervalMs,
+            1_000,
             (polled.retryAfterSeconds ?? pollIntervalSeconds) * 1_000,
           );
           continue;

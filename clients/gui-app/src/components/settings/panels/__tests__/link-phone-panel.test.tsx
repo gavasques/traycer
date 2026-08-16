@@ -66,15 +66,17 @@ function respondIdle() {
   return { isPending: false, mutate: vi.fn() };
 }
 
-const CLAIMED_STATUS = {
-  status: "claimed",
-  claimant: {
-    address: "192.168.29.87",
-    userAgent: "TraycerMobile/1.0 (iPhone)",
-    location: "Bengaluru, IN",
-    claimedAt: 100,
-  },
-};
+function claimedStatus(claimedAtMs: number, userAgent: string) {
+  return {
+    status: "claimed",
+    claimant: {
+      address: "192.168.29.87",
+      userAgent,
+      location: "Bengaluru, IN",
+      claimedAt: claimedAtMs,
+    },
+  };
+}
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -120,7 +122,9 @@ describe("LinkPhonePanel", () => {
       .filter((code): code is string => typeof code === "string");
     expect(new Set(watched)).toEqual(new Set(["ABCDE-FGHJK"]));
 
-    mocks.useAuthLinkLoginStatus.mockReturnValue(statusResult(CLAIMED_STATUS));
+    mocks.useAuthLinkLoginStatus.mockReturnValue(
+      statusResult(claimedStatus(Date.now(), "TraycerMobile/1.0 (iPhone)")),
+    );
     const respond = respondIdle();
     mocks.useRespondLinkLoginMutation.mockReturnValue(respond);
     view.rerender(<LinkPhonePanel />);
@@ -141,7 +145,9 @@ describe("LinkPhonePanel", () => {
   it("a rejection resumes rotation with a fresh code", () => {
     const codeQuery = queryResultWithCode(Date.now());
     mocks.useAuthLinkLoginCode.mockReturnValue(codeQuery);
-    mocks.useAuthLinkLoginStatus.mockReturnValue(statusResult(CLAIMED_STATUS));
+    mocks.useAuthLinkLoginStatus.mockReturnValue(
+      statusResult(claimedStatus(Date.now(), "TraycerMobile/1.0 (iPhone)")),
+    );
     const respond = {
       isPending: false,
       mutate: vi.fn(
@@ -266,6 +272,110 @@ describe("LinkPhonePanel", () => {
     expect(screen.queryByTestId("link-phone-superseded")).toBeNull();
     expect(screen.queryByTestId("link-phone-countdown")).toBeNull();
     expect(screen.queryByTestId("link-phone-confirm")).toBeNull();
+  });
+
+  it("the pressed decision button owns the spinner; the other only disables", () => {
+    mocks.useAuthLinkLoginCode.mockReturnValue(queryResultWithCode(Date.now()));
+    mocks.useAuthLinkLoginStatus.mockReturnValue(
+      statusResult(claimedStatus(Date.now(), "TraycerMobile/1.0 (iPhone)")),
+    );
+    mocks.useRespondLinkLoginMutation.mockReturnValue({
+      isPending: true,
+      variables: { code: "ABCDE-FGHJK", approve: false },
+      mutate: vi.fn(),
+    });
+    render(<LinkPhonePanel />);
+    // The REJECT round-trip is in flight: its button spins, Approve does
+    // not — it only disables.
+    expect(screen.getByTestId("link-phone-reject-spinner")).toBeTruthy();
+    expect(screen.queryByTestId("link-phone-approve-spinner")).toBeNull();
+    expect(
+      screen.getByTestId("link-phone-approve").hasAttribute("disabled"),
+    ).toBe(true);
+    expect(
+      screen.getByTestId("link-phone-reject").hasAttribute("disabled"),
+    ).toBe(true);
+  });
+
+  it("unknown claimant metadata is omitted, never admitted", () => {
+    mocks.useAuthLinkLoginCode.mockReturnValue(queryResultWithCode(Date.now()));
+    mocks.useAuthLinkLoginStatus.mockReturnValue(
+      statusResult({
+        status: "claimed",
+        claimant: {
+          address: "192.168.29.246",
+          userAgent: null,
+          location: null,
+          claimedAt: Date.now(),
+        },
+      }),
+    );
+    render(<LinkPhonePanel />);
+    const line = screen.getByTestId("link-phone-claimant").textContent;
+    expect(line).toBe("192.168.29.246 · just now");
+    expect(line).not.toContain("unknown");
+  });
+
+  it("a claimed record expiring under an open confirm card swaps it for the expired state", () => {
+    mocks.useAuthLinkLoginCode.mockReturnValue(queryResultWithCode(Date.now()));
+    mocks.useAuthLinkLoginStatus.mockReturnValue(
+      statusResult(claimedStatus(Date.now(), "TraycerMobile/1.0 (iPhone)")),
+    );
+    render(<LinkPhonePanel />);
+    expect(screen.getByTestId("link-phone-confirm")).toBeTruthy();
+    // The status poll is FROZEN (the mock never changes): the local claim
+    // deadline alone must retire the card once the window + grace elapse —
+    // never a card whose buttons act on a record the server deleted.
+    act(() => {
+      vi.advanceTimersByTime(140_000);
+    });
+    expect(screen.queryByTestId("link-phone-confirm")).toBeNull();
+    expect(screen.getByTestId("link-phone-expired")).toBeTruthy();
+    // No unprompted mint; only the explicit action restarts.
+    expect(mocks.evictLinkLoginCode).not.toHaveBeenCalled();
+    act(() => {
+      screen.getByTestId("link-phone-show-new").click();
+    });
+    expect(mocks.evictLinkLoginCode).toHaveBeenCalledTimes(1);
+  });
+
+  it("responding on a dead code surfaces the restart, never silence", () => {
+    mocks.useAuthLinkLoginCode.mockReturnValue(queryResultWithCode(Date.now()));
+    mocks.useAuthLinkLoginStatus.mockReturnValue(
+      statusResult(claimedStatus(Date.now(), "TraycerMobile/1.0 (iPhone)")),
+    );
+    const respond = {
+      isPending: false,
+      mutate: vi.fn(
+        (
+          _variables: { code: string; approve: boolean },
+          options: { onSuccess: (outcome: string) => void },
+        ) => {
+          // The record died before the click landed: the server answers the
+          // uniform not-found, surfaced as `gone`.
+          options.onSuccess("gone");
+        },
+      ),
+    };
+    mocks.useRespondLinkLoginMutation.mockReturnValue(respond);
+    render(<LinkPhonePanel />);
+    act(() => {
+      screen.getByTestId("link-phone-approve").click();
+    });
+    // Not the approved state — the evicting restart runs instead.
+    expect(screen.queryByTestId("link-phone-approved")).toBeNull();
+    expect(mocks.evictLinkLoginCode).toHaveBeenCalled();
+  });
+
+  it("a self-reported device name renders verbatim on the card", () => {
+    mocks.useAuthLinkLoginCode.mockReturnValue(queryResultWithCode(Date.now()));
+    mocks.useAuthLinkLoginStatus.mockReturnValue(
+      statusResult(claimedStatus(Date.now(), "iPhone 16 Pro")),
+    );
+    render(<LinkPhonePanel />);
+    expect(screen.getByTestId("link-phone-confirm").textContent).toContain(
+      "Approve sign-in from iPhone 16 Pro?",
+    );
   });
 
   it("states that a code is single-use and short-lived", () => {

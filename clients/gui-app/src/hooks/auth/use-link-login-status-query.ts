@@ -45,6 +45,10 @@ function linkLoginStatusQueryOptions(
       throw new Error("Could not reach the sign-in service.");
     },
     refetchInterval: LINK_LOGIN_STATUS_POLL_MS,
+    // Keep polling while the window is unfocused: the claimed record can
+    // expire server-side while the user is busy on the phone, and a frozen
+    // watch would leave a confirm card whose buttons act on a dead code.
+    refetchIntervalInBackground: true,
     refetchOnWindowFocus: false,
     gcTime: 0,
     retry: false,

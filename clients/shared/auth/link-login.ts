@@ -220,12 +220,18 @@ export async function mintLinkLoginCodeViaHttp(
 export async function claimLinkLoginCodeViaHttp(
   authnBaseUrl: string,
   code: string,
+  // Self-reported device description for the approver's prompt (typically
+  // `navigator.userAgent`). Carried in the body because a native HTTP layer
+  // (CapacitorHttp) replaces the transport User-Agent with a generic
+  // CFNetwork one, stripping the device signal the prompt labels. `null`
+  // sends nothing and the server falls back to the transport header.
+  deviceHint: string | null,
 ): Promise<ClaimLinkLoginCodeFetchResult> {
   const response = await postJson(
     authnBaseUrl,
     "api/v3/auth/link/claim",
     null,
-    { code },
+    deviceHint === null ? { code } : { code, device: deviceHint },
     null,
   );
   if (response === null) {

@@ -59,6 +59,8 @@ function sessionClientLabel(session: UserSessionListItem): string {
       return "CLI";
     case "extension":
       return "Extension";
+    case "mobile":
+      return "Mobile app";
     case "host":
       return "Host";
     default:

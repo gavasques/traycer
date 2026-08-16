@@ -94,6 +94,7 @@ const fakeStore: CredentialsMutationStore = {
   signIn: vi.fn(),
   signOut: vi.fn(),
   signOutIfToken: vi.fn(),
+  drainQuarantine: vi.fn(),
   updateProfile: vi.fn(),
   guardedSignIn: vi.fn(),
   migrateFirstWrite: vi.fn(),

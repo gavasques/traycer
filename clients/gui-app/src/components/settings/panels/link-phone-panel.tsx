@@ -61,6 +61,17 @@ function useRotationCountdown(props: {
  */
 function claimantDeviceLabel(claim: LiveClaim): string {
   const ua = claim.userAgent ?? "";
+  // A self-reported marketing name ("iPhone 16 Pro") is not a UA string —
+  // use it verbatim; UA-shaped values fall back to family buckets.
+  if (
+    ua.length > 0 &&
+    ua.length <= 40 &&
+    !ua.includes("Mozilla/") &&
+    !ua.includes("CFNetwork") &&
+    !ua.includes("(")
+  ) {
+    return ua;
+  }
   if (ua.includes("iPhone")) {
     return "an iPhone";
   }
@@ -192,31 +203,43 @@ function AwaitingElsewhereCard() {
  * an automatic re-mint here would supersede the other surface's fresh code
  * and ping-pong mints between open surfaces until the rate limit.
  */
+const DEAD_CARD_COPY: Record<
+  LinkLoginDeadKind,
+  { readonly testId: string; readonly title: string; readonly detail: string }
+> = {
+  superseded: {
+    testId: "link-phone-superseded",
+    title: "This code is no longer active.",
+    detail: "It expired, or another device or browser replaced it.",
+  },
+  rejected: {
+    testId: "link-phone-rejected-elsewhere",
+    title: "This sign-in request was rejected.",
+    detail:
+      "The rejection came from another device or browser. No phone was signed in.",
+  },
+  expired: {
+    testId: "link-phone-expired",
+    title: "This sign-in request expired.",
+    detail:
+      "No approval was given in time — the phone will need to scan a new code.",
+  },
+};
+
 function SupersededCard(props: {
   readonly kind: LinkLoginDeadKind;
   readonly retrying: boolean;
   readonly onShowNew: () => void;
 }) {
+  const copy = DEAD_CARD_COPY[props.kind];
   return (
     <div
       className="flex flex-col items-center gap-3 text-center"
-      data-testid={
-        props.kind === "rejected"
-          ? "link-phone-rejected-elsewhere"
-          : "link-phone-superseded"
-      }
+      data-testid={copy.testId}
     >
       <QrCode aria-hidden="true" className="text-muted-foreground" />
-      <p className="text-ui-sm text-foreground">
-        {props.kind === "rejected"
-          ? "This sign-in request was rejected."
-          : "This code is no longer active."}
-      </p>
-      <p className="text-ui-xs text-muted-foreground">
-        {props.kind === "rejected"
-          ? "The rejection came from another device or browser. No phone was signed in."
-          : "It expired, or another device or browser replaced it."}
-      </p>
+      <p className="text-ui-sm text-foreground">{copy.title}</p>
+      <p className="text-ui-xs text-muted-foreground">{copy.detail}</p>
       <Button
         variant="outline"
         disabled={props.retrying}

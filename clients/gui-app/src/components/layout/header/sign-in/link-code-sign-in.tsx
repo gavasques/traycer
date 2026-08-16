@@ -208,15 +208,18 @@ export function LinkCodeSignIn(props: {
         ) : (
           <>
             {noticeLine}
+            {/* A real button in the hero's stack, not a bare text line
+                wedged between two buttons — outline keeps it clearly
+                subordinate to the Scan primary. */}
             <Button
               type="button"
-              size="default"
-              variant="link"
+              size="lg"
+              variant="outline"
               data-testid="link-code-signin-manual"
               onClick={() => {
                 setOpen(true);
               }}
-              className="h-auto justify-center px-0 py-0 text-ui-sm"
+              className="w-full cursor-pointer"
             >
               Enter code manually
             </Button>

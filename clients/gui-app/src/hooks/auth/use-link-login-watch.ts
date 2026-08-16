@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { UseQueryResult } from "@tanstack/react-query";
 import type { MintLinkLoginCodeResponse } from "@traycer/protocol/auth/link-login";
 import {
@@ -30,7 +30,16 @@ export interface LiveClaim {
  * states because they read differently to the user; the portal renders the
  * same pair.
  */
-export type LinkLoginDeadKind = "superseded" | "rejected";
+export type LinkLoginDeadKind = "superseded" | "rejected" | "expired";
+
+// Client-side mirror of the server's claim window (authn's
+// LINK_LOGIN_CLAIM_WINDOW_SECONDS): from the claim, the human has this long
+// to decide before the record evaporates. The generous grace absorbs clock
+// skew and poll latency — the local deadline exists so a frozen status poll
+// (throttled timers, a dropped network) can never leave a confirm card whose
+// buttons act on a record the server already deleted.
+const LINK_LOGIN_CLAIM_WINDOW_MS = 120_000;
+const CLAIM_EXPIRY_GRACE_MS = 15_000;
 
 export interface LinkLoginWatch {
   /** The live claim on the displayed code, if any. */
@@ -78,6 +87,52 @@ function claimFromStatus(
   };
 }
 
+function claimedAtMsFromStatus(
+  datum: LinkLoginStatusDatum | null | undefined,
+): number | null {
+  if (
+    datum === null ||
+    datum === undefined ||
+    datum === "gone" ||
+    datum.status !== "claimed" ||
+    datum.claimant === null
+  ) {
+    return null;
+  }
+  return datum.claimant.claimedAt;
+}
+
+interface WatchSnapshot {
+  readonly claim: LiveClaim | null;
+  readonly externallyDead: LinkLoginDeadKind | null;
+}
+
+/**
+ * One synchronous read of the watch state: the live claim (unless its local
+ * deadline has passed), or how the displayed code died. Pure, so the hook
+ * body stays a straight line.
+ */
+function resolveWatchSnapshot(
+  watchedCode: string | null,
+  datum: LinkLoginStatusDatum | null | undefined,
+  nowMs: number,
+): WatchSnapshot {
+  const rawClaim = claimFromStatus(watchedCode, datum);
+  const claimedAtMs = claimedAtMsFromStatus(datum);
+  const expiredLocally =
+    rawClaim !== null &&
+    claimedAtMs !== null &&
+    nowMs > claimedAtMs + LINK_LOGIN_CLAIM_WINDOW_MS + CLAIM_EXPIRY_GRACE_MS;
+  if (expiredLocally) {
+    return { claim: null, externallyDead: "expired" };
+  }
+  const externallyDead =
+    rawClaim === null && watchedCode !== null
+      ? deadKindFromStatus(datum)
+      : null;
+  return { claim: rawClaim, externallyDead };
+}
+
 function deadKindFromStatus(
   datum: LinkLoginStatusDatum | null | undefined,
 ): LinkLoginDeadKind | null {
@@ -107,11 +162,28 @@ export function useLinkLoginWatch(enabled: boolean): LinkLoginWatch {
   const [restartedFrom, setRestartedFrom] = useState<string | null>(null);
 
   const status = useAuthLinkLoginStatus(enabled ? watchedCode : null);
-  const claim = claimFromStatus(watchedCode, status.data);
-  const externallyDead =
-    claim === null && watchedCode !== null
-      ? deadKindFromStatus(status.data)
-      : null;
+
+  // Local claim deadline, ticking only while a claim is on screen: belt to
+  // the status poll's braces — even if every poll freezes, the confirm card
+  // cannot outlive the record it fronts.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const { claim, externallyDead } = resolveWatchSnapshot(
+    watchedCode,
+    status.data,
+    nowMs,
+  );
+  const claimOnScreen = claim !== null;
+  useEffect(() => {
+    if (!claimOnScreen) {
+      return;
+    }
+    const timer = setInterval(() => {
+      setNowMs(Date.now());
+    }, 1_000);
+    return () => {
+      clearInterval(timer);
+    };
+  }, [claimOnScreen]);
   const restartPending =
     restartedFrom !== null && restartedFrom === watchedCode;
 

@@ -37,6 +37,7 @@ function runner(returnScheme: string | null): MobileRunnerHost {
     pushRegistration: null,
     returnScheme,
     linkCodeScanner: null,
+    deviceDescriber: null,
   });
 }
 

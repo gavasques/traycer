@@ -233,6 +233,7 @@ function mockLogoutStore(args: {
         : null,
     signOut: vi.fn(async () => args.signOut),
     signOutIfToken: vi.fn(),
+    drainQuarantine: vi.fn(),
     rotate: vi.fn(),
     signIn: vi.fn(),
     updateProfile: vi.fn(),

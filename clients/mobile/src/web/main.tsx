@@ -17,6 +17,7 @@ import {
 } from "@traycer-clients/shared/auth/push-token-fetcher";
 import "./index.css";
 import { MobileRunnerHost } from "../mobile-runner-host";
+import { MobileDeviceDescriber } from "../device-describer";
 import { MobileLinkCodeScanner } from "../link-code-scanner";
 import {
   MobilePushRegistration,
@@ -143,6 +144,11 @@ function bootstrap(): void {
     // code-entry path alone.
     linkCodeScanner: Capacitor.isNativePlatform()
       ? new MobileLinkCodeScanner()
+      : null,
+    // Same native-only gate: the Device plugin has web fallbacks, but the
+    // browser entry has nothing better than its own UA to report.
+    deviceDescriber: Capacitor.isNativePlatform()
+      ? new MobileDeviceDescriber()
       : null,
   });
   // After the host exists: registration follows the token store (sign-in,

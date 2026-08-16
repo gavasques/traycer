@@ -212,6 +212,15 @@ export interface IRunnerHost {
   readonly linkCodeScanner: ILinkCodeScanner | null;
 
   /**
+   * Self-description of the DEVICE for human-facing prompts — the link-login
+   * approver card and the session row. Present only where the shell knows
+   * something better than the browser UA (the mobile app reads the hardware
+   * model natively); `null` elsewhere, and consumers fall back to
+   * `navigator.userAgent`. Descriptive, never identity.
+   */
+  readonly deviceDescriber: IDeviceDescriber | null;
+
+  /**
    * Verifies a step-up OTP and retains the short-TTL bearer credential inside
    * the runner-host boundary. Returns only expiry metadata for renderer batch
    * window logic.
@@ -720,6 +729,15 @@ export type LinkCodeScanResult =
   | { readonly kind: "permission-denied" }
   | { readonly kind: "canceled" }
   | { readonly kind: "error" };
+
+/**
+ * Marketing-grade device self-description ("iPhone 16 Pro", "Pixel 9").
+ * Best-effort: resolves `null` when nothing better than the browser UA is
+ * known, and must never throw.
+ */
+export interface IDeviceDescriber {
+  describe(): Promise<string | null>;
+}
 
 /**
  * A native camera QR scanner. Present only on shells that physically have one

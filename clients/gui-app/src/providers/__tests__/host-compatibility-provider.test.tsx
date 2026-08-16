@@ -851,6 +851,215 @@ describe("HostCompatibilityProvider startup consumers", () => {
     queryClient.clear();
   });
 
+  /**
+   * D2 pin: `useHostStatusReprobeOnRepoint` invalidates EXACTLY the incoming
+   * host's `host.status` probe entry on a re-point, and the held verdict
+   * keeps rendering while that refetch is in flight.
+   *
+   * WHY THE EXISTING `verdict for A survives bind A→B→A` CASE ABOVE CANNOT BE
+   * REUSED FOR THIS - measured, not assumed. Mutating the production hook's
+   * `invalidateQueries` call to `resetQueries` left that case green, twice
+   * (once immediately, once re-run after a 2s gap to rule out a same-second
+   * transform-cache staleness false survival). The reason: its mock
+   * `host.status` handler resolves inside the same `act()` flush the pointer
+   * move runs in, so any refetch it triggers completes before a post-`act`
+   * assertion can ever observe an intermediate state - `reset` and
+   * `invalidate` are indistinguishable once the settle already happened. This
+   * case makes the incoming host's SECOND refetch (the B→A leg, where A
+   * already holds a verdict from its opening probe) resolve on a promise the
+   * test controls, so "compatible, no checking, while pending" is asserted
+   * against a genuinely in-flight request.
+   *
+   * INSTRUMENT CAUTION, stated here because it governs how the absence
+   * assertions below must be read: the `queryClient.invalidateQueries` spy is
+   * self-controlling for its two ABSENCE halves (no invalidation at the
+   * opening derivation; no invalidation for the OUTGOING host on either leg)
+   * only because the PRESENCE assertions - one invalidation for B on the
+   * A→B leg, one for A on the B→A leg, both riding the SAME spy - prove the
+   * instrument actually observes a call when one happens. An absence proven
+   * by a spy that might just not be wired up is not proven at all; that is
+   * why this case checks presence and absence together rather than trusting
+   * "the spy saw nothing" on its own.
+   */
+  it("D2: a re-point invalidates exactly the incoming host's probe entry and holds the verdict while it refetches", async () => {
+    const hostA: HostDirectoryEntry = {
+      hostId: localSnapshot.hostId,
+      label: localSnapshot.displayName,
+      kind: "local",
+      websocketUrl: localSnapshot.websocketUrl,
+      version: localSnapshot.version,
+      transportDialability: "dialable",
+    };
+    const hostB: HostDirectoryEntry = {
+      hostId: "desktop-host-b-d2",
+      label: "Host B",
+      kind: "local",
+      websocketUrl: "ws://127.0.0.1:4918/rpc",
+      version: "1.2.3",
+      transportDialability: "dialable",
+    };
+    recordNegotiatedHostMethods(hostB.hostId, [
+      "host.status",
+      "epic.getTaskContexts",
+      "agent.gui.listHarnesses",
+    ]);
+
+    // Call-indexed: A's opening probe (1) and B's opening probe (2) settle
+    // immediately: this case is not about either FIRST fetch, and holding
+    // them pending would make the intermediate assertions below ambiguous
+    // about which fetch they are watching. A's REPROBE (3, the B→A leg,
+    // where A already holds a verdict) is the one the test controls by hand.
+    const aReprobe = createDeferred<HostStatusResponse>();
+    let hostStatusCalls = 0;
+    const hostStatus = (): Promise<HostStatusResponse> | HostStatusResponse => {
+      hostStatusCalls += 1;
+      return hostStatusCalls <= 2 ? compatibleHostStatus : aReprobe.promise;
+    };
+
+    const host = new MockRunnerHost({
+      signInUrl: "https://auth.traycer.invalid/sign-in",
+      authnBaseUrl: "http://localhost:5005",
+      localHost: localSnapshot,
+      hosts: [],
+      workspaceFolderPickerPaths: undefined,
+      hasLocalHost: undefined,
+      traycerCli: undefined,
+    });
+    void host.tokenStore.signIn(
+      { token: "test-token", refreshToken: "test-refresh-token" },
+      { id: "user-1", email: "test@example.com", name: "Test User" },
+    );
+    useAuthStore.getState().setSignedIn(
+      {
+        userId: "test-user",
+        userName: "Test User",
+        email: "test@example.com",
+      },
+      { userId: "test-user", username: "Test User" },
+      [],
+    );
+    useEpicCanvasStore
+      .getState()
+      .openEpicTab(STARTUP_EPIC_ID, "Startup Compat");
+
+    const queryClient = buildQueryClient();
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    render(
+      <RunnerHostProvider runnerHost={host}>
+        <QueryClientProvider client={queryClient}>
+          <HostRuntimeProvider
+            registry={hostRpcRegistry}
+            messengerFactory={buildMessengerFactory({
+              hostStatus,
+              getTaskContexts: vi.fn(taskContextsFor([STARTUP_EPIC_ID])),
+              listHarnesses: vi.fn((): ListHarnessesResponse => ({
+                harnesses: [],
+              })),
+              onMethod: () => undefined,
+            })}
+            invalidator={null}
+            requestId={null}
+            remoteFetcher={() =>
+              Promise.resolve({ kind: "hosts", entries: [hostB] })
+            }
+            fallback={<div data-testid="runtime-fallback">runtime loading</div>}
+          >
+            <HostCompatibilityProvider>
+              <CompatibilityStatusProbe />
+            </HostCompatibilityProvider>
+          </HostRuntimeProvider>
+        </QueryClientProvider>
+      </RunnerHostProvider>,
+    );
+
+    await waitFor(() => {
+      expect(getCompatibilityStatusText()).toBe("compatible");
+    });
+
+    // 3. THE ABSTENTION: the OPENING derivation (`null` -> A, i.e. startup)
+    // drove ZERO probe invalidations.
+    const hostStatusInvalidations = (): unknown[][] =>
+      invalidateSpy.mock.calls.filter(([filters]) => {
+        const key = filters === undefined ? null : filters.queryKey;
+        return Array.isArray(key) && key[2] === "host.status";
+      });
+    expect(hostStatusInvalidations()).toEqual([]);
+    invalidateSpy.mockClear();
+
+    // A -> B.
+    act(() => {
+      useSelectionAuthorityStore.getState().applyKernelSnapshot({
+        attached: true,
+        preferredHostId: hostB.hostId,
+        targetHostId: hostB.hostId,
+        effectiveHostId: hostB.hostId,
+        leases: [],
+        selectionRevision: 1,
+      });
+    });
+    await waitFor(() => {
+      expect(useSelectionAuthorityStore.getState().effectiveHostId).toBe(
+        hostB.hostId,
+      );
+    });
+    await waitFor(() => {
+      expect(getCompatibilityStatusText()).toBe("compatible");
+    });
+
+    // 2 (A->B leg). B is the INCOMING host: exactly one invalidation, scoped
+    // to its exact probe key. Nothing for A (the OUTGOING host), and no
+    // broader ["host"]-scope sweep - `exact: true` on the call the hook makes
+    // is what a wider filter shape would violate.
+    expect(hostStatusInvalidations()).toEqual([
+      [{ queryKey: hostStatusProbeQueryKey(hostB.hostId), exact: true }],
+    ]);
+    invalidateSpy.mockClear();
+
+    // B -> A. A already holds a verdict from its opening probe, so THIS leg
+    // is the one that can genuinely distinguish invalidate from reset.
+    act(() => {
+      useSelectionAuthorityStore.getState().applyKernelSnapshot({
+        attached: true,
+        preferredHostId: hostA.hostId,
+        targetHostId: hostA.hostId,
+        effectiveHostId: hostA.hostId,
+        leases: [],
+        selectionRevision: 2,
+      });
+    });
+
+    // 2 (B->A leg). Same shape as above, scoped to A this time.
+    await waitFor(() => {
+      expect(hostStatusInvalidations()).toEqual([
+        [{ queryKey: hostStatusProbeQueryKey(hostA.hostId), exact: true }],
+      ]);
+    });
+
+    // The reprobe this invalidation triggered is genuinely in flight now.
+    await waitFor(() => {
+      expect(hostStatusCalls).toBe(3);
+    });
+
+    // 1. WHILE the reprobe is pending, the rendered verdict is still the HELD
+    // one - "compatible", never "checking". A `reset` would have dropped
+    // `data` here and reproduced the traycer#860 regression this hook exists
+    // to prevent.
+    expect(useSelectionAuthorityStore.getState().effectiveHostId).toBe(
+      hostA.hostId,
+    );
+    expect(getCompatibilityStatusText()).toBe("compatible");
+    expect(getCompatibilityDetailText()).toBe("live");
+
+    act(() => {
+      aReprobe.resolve(compatibleHostStatus);
+    });
+    await waitFor(() => {
+      expect(getCompatibilityDetailText()).toBe("live");
+    });
+    queryClient.clear();
+  });
+
   // traycer#860: the host was alive and completing agent turns for the whole
   // session. A stream availability recovery invalidated the host-scoped
   // queries, the compat refetch failed under machine load, and the gate tore

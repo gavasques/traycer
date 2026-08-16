@@ -91,10 +91,10 @@ function makeContext(userId: string, bearer: string): RequestContext {
 }
 
 /**
- * Availability reports are coalesced per host per microtask tick (see
- * `HostClient.deliverAvailabilityRecovered`), so their invalidation/change
- * event lands one microtask after the notify call. One awaited resolved
- * promise is exactly that boundary.
+ * Host-scope sweeps are coalesced per host per microtask tick (see
+ * `HostClient.deliverHostScopeSweep`), so their invalidation/change event
+ * lands one microtask after the reporting call. One awaited resolved promise
+ * is exactly that boundary.
  */
 async function flushAvailabilityCoalescing(): Promise<void> {
   await Promise.resolve();
@@ -315,14 +315,16 @@ describe("HostClient", () => {
   it("un-strands a host's scope without announcing a change", async () => {
     const { client, invalidator, events } = buildHostClientWithMock();
 
-    // The caller is a remote binding that owes a ready boundary for a host
-    // whose first dial was still in flight. It must still deliver - the stream
-    // runtime replays nothing to a session that is already ready, so a dropped
-    // boundary strands those queries for good - but it must NOT announce, or
-    // the runtime answers the change by resetting the very binding reporting
-    // the recovery. This is the ONLY remaining silent entry point, and the
-    // reason the announcing one could be collapsed to a single method.
-    client.invalidateHostScopeForAvailability("mock-local");
+    // Two callers reach this, and neither is reporting an availability
+    // recovery - which is why the method is named for what it does rather
+    // than for either of their reasons. One is a remote binding that owes a
+    // ready boundary for a host whose first dial was still in flight: it must
+    // still deliver (the stream runtime replays nothing to a session that is
+    // already ready, so a dropped boundary strands those queries for good) but
+    // it must NOT announce, or the runtime answers the change by resetting the
+    // very binding reporting the recovery. The other is the R-1 key-rotation
+    // sweep in gui-app, where announcing would be a plainly false reason.
+    client.invalidateHostScopeUnannounced("mock-local");
     await flushAvailabilityCoalescing();
 
     expect(invalidator.calls).toEqual(["mock-local"]);
@@ -340,7 +342,7 @@ describe("HostClient", () => {
     // change event survives because at least one caller asked for it.
     client.notifyHostAvailabilityRecovered("mock-local");
     client.notifyHostAvailabilityRecovered("mock-local");
-    client.invalidateHostScopeForAvailability("mock-local");
+    client.invalidateHostScopeUnannounced("mock-local");
     client.notifyHostAvailabilityRecovered("other-host");
     await flushAvailabilityCoalescing();
 
@@ -358,11 +360,14 @@ describe("HostClient", () => {
       true,
     );
 
-    // The messenger-only variant alone must NOT gain a change event from the
-    // merge machinery when nothing in its tick asked for one.
+    // The unannounced sweep ALONE must NOT gain a change event from the merge
+    // machinery when nothing in its tick asked for one. (The converse - a
+    // rotation sweep merging with a genuine availability report and therefore
+    // announcing - is the case above, and is correct: the availability caller
+    // asked, and its announcement is true.)
     invalidator.calls.length = 0;
     events.length = 0;
-    client.invalidateHostScopeForAvailability("mock-local");
+    client.invalidateHostScopeUnannounced("mock-local");
     await flushAvailabilityCoalescing();
     expect(invalidator.calls).toEqual(["mock-local"]);
     expect(events).toEqual([]);

@@ -666,6 +666,88 @@ describe("HostDirectoryService", () => {
     expect(observed[1]).toHaveLength(2);
   });
 
+  // R-1's key-rotation sweep (`host-key-rotation-sweep.ts`) can only ever see
+  // a rotation if THIS emit happens at all: `hostDirectoryEntriesEqual`'s
+  // `remotePublicKeyOf(a) === remotePublicKeyOf(b)` comparison is the single
+  // line that makes a key-only change observable rather than swallowed as a
+  // field-identical poll tick. Nothing states that outside the source
+  // comment, and every suite pinning the sweep itself supplies its own
+  // directory double - none of them would notice this comparison deleted.
+  // The REAL projection (`hostListItemToDirectoryEntry`), not a hand-built
+  // `RemoteHostDirectoryEntry`, so a change to what the projector reads as
+  // "the key" is caught here too.
+  it("fans out onChange when a poll's ONLY change is a remote entry's public key", async () => {
+    const item = {
+      hostId: "rotating-registry-host",
+      displayName: "Rotating Registry Host",
+      platform: "Ubuntu",
+      kind: "personal",
+      publicKey: "pk-generation-1",
+      createdAt: "2026-07-01T12:00:00.000Z",
+      status: {
+        connectivity: "connectable",
+        viewerReachability: "ok",
+        clientCloud: "ok",
+        updateState: "current",
+        appVersion: "1.4.2",
+        lastSeenAt: "2026-07-03T12:00:00.000Z",
+      },
+      updatePolicy: "manual",
+    } as const;
+    const relayUrl = "wss://relay.example.test/attach";
+    const beforeRotation = hostListItemToDirectoryEntry(item, relayUrl);
+    // Same row in every other respect - `connectable`, so the derived
+    // unavailability verdict and the relay-fuse-grace flag (always `false`
+    // off `offline`) cannot be what moves the comparison. Only `publicKey`
+    // differs between the two projections below.
+    const afterRotation = hostListItemToDirectoryEntry(
+      { ...item, publicKey: "pk-generation-2" },
+      relayUrl,
+    );
+    expect(
+      isRemoteHostDirectoryEntry(beforeRotation) &&
+        isRemoteHostDirectoryEntry(afterRotation) &&
+        beforeRotation.label === afterRotation.label &&
+        beforeRotation.kind === afterRotation.kind &&
+        beforeRotation.websocketUrl === afterRotation.websocketUrl &&
+        beforeRotation.version === afterRotation.version &&
+        beforeRotation.transportDialability ===
+          afterRotation.transportDialability &&
+        beforeRotation.relayFuseGrace === afterRotation.relayFuseGrace,
+    ).toBe(true);
+
+    const host = makeHost(null);
+    const { fetcher } = queuedFetcher([
+      { kind: "hosts", entries: [beforeRotation] },
+      { kind: "hosts", entries: [afterRotation] },
+    ]);
+    const directory = makeDirectory({
+      authContextId: null,
+      credentialGeneration: null,
+      runnerHost: host,
+      localHostIdSeeder: null,
+      remoteFetcher: fetcher,
+    });
+    await directory.start();
+
+    const observed: Array<readonly HostDirectoryEntry[]> = [];
+    directory.onChange((entries) => {
+      observed.push(entries);
+    });
+
+    await directory.refresh();
+
+    expect(observed).toHaveLength(1);
+    const emitted = observed[0]?.find(
+      (entry) => entry.hostId === "rotating-registry-host",
+    );
+    expect(
+      emitted !== undefined && isRemoteHostDirectoryEntry(emitted)
+        ? emitted.publicKey
+        : null,
+    ).toBe("pk-generation-2");
+  });
+
   it("notifies onChange when a poll adds a host even though the previously emitted entries are unchanged", async () => {
     const host = makeHost(null);
     const { fetcher } = queuedFetcher([

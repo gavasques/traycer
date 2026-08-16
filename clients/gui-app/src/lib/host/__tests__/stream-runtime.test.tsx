@@ -893,7 +893,7 @@ describe("HostStreamProvider", () => {
   });
 
   it("builds the stream client from the resolved host identity even while default-host readiness is non-ready", () => {
-    // D5.3: availability recovery (notifyAvailabilityRecovered) is the only
+    // D5.3: availability recovery (notifyRecoveredForNamedHost) is the only
     // designed un-strand signal for host-scoped queries. Gating the stream
     // client on default-host readiness inverted that dependency - the
     // mechanism that restores readiness was disabled for exactly as long as

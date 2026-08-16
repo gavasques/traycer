@@ -33,6 +33,7 @@ function storeReturning(
     rotate: vi.fn(rotate),
     signIn: vi.fn(),
     signOut: vi.fn(),
+    signOutIfToken: vi.fn(),
     updateProfile: vi.fn(),
     guardedSignIn: vi.fn(),
     migrateFirstWrite: vi.fn(),

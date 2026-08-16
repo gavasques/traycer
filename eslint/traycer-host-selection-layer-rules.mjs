@@ -184,6 +184,45 @@ export const hostSelectionReadAllowlist = [
   "**/*.{test,spec}.{ts,tsx}",
 ];
 
+/**
+ * The ONE file allowed to name {@link SelectionEvidenceKernel} at runtime
+ * (redesign P1.3, review finding F2 half B).
+ *
+ * A single file, never a directory. The owner lives under `src/lib/host/`, and
+ * exempting that directory would silently widen the ban's meaning from "only
+ * the owner may construct a kernel" to "only lib/host may" - with any file
+ * later dropped in there inheriting the exemption and nobody noticing.
+ */
+export const selectionKernelOwner = [
+  "src/lib/host/renderer-selection-kernel.ts",
+];
+
+const SELECTION_KERNEL_MESSAGE =
+  "The window's `SelectionEvidenceKernel` is owned by `@/lib/host/renderer-selection-kernel` and acquired through `acquireRendererSelectionKernel(client)`. Constructing another one attaches a second claim against a client that is attach-once per instance, which is terminal for that generation (F2). Transports report through `transportEvidenceRelay`, never through a kernel reference - that single funnel is what lets the relay hold the replay-at-bind inventory. See " +
+  HOST_SELECTION_REDESIGN_PLAN +
+  " (P1.3 f2-warm-pool-inventory).";
+
+/**
+ * Bans naming the kernel outside its owner. `allowTypeImports` is deliberate:
+ * the ban targets RUNTIME AUTHORITY, not type references. A consumer that
+ * accepts an already-constructed kernel (the selection-authority bridge does)
+ * refers to it as a type, which grants nothing and is exactly how a consumer
+ * should be written.
+ */
+export const selectionKernelImportRestrictions = {
+  patterns: [
+    {
+      group: [
+        "**/host-selection/selection-evidence-kernel",
+        "**/host-selection/selection-evidence-kernel.*",
+      ],
+      importNames: ["SelectionEvidenceKernel"],
+      allowTypeImports: true,
+      message: SELECTION_KERNEL_MESSAGE,
+    },
+  ],
+};
+
 export const hostSelectionReadImportRestrictions = {
   // Patterns (not `paths`) so both `@/` aliases and relative imports match
   // once. `importNames` keeps type-only / unrelated specifiers off the hook.

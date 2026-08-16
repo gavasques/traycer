@@ -24,7 +24,78 @@ import {
   selectByIdWriteAllowlist,
   selectionAuthorityRestrictions,
   selectionAuthorityWriteAllowlist,
+  selectionKernelImportRestrictions,
+  selectionKernelOwner,
 } from "../../eslint/traycer-host-selection-layer-rules.mjs";
+
+// ── IMPORT RESTRICTIONS ARE COMPOSED FROM DIMENSIONS. READ THIS BEFORE ADDING ONE. ──
+//
+// Flat config REPLACES a rule's options; it does not merge them. So the LAST
+// block matching a file supplies that file's ENTIRE
+// `no-restricted-imports` value, and a new block appended with a from-scratch
+// value silently switches OFF every restriction the earlier blocks set for the
+// files it matches. Lint stays green. That failure is invisible in both
+// directions and this config has already produced it twice.
+//
+// The idiom that caused it was RESTATEMENT: each block hand-copied the ones
+// before it and added its own patterns. Four dimensions in, one dropped line is
+// a deleted boundary nobody can see. So the dimensions are named and composed
+// instead:
+//
+//   boundary  - the cross-package import boundary. Every file, always.
+//   posthog   - PostHog only through the typed adapter. All of `src`, except
+//               the adapter and its own test.
+//   readPath  - D12: no active-host / default-client hooks outside the
+//               allowlisted layer (`hostSelectionReadAllowlist`, which
+//               deliberately includes every test).
+//   kernel    - F2: only `renderer-selection-kernel.ts` may name
+//               `SelectionEvidenceKernel` at runtime.
+//
+// The file sets are NOT nested, they PARTITION - `hostSelectionReadAllowlist`
+// covers `src/hooks/**`, `src/lib/host/**` and all tests, so those files carry
+// a different set from the rest of `src`. That is why one broad "add my ban"
+// block cannot work: it would need to include `readPath` for some of the files
+// it matches and omit it for others.
+//
+// TO ADD A RESTRICTION: add a dimension below, then name it in the blocks whose
+// file sets should carry it. Do NOT append a block with a hand-written value.
+// To EXEMPT one file, add a block whose `files` is that single file and whose
+// dimensions are its partition's minus the one being lifted.
+const importRestrictionDimensions = {
+  posthog: [
+    {
+      group: ["posthog-js", "posthog-js/*"],
+      message: "Import PostHog only through the typed adapter in @/lib/analytics.",
+    },
+  ],
+  readPath: hostSelectionReadImportRestrictions.patterns,
+  kernel: selectionKernelImportRestrictions.patterns,
+};
+
+/** The `boundary` dimension plus whichever others this file set carries. */
+function importRestrictions(...dimensions) {
+  return [
+    "error",
+    {
+      ...traycerClientsImportBoundaryRestrictions,
+      patterns: [
+        ...(traycerClientsImportBoundaryRestrictions.patterns ?? []),
+        ...dimensions.flatMap((name) => importRestrictionDimensions[name]),
+      ],
+    },
+  ];
+}
+
+/** Every test file, in the two spellings the read-path allowlist already uses. */
+const testFileGlobs = [
+  "**/__tests__/**/*.{ts,tsx}",
+  "**/*.{test,spec}.{ts,tsx}",
+];
+
+const analyticsAdapterFiles = [
+  "src/lib/analytics.ts",
+  "src/lib/__tests__/analytics.test.ts",
+];
 
 // Do not subscribe to the entire Zustand store - reused across the base rules
 // and the overrides that still need to ban it.
@@ -221,10 +292,11 @@ export default tseslint.config(
       "react/jsx-no-useless-fragment": ["warn", { allowExpressions: true }],
 
       // ── Import boundaries + full-store Zustand selectors ────────────────────
-      "@typescript-eslint/no-restricted-imports": [
-        "error",
-        traycerClientsImportBoundaryRestrictions,
-      ],
+      // Dimensions: boundary + kernel. `kernel` rides the BASE block so the
+      // ban has no hole outside `src` and none at files the `src` blocks
+      // exempt for unrelated reasons (the analytics adapter); the two blocks
+      // that lift it - tests and the owner - are narrow and explicit.
+      "@typescript-eslint/no-restricted-imports": importRestrictions("kernel"),
 
       "no-restricted-syntax": [
         "error",
@@ -254,51 +326,47 @@ export default tseslint.config(
     // adapter's own test is the one other legitimate consumer: it drives the
     // real SDK through the sanitizer to prove the payload boundary.
     files: ["src/**/*.{ts,tsx}"],
-    ignores: ["src/lib/analytics.ts", "src/lib/__tests__/analytics.test.ts"],
+    ignores: analyticsAdapterFiles,
     rules: {
-      "@typescript-eslint/no-restricted-imports": [
-        "error",
-        {
-          ...traycerClientsImportBoundaryRestrictions,
-          patterns: [
-            ...(traycerClientsImportBoundaryRestrictions.patterns ?? []),
-            {
-              group: ["posthog-js", "posthog-js/*"],
-              message:
-                "Import PostHog only through the typed adapter in @/lib/analytics.",
-            },
-          ],
-        },
-      ],
+      "@typescript-eslint/no-restricted-imports": importRestrictions(
+        "posthog",
+        "kernel",
+      ),
     },
   },
   {
-    // D12 read path: ban active-host / default-client hook imports outside
-    // the allowlisted layer. Allowlisted files keep the previous block
-    // (boundary + PostHog only). This block restates those plus the
-    // selection-layer paths because flat config replaces rule options.
+    // D12 read path: ban active-host / default-client hook imports outside the
+    // allowlisted layer. The allowlisted files are NOT a subset of this set -
+    // they carry boundary + posthog + kernel from the block above, and this
+    // block simply never matches them.
     files: ["src/**/*.{ts,tsx}"],
-    ignores: [
-      "src/lib/analytics.ts",
-      "src/lib/__tests__/analytics.test.ts",
-      ...hostSelectionReadAllowlist,
-    ],
+    ignores: [...analyticsAdapterFiles, ...hostSelectionReadAllowlist],
     rules: {
-      "@typescript-eslint/no-restricted-imports": [
-        "error",
-        {
-          ...traycerClientsImportBoundaryRestrictions,
-          patterns: [
-            ...(traycerClientsImportBoundaryRestrictions.patterns ?? []),
-            {
-              group: ["posthog-js", "posthog-js/*"],
-              message:
-                "Import PostHog only through the typed adapter in @/lib/analytics.",
-            },
-            ...hostSelectionReadImportRestrictions.patterns,
-          ],
-        },
-      ],
+      "@typescript-eslint/no-restricted-imports": importRestrictions(
+        "posthog",
+        "readPath",
+        "kernel",
+      ),
+    },
+  },
+  {
+    // TESTS LIFT `kernel`, AND ONLY `kernel`. A test may construct a kernel -
+    // the StrictMode regression's control arm does exactly that, deliberately,
+    // to pin the pre-F2 defect. Tests already sit inside
+    // `hostSelectionReadAllowlist`, so their partition is boundary + posthog;
+    // naming those two here reproduces it exactly, minus the one being lifted.
+    files: testFileGlobs,
+    rules: {
+      "@typescript-eslint/no-restricted-imports": importRestrictions("posthog"),
+    },
+  },
+  {
+    // The kernel's OWNER lifts `kernel` for itself alone. One file, per the
+    // `markdown-anchor.tsx` idiom - a single-file `files` list cannot shadow a
+    // broad block by accident, which a directory glob here could.
+    files: selectionKernelOwner,
+    rules: {
+      "@typescript-eslint/no-restricted-imports": importRestrictions("posthog"),
     },
   },
   {

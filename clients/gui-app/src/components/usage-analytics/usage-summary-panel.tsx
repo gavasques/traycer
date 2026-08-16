@@ -1,9 +1,14 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
+import { Copy, Download } from "lucide-react";
 import type { UseQueryResult } from "@tanstack/react-query";
 import type { HostClient } from "@traycer-clients/shared/host-client/host-client";
 import type { HostRpcError } from "@traycer-clients/shared/host-transport/host-messenger";
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
+import { Button } from "@/components/ui/button";
+import { TooltipWrapper } from "@/components/ui/tooltip-wrapper";
 import type { HostRpcRegistry } from "@/lib/host";
+import { useUsageImageExport } from "@/hooks/usage-analytics/use-usage-image-export";
+import { USAGE_EXPORT_REGION_SELECTOR } from "@/lib/usage-analytics/usage-export-image";
 import {
   buildUsageSummaryRequest,
   useUsageSummaryForClient,
@@ -225,9 +230,26 @@ export function UsageSummaryPanel(props: UsageSummaryPanelProps): ReactNode {
       }),
     [props.hostNames, discoveredHostIds, responseHostIds, hostId],
   );
+  // The capture region is found by data attribute under this panel's own
+  // root at click time, not held as a threaded RefObject - the React
+  // Compiler's ref rules reject a ref object travelling through props,
+  // and an event-time DOM query needs no render-time ref reads. Scoped to
+  // this root so a second usage surface can never be captured by mistake.
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const exportReady = query.data !== undefined;
+  const { copyImage, downloadImage, isCopying, isDownloading } =
+    useUsageImageExport({
+      getExportNode: () =>
+        panelRef.current?.querySelector<HTMLElement>(
+          USAGE_EXPORT_REGION_SELECTOR,
+        ) ?? null,
+      fileName: `traycer-usage-${String(windowDays)}d.png`,
+      heading: "Usage",
+      subheading: dateRangeLabel,
+    });
 
   return (
-    <div className="flex w-full max-w-4xl flex-col gap-5">
+    <div ref={panelRef} className="flex w-full max-w-4xl flex-col gap-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
           <UsageWindowPicker
@@ -248,7 +270,61 @@ export function UsageSummaryPanel(props: UsageSummaryPanelProps): ReactNode {
             {dateRangeLabel}
           </span>
         </div>
-        <UsageMetricToggle metric={metric} onChange={setMetric} />
+        <div className="flex items-center gap-1.5">
+          <UsageMetricToggle metric={metric} onChange={setMetric} />
+          <TooltipWrapper
+            label="Copy image"
+            side="top"
+            sideOffset={undefined}
+            align={undefined}
+          >
+            <Button
+              type="button"
+              variant="outline"
+              size="icon-sm"
+              aria-label="Copy usage image"
+              data-testid="usage-copy-image"
+              disabled={!exportReady || isCopying}
+              onClick={copyImage}
+            >
+              {isCopying ? (
+                <AgentSpinningDots
+                  className="size-3"
+                  testId={undefined}
+                  variant={undefined}
+                />
+              ) : (
+                <Copy aria-hidden className="size-3.5" />
+              )}
+            </Button>
+          </TooltipWrapper>
+          <TooltipWrapper
+            label="Download image"
+            side="top"
+            sideOffset={undefined}
+            align={undefined}
+          >
+            <Button
+              type="button"
+              variant="outline"
+              size="icon-sm"
+              aria-label="Download usage image"
+              data-testid="usage-download-image"
+              disabled={!exportReady || isDownloading}
+              onClick={downloadImage}
+            >
+              {isDownloading ? (
+                <AgentSpinningDots
+                  className="size-3"
+                  testId={undefined}
+                  variant={undefined}
+                />
+              ) : (
+                <Download aria-hidden className="size-3.5" />
+              )}
+            </Button>
+          </TooltipWrapper>
+        </div>
       </div>
       <UsageSummaryPanelBody
         query={query}
@@ -432,62 +508,74 @@ function UsageSummaryPanelBody(props: {
     // nothing and the split rendered colorless. `UsageDailyChart` keeps its
     // own copy of the class for the epic dialog, where it stands alone.
     <div className="usage-chart-root flex flex-col gap-5">
-      <div className="flex flex-col gap-3">
-        <UsageCostFigure
-          totals={summary.totals}
-          coverage={coverage}
-          servedBy={servedBy}
-          hostScopeName={hostScopeName}
-          size="default"
-        />
-        <UsageHarnessSplit rows={harnessRows} scale={scale} showTokens />
-      </div>
-      {/* Only worth a section once there is more than one host to compare:
+      {/* The image-export capture region: headline through the activity
+          calendar, deliberately not the breakdown tables below - "what did
+          this cost" shares fine, an unbounded table doesn't. The by-host
+          section inside carries the export-exclude marker: which machines
+          ran the work is workspace-internal detail a shared screenshot
+          shouldn't leak. */}
+      <div
+        className="flex flex-col gap-5"
+        data-usage-export-region=""
+        data-testid="usage-export-region"
+      >
+        <div className="flex flex-col gap-3">
+          <UsageCostFigure
+            totals={summary.totals}
+            coverage={coverage}
+            servedBy={servedBy}
+            hostScopeName={hostScopeName}
+            size="default"
+          />
+          <UsageHarnessSplit rows={harnessRows} scale={scale} showTokens />
+        </div>
+        {/* Only worth a section once there is more than one host to compare:
           a single-row "By host" list under an All-hosts filter says nothing
           the filter did not already say, and on the local plane there can
           never be a second row at all. */}
-      {hostRows.length > 1 ? (
+        {hostRows.length > 1 ? (
+          <div className="flex flex-col gap-2" data-usage-export-exclude="">
+            <h3 className="text-ui-sm font-medium text-foreground">By host</h3>
+            <UsageHostSplit rows={hostRows} />
+          </div>
+        ) : null}
+        <div className="flex flex-col gap-1.5">
+          <UsageStatTiles tiles={statTiles} variant="full" />
+          {absentNote === null ? null : (
+            <p
+              className="text-ui-xs text-muted-foreground/80"
+              data-testid="usage-stat-tiles-absent-note"
+            >
+              {absentNote}
+            </p>
+          )}
+        </div>
         <div className="flex flex-col gap-2">
-          <h3 className="text-ui-sm font-medium text-foreground">By host</h3>
-          <UsageHostSplit rows={hostRows} />
-        </div>
-      ) : null}
-      <div className="flex flex-col gap-1.5">
-        <UsageStatTiles tiles={statTiles} variant="full" />
-        {absentNote === null ? null : (
-          <p
-            className="text-ui-xs text-muted-foreground/80"
-            data-testid="usage-stat-tiles-absent-note"
-          >
-            {absentNote}
-          </p>
-        )}
-      </div>
-      <div className="flex flex-col gap-2">
-        <div className="flex justify-end">
-          <UsageChartGroupByToggle
-            groupBy={chartGroupBy}
-            onChange={onChartGroupByChange}
-            triggerClassName={undefined}
-          />
-        </div>
-        {/* `key` per the prop's contract: the legend's hidden-series state
+          <div className="flex justify-end">
+            <UsageChartGroupByToggle
+              groupBy={chartGroupBy}
+              onChange={onChartGroupByChange}
+              triggerClassName={undefined}
+            />
+          </div>
+          {/* `key` per the prop's contract: the legend's hidden-series state
             is keyed by the current grouping's series keys, so a grouping
             switch remounts rather than letting stale harness keys filter
             (or fail to filter) model bands. */}
-        <UsageDailyChart
-          key={chartGroupBy}
-          columns={columns}
-          scale={chartScale}
+          <UsageDailyChart
+            key={chartGroupBy}
+            columns={columns}
+            scale={chartScale}
+            metric={metric}
+            groupBy={chartGroupBy}
+          />
+        </div>
+        <UsageActivitySection
+          query={activityQuery}
+          fallbackQuery={activityFallbackQuery}
           metric={metric}
-          groupBy={chartGroupBy}
         />
       </div>
-      <UsageActivitySection
-        query={activityQuery}
-        fallbackQuery={activityFallbackQuery}
-        metric={metric}
-      />
       <div>
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-ui-sm font-medium text-foreground">Breakdown</h3>

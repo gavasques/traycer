@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -12,6 +13,7 @@ import type { IHostStreamClient } from "@traycer-clients/shared/host-transport/h
 import type { VersionedRpcRegistry } from "@traycer/protocol/framework/index";
 import type { HostStreamRpcRegistry } from "@traycer/protocol/host/registry";
 import { useHostBinding } from "@/lib/host/runtime";
+import { useEffectiveHostId } from "@/hooks/host/use-effective-host-id";
 import {
   hostTransportKey,
   remoteAwareOwnerIdentity,
@@ -60,12 +62,21 @@ export function HostStreamProvider(props: HostStreamProviderProps): ReactNode {
   const binding = useHostBinding();
   const auth = useStreamAuthRevalidator();
   const authnBaseUrl = useRunnerHost().authnBaseUrl;
-  const readiness = useReactiveHostReadiness(
-    binding === null ? null : binding.hostClient,
+  const effectiveHostId = useEffectiveHostId();
+  // The app-wide client. This provider used to read the SPINE, whose answers
+  // came from the active slot; P4.2 deleted the slot, so every question below
+  // ("which host", "what is its transport", "who owns it") resolves the
+  // selection layer's effective host through the same id-pinned requester any
+  // other app-wide consumer uses.
+  const appHostClient = useMemo(
+    () =>
+      binding === null
+        ? null
+        : binding.hostClient.createRequesterForHostId(effectiveHostId),
+    [binding, effectiveHostId],
   );
-  const transportKey = useReactiveHostTransportKey(
-    binding === null ? null : binding.hostClient,
-  );
+  const readiness = useReactiveHostReadiness(appHostClient);
+  const transportKey = useReactiveHostTransportKey(appHostClient);
   // Identity = the machine host + the signed-in user (plus, for a remote
   // host, its public key + relay attach identity - R-1). Stable across a
   // host restart (hostId is the device id; only the endpoint URL moves), so
@@ -85,9 +96,7 @@ export function HostStreamProvider(props: HostStreamProviderProps): ReactNode {
   // back. The client is built from the identity the client is bound to; the
   // effect below still refuses to build one without a bound host and a live
   // request context, which is the real precondition.
-  const identityKey = useReactiveOwnerIdentityKey(
-    binding === null ? null : binding.hostClient,
-  );
+  const identityKey = useReactiveOwnerIdentityKey(appHostClient);
   const requestContextUserId = readiness.requestContextUserId;
   const [value, setValue] = useState<StreamRuntimeBinding | null>(null);
   // Liveness escape hatch: bumped when the served client turns out to be
@@ -138,14 +147,14 @@ export function HostStreamProvider(props: HostStreamProviderProps): ReactNode {
       setValue(null);
       return;
     }
-    const target = binding.hostClient.getActiveHost();
+    const target = appHostClient?.getActiveHost() ?? null;
     if (target === null) {
       setValue(null);
       return;
     }
     const wsStreamClient = buildHostStreamClient({
       target,
-      endpoint: () => binding.hostClient.getActiveHost(),
+      endpoint: () => appHostClient?.getActiveHost() ?? null,
       bearer: () => binding.hostClient.getRequestContext()?.credentials ?? null,
       authnBaseUrl,
       auth,
@@ -204,6 +213,7 @@ export function HostStreamProvider(props: HostStreamProviderProps): ReactNode {
     };
   }, [
     binding,
+    appHostClient,
     auth,
     authnBaseUrl,
     identityKey,
@@ -281,24 +291,40 @@ export function HostStreamProvider(props: HostStreamProviderProps): ReactNode {
     });
   }, [wsStreamClient, hostClient]);
 
-  // The app-wide stream heartbeats against the active host continuously, so
+  // The app-wide stream heartbeats against the effective host continuously, so
   // its recovery evidence (session re-open after a drop, pong after a
-  // stall-length gap) drives `notifyAvailabilityRecovered()` - un-stranding
-  // every host-scoped query left in a terminal error state while the host
-  // was stalled or restarting. This is the production caller that method was
-  // designed for; the stream client and the host client are bound to the
-  // same active-host identity by construction here.
+  // stall-length gap) un-strands every host-scoped query left in a terminal
+  // error state while that host was stalled or restarting. This is the
+  // production caller the mechanism was designed for.
+  //
+  // The recovery NAMES ITS HOST. It used to call the client's no-argument
+  // `notifyAvailabilityRecovered()`, which read the active slot to decide
+  // whose queries to un-strand - so with the slot deleted (P4.2) that call
+  // would have become a permanent no-op, silently: every stranded query on a
+  // stalled host would stay errored with no path back, and nothing would
+  // fail. `notifyHostAvailabilityRecovered(hostId)` says the same thing about
+  // a host the caller can actually name, which here is the host this stream
+  // is heartbeating against.
+  const recoveredHostId = readiness.hostId;
   useEffect(() => {
-    if (wsStreamClient === null || hostClient === null) {
+    if (
+      wsStreamClient === null ||
+      hostClient === null ||
+      recoveredHostId === null
+    ) {
       return;
     }
     return wireAvailabilityRecovery({
       wsStreamClient,
-      target: hostClient,
+      target: {
+        notifyAvailabilityRecovered: () => {
+          hostClient.notifyHostAvailabilityRecovered(recoveredHostId);
+        },
+      },
       cooldownMs: AVAILABILITY_RECOVERY_COOLDOWN_MS,
       now: () => Date.now(),
     });
-  }, [wsStreamClient, hostClient]);
+  }, [wsStreamClient, hostClient, recoveredHostId]);
 
   return (
     <StreamRuntimeContext.Provider value={value}>
@@ -344,27 +370,18 @@ function useReconnectStreamOnEndpointChange(
 }
 
 /**
- * Both arms, same rationale as `useReactiveHostReadiness` (redesign P4.1): a
+ * One arm, same rationale as `useReactiveHostReadiness` (redesign P4.2): a
  * transport move is a ROW change, so the registry reports it whether or not
- * anything re-binds, and the slot arm dies with P4.2.
+ * anything re-points. The slot arm this used to carry alongside it is gone
+ * with the slot - the registry was already delivering the same wake, which is
+ * what made removing it a deletion rather than a migration.
  */
 function useReactiveHostTransportKey<Registry extends VersionedRpcRegistry>(
   client: HostClient<Registry> | null,
 ): string | null {
-  const subscribe = useCallback(
-    (callback: () => void) => {
-      const unsubscribeRegistry = subscribeAnyHostRowChanged(callback);
-      if (client === null) {
-        return unsubscribeRegistry;
-      }
-      const unsubscribe = client.onChange(callback);
-      return () => {
-        unsubscribe();
-        unsubscribeRegistry();
-      };
-    },
-    [client],
-  );
+  const subscribe = useCallback((callback: () => void) => {
+    return subscribeAnyHostRowChanged(callback);
+  }, []);
   const getSnapshot = useCallback(() => readHostTransportKey(client), [client]);
   return useSyncExternalStore(subscribe, getSnapshot, () => null);
 }

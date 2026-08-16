@@ -150,9 +150,11 @@ function createHarness(
   const requestCount = { value: 0 };
   const cloudMarkRead: CloudMarkReadStub = { calls: [], mode: "applied" };
   let requestId = 0;
-  const client = new HostClient<HostRpcRegistry>({
+  const spine = new HostClient<HostRpcRegistry>({
     registry: hostRpcRegistry,
     invalidator: createHostQueryInvalidator(queryClient),
+    findHostById: (hostId) =>
+      hostId === mockLocalHostEntry.hostId ? mockLocalHostEntry : null,
     messenger: new MockHostMessenger<HostRpcRegistry>({
       registry: hostRpcRegistry,
       requestId: () => {
@@ -176,11 +178,10 @@ function createHarness(
       },
     }),
   });
-  client.bind(mockLocalHostEntry);
-  client.setRequestContext(
+  spine.setRequestContext(
     createRequestContextFixture({ origin: "renderer", bearerToken: "token" }),
   );
-  hostClientRef.current = client;
+  hostClientRef.current = spine.createRequester(mockLocalHostEntry);
   useAuthStore.setState({
     contextMetadata: { userId: "user-a", username: "user-a" },
   });

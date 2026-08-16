@@ -170,6 +170,7 @@ vi.mock(
 );
 
 import { HostStreamProvider } from "@/lib/host/stream-runtime";
+import { useSelectionAuthorityStore } from "@/stores/host/selection-authority-store";
 import {
   useStreamHostId,
   useWsStreamClient,
@@ -288,6 +289,20 @@ function pointWindowAt(
   hostId: string | null,
 ): void {
   bindingRef.value = { hostClient: client.createRequesterForHostId(hostId) };
+  // The POINTER moves too, and both halves are load-bearing. The binding is
+  // what production's `useHostBinding()` delivers; the store is what the
+  // provider resolves its own requester from (`createRequesterForHostId(
+  // effectiveHostId)`), because in production `binding.hostClient` is the
+  // SPINE and names no host of its own. Seeding only the binding would leave
+  // the provider resolving ∅ and every case asserting against no host at all.
+  useSelectionAuthorityStore.getState().applyKernelSnapshot({
+    attached: true,
+    preferredHostId: hostId,
+    targetHostId: hostId,
+    effectiveHostId: hostId,
+    leases: [],
+    selectionRevision: 1,
+  });
 }
 
 /** The common arrangement: one local host, resolvable, window pointed at it. */
@@ -469,6 +484,7 @@ describe("HostStreamProvider", () => {
   afterEach(() => {
     cleanup();
     bindingRef.value = null;
+    useSelectionAuthorityStore.getState().reset();
     runnerHostRef.handlers.clear();
     mocks.createRemoteHostTransport.mockReset();
     streamFactorySpy.build.mockReset();

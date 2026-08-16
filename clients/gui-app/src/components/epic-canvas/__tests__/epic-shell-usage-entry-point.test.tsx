@@ -137,9 +137,11 @@ const usageSummaryCallCount = { current: 0 };
 /** Every `host.usage.summary` request payload this suite has seen, in order. */
 const usageSummaryRequests: UsageSummaryRequest[] = [];
 
-const liveHostClient = new HostClient<HostRpcRegistry>({
+const liveHostClientSpine = new HostClient<HostRpcRegistry>({
   registry: hostRpcRegistry,
   invalidator: { invalidateHostScope: () => undefined },
+  findHostById: (hostId) =>
+    hostId === mockLocalHostEntry.hostId ? mockLocalHostEntry : null,
   messenger: new MockHostMessenger<HostRpcRegistry>({
     registry: hostRpcRegistry,
     requestId: () => `req-${Math.random().toString(36).slice(2, 8)}`,
@@ -153,10 +155,10 @@ const liveHostClient = new HostClient<HostRpcRegistry>({
     },
   }),
 });
-liveHostClient.bind(mockLocalHostEntry);
-liveHostClient.setRequestContext(
+liveHostClientSpine.setRequestContext(
   createRequestContextFixture({ origin: "renderer", bearerToken: "tok-1" }),
 );
+const liveHostClient = liveHostClientSpine.createRequester(mockLocalHostEntry);
 
 const authService = {
   revalidateCurrentContext: vi.fn(() => Promise.resolve({ kind: "valid" })),

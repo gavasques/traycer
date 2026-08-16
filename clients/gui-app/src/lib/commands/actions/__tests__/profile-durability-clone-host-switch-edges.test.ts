@@ -121,9 +121,18 @@ function buildClient(
   providersListHandler:
     (() => { providers: ProviderCliState[]; native: null }) | null,
 ): HostClient<HostRpcRegistry> {
-  const client = new HostClient<HostRpcRegistry>({
+  const entry = {
+    hostId,
+    label: hostId,
+    kind: "local" as const,
+    websocketUrl: `ws://127.0.0.1:0/${hostId}`,
+    version: "0.0.0-mock",
+    transportDialability: "dialable" as const,
+  };
+  const spine = new HostClient<HostRpcRegistry>({
     registry: hostRpcRegistry,
     invalidator: { invalidateHostScope: () => {} },
+    findHostById: (id) => (id === entry.hostId ? entry : null),
     messenger: new MockHostMessenger<HostRpcRegistry>({
       registry: hostRpcRegistry,
       requestId: () => `req-${hostId}`,
@@ -133,18 +142,10 @@ function buildClient(
           : { "providers.list": providersListHandler },
     }),
   });
-  client.bind({
-    hostId,
-    label: hostId,
-    kind: "local",
-    websocketUrl: `ws://127.0.0.1:0/${hostId}`,
-    version: "0.0.0-mock",
-    transportDialability: "dialable",
-  });
-  client.setRequestContext(
+  spine.setRequestContext(
     createRequestContextFixture({ origin: "renderer", bearerToken: "tok-1" }),
   );
-  return client;
+  return spine.createRequester(entry);
 }
 
 describe("resolveClonedChatSettings: additional adversarial edges", () => {

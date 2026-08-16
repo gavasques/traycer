@@ -172,9 +172,11 @@ async function cloudMarkReadHandler(): Promise<void> {
 
 function createHostClient(): HostClient<HostRpcRegistry> {
   let requestId = 0;
-  const client = new HostClient<HostRpcRegistry>({
+  const spine = new HostClient<HostRpcRegistry>({
     registry: hostRpcRegistry,
     invalidator: createHostQueryInvalidator(new QueryClient()),
+    findHostById: (hostId) =>
+      hostId === mockLocalHostEntry.hostId ? mockLocalHostEntry : null,
     messenger: new MockHostMessenger<HostRpcRegistry>({
       registry: hostRpcRegistry,
       requestId: () => {
@@ -204,11 +206,10 @@ function createHostClient(): HostClient<HostRpcRegistry> {
       },
     }),
   });
-  client.bind(mockLocalHostEntry);
-  client.setRequestContext(
+  spine.setRequestContext(
     createRequestContextFixture({ origin: "renderer", bearerToken: "token" }),
   );
-  return client;
+  return spine.createRequester(mockLocalHostEntry);
 }
 
 /** One visible cloud row. `severity` is what decides consumption; a

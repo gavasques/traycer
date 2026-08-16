@@ -94,7 +94,6 @@ function buildGlobalClient(
     findHostById: (hostId) =>
       listDirectory().find((entry) => entry.hostId === hostId) ?? null,
   });
-  client.bind(mockLocalHostEntry);
   client.setRequestContext(
     createRequestContextFixture({
       origin: "renderer",

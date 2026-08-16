@@ -186,9 +186,11 @@ function createCatalogFixture(
 ): CatalogFixture {
   const queryClient = createAppQueryClient();
   let requestCounter = 0;
-  const client = new HostClient<HostRpcRegistry>({
+  const spine = new HostClient<HostRpcRegistry>({
     registry: hostRpcRegistry,
     invalidator: createHostQueryInvalidator(queryClient),
+    findHostById: (hostId) =>
+      hostId === mockLocalHostEntry.hostId ? mockLocalHostEntry : null,
     messenger: new MockHostMessenger<HostRpcRegistry>({
       registry: hostRpcRegistry,
       requestId: () => {
@@ -198,10 +200,10 @@ function createCatalogFixture(
       handlers,
     }),
   });
-  client.bind(mockLocalHostEntry);
-  client.setRequestContext(
+  spine.setRequestContext(
     createRequestContextFixture({ origin: "renderer", bearerToken: "tok-1" }),
   );
+  const client = spine.createRequester(mockLocalHostEntry);
   hostBindingMock.current = { hostClient: client };
   setEffectiveHostId(mockLocalHostEntry.hostId);
   const Wrapper = (props: { readonly children: ReactNode }): ReactNode => (
@@ -787,9 +789,18 @@ describe("…ForClient catalog hooks are scoped to the client argument, not the 
     calls: HostCallCounts,
   ): HostClient<HostRpcRegistry> {
     let requestCounter = 0;
-    const client = new HostClient<HostRpcRegistry>({
+    const entry = {
+      hostId,
+      label: hostId,
+      kind: "local" as const,
+      websocketUrl: `ws://127.0.0.1:0/${hostId}`,
+      version: "0.0.0-mock",
+      transportDialability: "dialable" as const,
+    };
+    const spine = new HostClient<HostRpcRegistry>({
       registry: hostRpcRegistry,
       invalidator: createHostQueryInvalidator(queryClient),
+      findHostById: (id) => (id === entry.hostId ? entry : null),
       messenger: new MockHostMessenger<HostRpcRegistry>({
         registry: hostRpcRegistry,
         requestId: () => {
@@ -812,21 +823,13 @@ describe("…ForClient catalog hooks are scoped to the client argument, not the 
         },
       }),
     });
-    client.bind({
-      hostId,
-      label: hostId,
-      kind: "local",
-      websocketUrl: `ws://127.0.0.1:0/${hostId}`,
-      version: "0.0.0-mock",
-      transportDialability: "dialable",
-    });
-    client.setRequestContext(
+    spine.setRequestContext(
       createRequestContextFixture({
         origin: "renderer",
         bearerToken: `tok-${hostId}`,
       }),
     );
-    return client;
+    return spine.createRequester(entry);
   }
 
   it("useRefreshHarnessCatalogForClient invalidates only the target host's three catalog methods, leaving another host's cache untouched", async () => {
@@ -1081,9 +1084,11 @@ describe('useGuiHarnessCatalogForClient modelsFetch: "cached-only"', () => {
     const queryClient = createAppQueryClient();
     const modelCalls: GuiHarnessId[] = [];
     let requestCounter = 0;
-    const client = new HostClient<HostRpcRegistry>({
+    const spine = new HostClient<HostRpcRegistry>({
       registry: hostRpcRegistry,
       invalidator: createHostQueryInvalidator(queryClient),
+      findHostById: (hostId) =>
+        hostId === mockLocalHostEntry.hostId ? mockLocalHostEntry : null,
       messenger: new MockHostMessenger<HostRpcRegistry>({
         registry: hostRpcRegistry,
         requestId: () => {
@@ -1101,10 +1106,10 @@ describe('useGuiHarnessCatalogForClient modelsFetch: "cached-only"', () => {
         },
       }),
     });
-    client.bind(mockLocalHostEntry);
-    client.setRequestContext(
+    spine.setRequestContext(
       createRequestContextFixture({ origin: "renderer", bearerToken: "tok-1" }),
     );
+    const client = spine.createRequester(mockLocalHostEntry);
     const Wrapper = (props: { readonly children: ReactNode }): ReactNode => (
       <QueryClientProvider client={queryClient}>
         {props.children}

@@ -171,9 +171,11 @@ function createFixture(listFailureCode: "E_HOST_UNSUPPORTED" | null): Fixture {
       mutations: { retry: false },
     },
   });
-  const client = new HostClient<HostRpcRegistry>({
+  const spine = new HostClient<HostRpcRegistry>({
     registry: hostRpcRegistry,
     invalidator: createHostQueryInvalidator(queryClient),
+    findHostById: (hostId) =>
+      hostId === mockLocalHostEntry.hostId ? mockLocalHostEntry : null,
     messenger: new MockHostMessenger<HostRpcRegistry>({
       registry: hostRpcRegistry,
       requestId: () => {
@@ -242,13 +244,13 @@ function createFixture(listFailureCode: "E_HOST_UNSUPPORTED" | null): Fixture {
       },
     }),
   });
-  client.bind(mockLocalHostEntry);
-  client.setRequestContext(
+  spine.setRequestContext(
     // Any authenticated context will do: the client's request-context user id
     // only gates `useHostQuery`'s readiness. The VIEWER identity that scopes
     // the cache key is the auth store's, seeded in `beforeEach`.
     createRequestContextFixture({ origin: "renderer", bearerToken: "tok-1" }),
   );
+  const client = spine.createRequester(mockLocalHostEntry);
   runtime.client = client;
   const handle = newSession();
   const Wrapper = (props: { readonly children: ReactNode }): ReactNode =>

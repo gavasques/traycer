@@ -259,9 +259,11 @@ function createHarness(initialEvent: ChatForkEvent | null): Harness {
   const forkEvent = { value: initialEvent };
   const calls: string[] = [];
   let requestId = 0;
-  const client = new HostClient<HostRpcRegistry>({
+  const spine = new HostClient<HostRpcRegistry>({
     registry: hostRpcRegistry,
     invalidator: createHostQueryInvalidator(queryClient),
+    findHostById: (hostId) =>
+      hostId === mockLocalHostEntry.hostId ? mockLocalHostEntry : null,
     messenger: new MockHostMessenger<HostRpcRegistry>({
       registry: hostRpcRegistry,
       requestId: () => {
@@ -291,11 +293,10 @@ function createHarness(initialEvent: ChatForkEvent | null): Harness {
       },
     }),
   });
-  client.bind(mockLocalHostEntry);
-  client.setRequestContext(
+  spine.setRequestContext(
     createRequestContextFixture({ origin: "renderer", bearerToken: "token" }),
   );
-  hostClientRef.current = client;
+  hostClientRef.current = spine.createRequester(mockLocalHostEntry);
   recordNegotiatedHostMethods(mockLocalHostEntry.hostId, ["host.chatFork.get"]);
   useAuthStore.setState({
     contextMetadata: { userId: "user-a", username: "user-a" },

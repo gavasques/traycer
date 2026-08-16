@@ -566,9 +566,11 @@ describe("useWorktreeListing", () => {
       readonly activityPaths: readonly string[] | null;
       readonly includeActivity: boolean;
     }> = [];
-    const client = new HostClient<HostRpcRegistry>({
+    const spine = new HostClient<HostRpcRegistry>({
       registry: hostRpcRegistry,
       invalidator: { invalidateHostScope: () => undefined },
+      findHostById: (hostId) =>
+        hostId === mockLocalHostEntry.hostId ? mockLocalHostEntry : null,
       messenger: new MockHostMessenger<HostRpcRegistry>({
         registry: hostRpcRegistry,
         requestId: () => "req-1",
@@ -589,10 +591,10 @@ describe("useWorktreeListing", () => {
         },
       }),
     });
-    client.bind(mockLocalHostEntry);
-    client.setRequestContext(
+    spine.setRequestContext(
       createRequestContextFixture({ origin: "renderer", bearerToken: "tok-1" }),
     );
+    const client = spine.createRequester(mockLocalHostEntry);
     const queryClient = new QueryClient();
     const wrapper = (props: { readonly children: ReactNode }): ReactNode => (
       <QueryClientProvider client={queryClient}>
@@ -638,9 +640,11 @@ describe("useWorktreeListing", () => {
     const stale = entry({ worktreePath: "/wt/a", branch: "stale" });
     const fresh = entry({ worktreePath: "/wt/a", branch: "fresh" });
     const requests: Array<{ readonly forceRefresh: boolean }> = [];
-    const client = new HostClient<HostRpcRegistry>({
+    const spine = new HostClient<HostRpcRegistry>({
       registry: hostRpcRegistry,
       invalidator: { invalidateHostScope: () => undefined },
+      findHostById: (hostId) =>
+        hostId === mockLocalHostEntry.hostId ? mockLocalHostEntry : null,
       messenger: new MockHostMessenger<HostRpcRegistry>({
         registry: hostRpcRegistry,
         requestId: () => "req-1",
@@ -656,10 +660,10 @@ describe("useWorktreeListing", () => {
         },
       }),
     });
-    client.bind(mockLocalHostEntry);
-    client.setRequestContext(
+    spine.setRequestContext(
       createRequestContextFixture({ origin: "renderer", bearerToken: "tok-1" }),
     );
+    const client = spine.createRequester(mockLocalHostEntry);
     const queryClient = new QueryClient();
     const wrapper = (props: { readonly children: ReactNode }): ReactNode => (
       <QueryClientProvider client={queryClient}>
@@ -697,9 +701,11 @@ describe("useWorktreeListing", () => {
     const first = entry({ worktreePath: "/wt/a", branch: "feat-a" });
     let firstPageCalls = 0;
     let secondPageCalls = 0;
-    const client = new HostClient<HostRpcRegistry>({
+    const spine = new HostClient<HostRpcRegistry>({
       registry: hostRpcRegistry,
       invalidator: { invalidateHostScope: () => undefined },
+      findHostById: (hostId) =>
+        hostId === mockLocalHostEntry.hostId ? mockLocalHostEntry : null,
       messenger: new MockHostMessenger<HostRpcRegistry>({
         registry: hostRpcRegistry,
         requestId: () => "req-1",
@@ -718,10 +724,10 @@ describe("useWorktreeListing", () => {
         },
       }),
     });
-    client.bind(mockLocalHostEntry);
-    client.setRequestContext(
+    spine.setRequestContext(
       createRequestContextFixture({ origin: "renderer", bearerToken: "tok-1" }),
     );
+    const client = spine.createRequester(mockLocalHostEntry);
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });

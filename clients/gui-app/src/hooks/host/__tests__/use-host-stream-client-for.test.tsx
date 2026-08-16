@@ -32,17 +32,23 @@ vi.mock("@/providers/use-runner-host", () => ({
 
 import { useHostStreamClientFor } from "@/hooks/host/use-host-stream-client-for";
 
+// The SPINE `useHostClient` hands back in this suite - never bound to any one
+// host (redesign P4.2 deleted the active slot `.bind()` used to fill).
+const knownHostEntries = new Map<string, HostDirectoryEntry>([
+  [mockLocalHostEntry.hostId, mockLocalHostEntry],
+]);
+
 function buildGlobalClient(withContext: boolean): HostClient<HostRpcRegistry> {
   const client = new HostClient<HostRpcRegistry>({
     registry: hostRpcRegistry,
     invalidator: { invalidateHostScope: () => {} },
+    findHostById: (hostId) => knownHostEntries.get(hostId) ?? null,
     messenger: new MockHostMessenger<HostRpcRegistry>({
       registry: hostRpcRegistry,
       requestId: () => "req-1",
       handlers: {},
     }),
   });
-  client.bind(mockLocalHostEntry);
   if (withContext) {
     client.setRequestContext(
       createRequestContextFixture({
@@ -84,9 +90,10 @@ describe("useHostStreamClientFor", () => {
     globalClientRef.value = globalClient;
     const { result } = renderHook(() => useHostStreamClientFor(TARGET_B, null));
     expect(result.current).toBeInstanceOf(WsStreamClient);
-    // Building a transient stream client for host B must not move the global
-    // client off its own active host (no global side effect).
-    expect(globalClient.getActiveHostId()).toBe(mockLocalHostEntry.hostId);
+    // Building a transient stream client for host B must not give the global
+    // SPINE an active host of its own (no global side effect) - it stays
+    // unbound (redesign P4.2 deleted the active slot `.bind()` used to set).
+    expect(globalClient.getActiveHostId()).toBeNull();
   });
 
   it("memoizes for a stable target and rebuilds for a different host", () => {

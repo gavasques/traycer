@@ -45,14 +45,16 @@ export function useHostClientForHostId(
     const liveEntry = defaultClient.resolveHostById(hostId);
     if (liveEntry !== null) return liveEntry;
 
-    // Standalone/test clients may only resolve their active entry. Preserve
-    // that entry as the same pinned requester while the Query snapshot catches
-    // up; returning `defaultClient` here would make the explicit id mutable.
-    const activeEntry = defaultClient.getActiveHost();
-    if (activeEntry !== null && activeEntry.hostId === hostId) {
-      return activeEntry;
-    }
-
+    // A third arm used to sit here, preserving the client's ACTIVE entry when
+    // the lookup above missed. It was dead by then and is deleted now (P4.2):
+    // reaching it required `resolveHostById` to miss an id the slot held, and
+    // the client's own `findHostById` fallback resolved exactly that case, so
+    // only a harness whose directory disagreed with its own binding could get
+    // there. In production the window closed earlier still - P1.2's
+    // `refreshSelectedEntry` unbinds the moment a row vanishes. Measured
+    // rather than argued: deleting it survived a probe twice across every
+    // consumer suite (49 files / 670 tests), and with the slot gone it is
+    // unreachable by construction.
     return (
       (directory.data ?? []).find((entry) => entry.hostId === hostId) ?? null
     );

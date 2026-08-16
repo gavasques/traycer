@@ -99,18 +99,20 @@ beforeEach(() => {
       },
     },
   });
-  hostClient = new HostClient<HostRpcRegistry>({
+  const spine = new HostClient<HostRpcRegistry>({
     registry: hostRpcRegistry,
     invalidator: createHostQueryInvalidator(queryClient),
+    findHostById: (hostId) =>
+      hostId === mockLocalHostEntry.hostId ? mockLocalHostEntry : null,
     messenger,
   });
-  hostClient.bind(mockLocalHostEntry);
-  hostClient.setRequestContext(
+  spine.setRequestContext(
     createRequestContextFixture({
       origin: "renderer",
       bearerToken: "stop-all-token",
     }),
   );
+  hostClient = spine.createRequester(mockLocalHostEntry);
 });
 
 afterEach(() => {

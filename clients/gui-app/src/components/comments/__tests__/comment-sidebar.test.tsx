@@ -89,16 +89,17 @@ beforeEach(() => {
       "epic.listCommentThreads": () => respondToListThreads(),
     },
   });
-  const client = new HostClient<HostRpcRegistry>({
+  const spine = new HostClient<HostRpcRegistry>({
     registry: hostRpcRegistry,
     invalidator: createHostQueryInvalidator(queryClient),
+    findHostById: (hostId) =>
+      hostId === mockLocalHostEntry.hostId ? mockLocalHostEntry : null,
     messenger,
   });
-  client.bind(mockLocalHostEntry);
-  client.setRequestContext(
+  spine.setRequestContext(
     createRequestContextFixture({ origin: "renderer", bearerToken: "tok-1" }),
   );
-  hostClientRef.current = client;
+  hostClientRef.current = spine.createRequester(mockLocalHostEntry);
 });
 
 afterEach(() => {

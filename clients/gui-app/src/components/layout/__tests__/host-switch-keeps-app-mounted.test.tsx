@@ -22,6 +22,7 @@ import { HostReadyGate } from "@/components/layout/host-ready-gate";
 import { hostRpcRegistry, type HostRpcRegistry } from "@/lib/host";
 import { RunnerHostProvider } from "@/providers/runner-host-provider";
 import { useAuthStore } from "@/stores/auth/auth-store";
+import { useSelectionAuthorityStore } from "@/stores/host/selection-authority-store";
 
 const bindingRef = vi.hoisted(() => ({
   value: null as {
@@ -142,10 +143,39 @@ function controllerFor(
   };
 }
 
+/**
+ * Moves the app-wide pointer - which is what "switching hosts" IS since P4.2
+ * deleted the active slot.
+ *
+ * These cases used to drive `hostClient.bind(entry)` on one client instance,
+ * because the slot's change event was the switch. There is no slot now: the
+ * selection authority names the effective host, the readiness controller
+ * resolves a requester from that id, and a switch is this store moving. The
+ * assertions are unchanged - what a switch means changed, not what the app
+ * must do across one.
+ */
+function setEffectiveHost(hostId: string): void {
+  useSelectionAuthorityStore.getState().applyKernelSnapshot({
+    attached: true,
+    preferredHostId: hostId,
+    targetHostId: hostId,
+    effectiveHostId: hostId,
+    leases: [],
+    selectionRevision: 1,
+  });
+}
+
 function buildHostClient(): HostClient<HostRpcRegistry> {
   const client = new HostClient<HostRpcRegistry>({
     registry: hostRpcRegistry,
     invalidator: { invalidateHostScope: () => undefined },
+    // The SPINE: the controller derives its own requester off this by id, so
+    // the lookup has to answer for BOTH hosts these cases switch between.
+    findHostById: (hostId) => {
+      if (hostId === mockLocalHostEntry.hostId) return mockLocalHostEntry;
+      if (hostId === mockRemoteHostEntry.hostId) return mockRemoteHostEntry;
+      return null;
+    },
     messenger: new MockHostMessenger<HostRpcRegistry>({
       registry: hostRpcRegistry,
       requestId: () => "req-1",
@@ -180,8 +210,8 @@ function mountSwitchSurface(
   initialHost: HostDirectoryEntry,
 ): SwitchHarness {
   const hostClient = buildHostClient();
-  hostClient.bind(initialHost);
   bindingRef.value = { hostClient };
+  setEffectiveHost(initialHost.hostId);
 
   const runnerHost = new MockRunnerHost({
     signInUrl: "https://auth.traycer.invalid/sign-in",
@@ -237,20 +267,36 @@ afterEach(() => {
   cleanup();
   bindingRef.value = null;
   useAuthStore.getState().setSignedOut();
+  // Module state: a case that moved the pointer would hand its host to the
+  // next one, and these cases are ABOUT which host is effective.
+  useSelectionAuthorityStore.getState().reset();
 });
 
-describe("switching hosts keeps the app mounted", () => {
-  it("local→remote keeps the app mounted and narrates nothing at window scope", async () => {
+/**
+ * TITLES CORRECTED TO WHAT THIS SUITE MEASURES (redesign P4.2).
+ *
+ * It was called "switching hosts keeps the app mounted", and it does not
+ * measure that: the harness supplies `HostReadinessControllerContext` from a
+ * hand-made `controllerFor(...)`, so the controller that would read the host
+ * never mounts and a host move has no path to the subject. Neutering the move
+ * entirely leaves both cases passing - and that was equally true BEFORE the
+ * migration, measured by neutering the pre-P4.2 `bind()` drives on the same
+ * file at HEAD. Inherited vacuity, not introduced.
+ *
+ * What it does measure is worth keeping: the gate does not remount the app
+ * when its readiness CONTEXT changes. The acceptance line "the app stays
+ * mounted across a host switch" is carried by no case here and is recorded as
+ * an open residual - a title is a claim, and a false one left standing green
+ * is how the next reader inherits a hole.
+ */
+describe("the ready gate does not remount the app when readiness context changes", () => {
+  it("ready→ready under a pointer move keeps the app mounted and narrates nothing at window scope", async () => {
     // Local → remote never produces a non-ready readiness kind (remote targets
     // pass readiness through as ready the moment the entry is dialable), so
-    // this drives a real `HostClient.bind` and the switch is a pointer update
-    // with no readiness event at all. That is the whole D2/D11 claim: a switch
-    // needs no narration, because nothing about it is a failure.
-    const harness = mountSwitchSurface(
-      { kind: "ready" },
-      PRESENTATION,
-      mockLocalHostEntry,
-    );
+    // this moves the app-wide pointer and the switch carries no readiness
+    // event at all. That is the whole D2/D11 claim: a switch needs no
+    // narration, because nothing about it is a failure.
+    mountSwitchSurface({ kind: "ready" }, PRESENTATION, mockLocalHostEntry);
     expect(screen.getByTestId("app-shell")).toBeTruthy();
     expect(screen.queryByTestId("host-ready-gate")).toBeNull();
     const shellBefore = screen.getByTestId("app-shell");
@@ -258,7 +304,7 @@ describe("switching hosts keeps the app mounted", () => {
     expect(sentinelMounts.count).toBe(1);
 
     act(() => {
-      harness.hostClient.bind(mockRemoteHostEntry);
+      setEffectiveHost(mockRemoteHostEntry.hostId);
     });
 
     // Settle whatever the bind schedules before asserting on silence: asserting
@@ -275,7 +321,7 @@ describe("switching hosts keeps the app mounted", () => {
     expectNoWindowScopeBanner();
   });
 
-  it("remote→local does not full-screen the app once the gate has latched", () => {
+  it("a loading-host readiness change does not full-screen the app once the gate has latched", () => {
     // After the first ready, even a local loading-host (the direction that
     // previously replaced the whole shell on switch-back) must keep the app
     // mounted. Whatever needs saying about that wait is the window modal's,
@@ -296,7 +342,7 @@ describe("switching hosts keeps the app mounted", () => {
     expect(sentinelMounts.count).toBe(1);
 
     act(() => {
-      harness.hostClient.bind(mockLocalHostEntry);
+      setEffectiveHost(mockLocalHostEntry.hostId);
     });
     harness.setReadiness(
       { kind: "loading-host" },

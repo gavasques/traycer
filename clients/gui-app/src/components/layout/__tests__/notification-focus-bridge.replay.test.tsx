@@ -226,9 +226,12 @@ describe("NotificationFocusBridge native-click replay guard (P0-2)", () => {
     client = new HostClient<HostRpcRegistry>({
       registry: hostRpcRegistry,
       invalidator: createHostQueryInvalidator(queryClient),
+      // The SPINE, kept unpinned - `useNotificationActivationWithNavigate`
+      // derives its own requester off this via `createRequesterForHostId`.
+      findHostById: (hostId) =>
+        hostId === mockLocalHostEntry.hostId ? mockLocalHostEntry : null,
       messenger,
     });
-    client.bind(mockLocalHostEntry);
     client.setRequestContext(
       createRequestContextFixture({
         origin: "renderer",

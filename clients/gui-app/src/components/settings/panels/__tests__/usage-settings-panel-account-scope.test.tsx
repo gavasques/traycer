@@ -23,19 +23,21 @@ const ACTIVE_HOST_ID = mockLocalHostEntry.hostId;
 /** The host the sidebar's Host-group picker is pointed at - dead, and unrelated to this section. */
 const DEAD_PICKED_HOST_ID = "host-that-vanished";
 
-const liveHostClient = new HostClient<HostRpcRegistry>({
+const liveHostClientSpine = new HostClient<HostRpcRegistry>({
   registry: hostRpcRegistry,
   invalidator: { invalidateHostScope: () => undefined },
+  findHostById: (hostId) =>
+    hostId === mockLocalHostEntry.hostId ? mockLocalHostEntry : null,
   messenger: new MockHostMessenger<HostRpcRegistry>({
     registry: hostRpcRegistry,
     requestId: () => "req-1",
     handlers: { "host.usage.summary": () => usageSummaryResponse() },
   }),
 });
-liveHostClient.bind(mockLocalHostEntry);
-liveHostClient.setRequestContext(
+liveHostClientSpine.setRequestContext(
   createRequestContextFixture({ origin: "renderer", bearerToken: "tok-1" }),
 );
+const liveHostClient = liveHostClientSpine.createRequester(mockLocalHostEntry);
 
 // The Host-group pick is unreachable, so the scope carries NO client and a
 // non-`following` status - exactly the shape `HostScopeGate` used to refuse to

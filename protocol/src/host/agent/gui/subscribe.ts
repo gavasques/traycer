@@ -20,14 +20,12 @@ import {
   chatEventSchemaPreInReplyTo,
   chatRunSettingsSchema,
   chatSchema,
-  chatSchemaPreImage,
   chatSchemaPreInReplyTo,
   chatSchemaV14,
   chatSchemaV15,
   userMessagePayloadSchema,
   userMessageSchema,
   userMessageSchemaPreInReplyTo,
-  userMessageSchemaPreTurnTail,
   userMessageSenderSchema,
   userMessageSenderSchemaPreInReplyTo,
   type ChatEvent,
@@ -78,7 +76,6 @@ import {
 import {
   heldManagedCommandUpdateSchema,
   managedCommandSchema,
-  managedCommandSchemaPreImage,
 } from "@traycer/protocol/host/managed-command/unary-schemas";
 
 const jsonContentSchema = getRecordSchema(
@@ -947,18 +944,6 @@ const chatSubscribeCommonServerFrameSchemasPreInReplyTo =
     message: userMessageSchemaPreInReplyTo,
     queue: chatQueueStateSchemaPreInReplyTo,
     event: chatEventSchemaPreInReplyTo,
-  });
-
-// Frozen common frames bound to `chat.subscribe@1.6`: live queue/event trees,
-// but the message swapped for its pre-`turnTailUuid` freeze - 1.6 shipped
-// before the Claude anchor gained `turnTailUuid`, and its surface is frozen
-// EXACTLY (`chat-subscribe-v16-surface-compat.test.ts`), so a `messageAccepted`
-// frame on that line must never declare the field.
-const chatSubscribeCommonServerFrameSchemasPreTurnTail =
-  buildChatSubscribeCommonServerFrameSchemas({
-    message: userMessageSchemaPreTurnTail,
-    queue: chatQueueStateSchema,
-    event: chatEventSchema,
   });
 
 // Frozen common frames bound to `chat.subscribe@1.4–1.5`: live message/event
@@ -1936,7 +1921,7 @@ export const chatSubscribeV15 = defineStreamRpcContract({
   clientFrameSchema: chatSubscribeClientFrameSchemaV14ToV16,
 });
 
-// ─── Frozen `chat.subscribe@1.6` shape (the managed-command surface, pre-image) ─
+// ─── Live `chat.subscribe@1.6` contract ────────────────────────────────────
 //
 // `1.6` is where the whole Shells surface joined the chat stream: the chat's
 // own commands (`snapshot.managedCommands` + `managedCommandsChanged`) and the
@@ -1955,87 +1940,29 @@ export const chatSubscribeV15 = defineStreamRpcContract({
 // `1.4` - cancel/reorder of a managed-command item ride the existing
 // `queueCancel`/`queueReorder` actions, which are keyed by `queueItemId` alone.
 //
-// `1.6` originally bound the fully live serverFrame/`chatSnapshotSchema`
-// directly (a bug: it let every later change to `chatSchema`/`messageSchema`/
-// `contentBlockSchema` mutate this released line) - pinned here to its
-// pre-image shape so this line can never observe `imageResults`/the image
-// resolution record added on `1.7`. `chat` (→ `chatSchemaPreImage`),
-// `blockDelta`'s event (→ `runtimeEventSchemaPreImage`), and the common
-// frames' message (→ `userMessageSchemaPreTurnTail`, via the pre-turn-tail
-// bundle: the Claude anchor gained `turnTailUuid` after 1.6 shipped) differ
-// from the live shapes; queue/managedCommands/turnStateChanged are untouched
-// by either freeze point, so those reuse the live sub-schemas exactly like
-// `chatSubscribeServerFrameSchemaV14`/`V15` do.
-const chatSnapshotSchemaV16 = z.object({
-  chat: chatSchemaPreImage,
-  access: chatAccessSchema,
-  queue: chatQueueStateSchema,
-  runStatus: chatRunStatusSchema,
-  activeTurn: chatActiveTurnSchema.nullable(),
-  pendingApprovals: z.array(chatApprovalStateSchema),
-  pendingInterviews: z.array(chatPendingInterviewStateSchema),
-  worktreeBinding: worktreeBindingSchema.nullable(),
-  missingWorktreePaths: z.array(z.string()),
-  pendingFileEditApprovals: z.array(chatFileEditApprovalStateSchema),
-  accumulatedFileChanges: z.array(chatAccumulatedFileChangeSchema),
-  backgroundItems: z.array(backgroundItemSchema).optional(),
-  // Pinned to the pre-image: `1.6` is the released line the Shells surface
-  // arrived on, and the details widening (`command`/`cwd`/`cadence`) landed
-  // after it. Same reason `chat` above is pinned to `chatSchemaPreImage`.
-  managedCommands: z.array(managedCommandSchemaPreImage).default([]),
-  turnInProgress: z.boolean().optional(),
-});
-
-const chatSubscribeSnapshotServerFrameSchemaV16 = z.object({
-  kind: z.literal("snapshot"),
-  ...textFrameFields,
-  ...chatReferenceFields,
-  snapshot: chatSnapshotSchemaV16,
-});
-
-const chatSubscribeServerFrameSchemaV16 = z.discriminatedUnion("kind", [
-  chatSubscribeSnapshotServerFrameSchemaV16,
-  chatSubscribeTurnStateChangedServerFrameSchema,
-  managedCommandsChangedServerFrameSchema(managedCommandSchemaPreImage),
-  ...chatSubscribeCommonServerFrameSchemasPreTurnTail,
-  blockDeltaServerFrameSchema(runtimeEventSchemaPreImage),
-]);
-
+// It also carries image generation - `imageResults` on the `tool_call` content
+// block and `tool_call.completed` runtime event, the durable image resolution
+// record on assistant messages (`assistantMessageSchema.imageResolutions`), the
+// typed `image_resolution.updated` runtime event - and the Stop fence's held
+// updates: the snapshot's `heldUpdates` and the `heldUpdatesChanged` frame, the
+// pair that gives `managedCommand.deliverHeld` something to act on.
+//
+// Those last two arrived on a `1.7` opened above a `1.6` that was itself
+// pinned to a hand-written pre-image bundle, so that the live schemas could
+// grow without mutating it. The release collapsed the two: no peer in the field
+// has ever negotiated `1.6` or `1.7` (the highest minor any released
+// `host-v*`/`cli-v*`/`desktop-v*` baseline carries is `1.5`), so a pre-image
+// that froze `1.6` against `1.7` froze it against nothing, and shipping both
+// minors would have announced two negotiable lines where one peer set exists.
+//
+// This line is therefore bound to the LIVE schemas, and that is what makes the
+// freeze discipline start again cleanly: the moment `1.6` ships, or the moment
+// a `1.7` opens above it, whichever comes first, this line must be re-pinned to
+// a hand-written pre-image bundle the way `1.4` and `1.5` are above. The lines
+// below it are frozen precisely because they HAVE peers; this one does not yet.
 export const chatSubscribeV16 = defineStreamRpcContract({
   method: "chat.subscribe",
   schemaVersion: { major: 1, minor: 6 } as const,
-  openRequestSchema: chatSubscribeOpenRequestSchema,
-  serverFrameSchema: chatSubscribeServerFrameSchemaV16,
-  clientFrameSchema: chatSubscribeClientFrameSchemaV14ToV16,
-});
-
-// ─── Live `chat.subscribe@1.7` contract (image generation + held updates) ──
-//
-// `1.7` is where the live schemas gain image support: `imageResults` on the
-// `tool_call` content block and `tool_call.completed` runtime event, the
-// durable image resolution record on assistant messages
-// (`assistantMessageSchema.imageResolutions`), the typed
-// `image_resolution.updated` runtime event for initial resolution and
-// mid-turn watcher changes. The client frame is unchanged.
-//
-// It is ALSO where the Stop fence's held updates joined the chat stream: the
-// snapshot's `heldUpdates` and the `heldUpdatesChanged` frame, the pair that
-// gives `managedCommand.deliverHeld` something to act on. Two capabilities on
-// one minor because `1.7` has not shipped - the highest minor any released
-// `host-v*`/`cli-v*`/`desktop-v*` baseline carries is `1.5`, so no peer in the
-// field has ever negotiated `1.6` or `1.7` and neither line's meaning is fixed
-// yet. This is the same freedom `1.6` took for the details widening
-// (`command`/`cwd`/`cadence`), which is why that landed with no compat
-// exception either.
-//
-// The frozen `1.6` bundle above is untouched by both, and deliberately so even
-// though it is equally unshipped: its snapshot and frame union are hand-written
-// literals bound to `managedCommandSchemaPreImage`, so a live addition cannot
-// leak onto them. Once `1.7` ships, a third capability costs a real `1.8` and
-// the pre-image ritual that goes with it.
-export const chatSubscribeV17 = defineStreamRpcContract({
-  method: "chat.subscribe",
-  schemaVersion: { major: 1, minor: 7 } as const,
   openRequestSchema: chatSubscribeOpenRequestSchema,
   serverFrameSchema: chatSubscribeServerFrameSchema,
   clientFrameSchema: chatSubscribeClientFrameSchema,
@@ -2047,4 +1974,4 @@ export const chatSubscribeV17 = defineStreamRpcContract({
  * which `chatSubscribeSnapshotServerFrameShallowSchema` is sound — see its
  * doc for why any down-negotiated line must take the deep parse instead.
  */
-export const chatSubscribeLiveSchemaVersion = chatSubscribeV17.schemaVersion;
+export const chatSubscribeLiveSchemaVersion = chatSubscribeV16.schemaVersion;

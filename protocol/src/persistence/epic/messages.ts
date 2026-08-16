@@ -264,10 +264,11 @@ export const assistantMessageSchemaPreImage = z.object({
 
 // Wire-freeze copy of `userMessageSchema` with `sessionAnchor` swapped for
 // its pre-`turnTailUuid` freeze (see `claudeChatSessionAnchorSchemaPreTurnTail`).
-// Bound to the released `chat.subscribe@1.6` line - snapshot frames via
-// `messageSchemaPreImage` below, `messageAccepted` frames via the
-// pre-turn-tail common frame bundle in `subscribe.ts` - whose surface is
-// frozen EXACTLY, so it can never observe the Claude anchor's `turnTailUuid`.
+// Bound to the released `chat.subscribe@1.4`/`@1.5` snapshot trees via
+// `messageSchemaPreImage` below, so neither line can observe the Claude
+// anchor's `turnTailUuid`. It also fed a `1.6` freeze and a pre-turn-tail
+// common-frame bundle in `subscribe.ts` until the release collapsed the
+// unreleased `1.6`/`1.7` pair into one live line, which took both.
 // Field-for-field hand copy, NOT `.omit()`/`.extend()` off the live shape.
 export const userMessageSchemaPreTurnTail = z
   .object({
@@ -290,8 +291,8 @@ export const userMessageSchemaPreTurnTail = z
 // The user branch is the pre-turn-tail freeze, not the live `userMessageSchema`:
 // user messages carry no image fields (nothing changed for them at the
 // image-freeze point), but their `sessionAnchor` gained `turnTailUuid` after
-// `chat.subscribe@1.6` shipped, and this union is bound to that exactly-frozen
-// line via the frozen chat trees.
+// the lines this union serves shipped, and it is bound to `chatSchemaV14` /
+// `chatSchemaV15` - both genuinely released - via the frozen chat trees.
 export const messageSchemaPreImage = z.discriminatedUnion("role", [
   userMessageSchemaPreTurnTail,
   assistantMessageSchemaPreImage,

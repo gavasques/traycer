@@ -175,7 +175,6 @@ import {
   chatSubscribeV14,
   chatSubscribeV15,
   chatSubscribeV16,
-  chatSubscribeV17,
 } from "@traycer/protocol/host/agent/gui/contracts";
 import {
   agentTuiGenerateTitleV10,
@@ -7802,7 +7801,7 @@ const HOST_STREAM_RPC_REGISTRY_DEFINITION = {
   ...HOST_STREAM_RPC_REGISTRY_OTHER_DEFINITION,
   "chat.subscribe": {
     1: {
-      latestMinor: 7,
+      latestMinor: 6,
       versions: {
         0: {
           contract: chatSubscribeV10,
@@ -7825,9 +7824,6 @@ const HOST_STREAM_RPC_REGISTRY_DEFINITION = {
         6: {
           contract: chatSubscribeV16,
         },
-        7: {
-          contract: chatSubscribeV17,
-        },
       },
     },
   },
@@ -7838,7 +7834,7 @@ const HOST_STREAM_RPC_REGISTRY_DEFINITION = {
 // `typeof HOST_STREAM_RPC_REGISTRY_DEFINITION` (which includes it): every
 // OTHER streaming method is built from `typeof
 // HOST_STREAM_RPC_REGISTRY_OTHER_DEFINITION`, a const that never contains
-// `chat.subscribe`'s 7-minor discriminated-union schema, so `.d.ts` emission
+// `chat.subscribe`'s 6-minor discriminated-union schema, so `.d.ts` emission
 // never has to print it - `keyof HostStreamRpcRegistry` and `ParamsOf<...>`
 // stay precise for every method except `chat.subscribe`. Its callers (e.g.
 // `ChatStreamClient`) lose compile-time verification of their open-request

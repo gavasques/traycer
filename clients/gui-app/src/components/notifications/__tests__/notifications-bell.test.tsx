@@ -49,6 +49,7 @@ import {
   NOTIFICATIONS_ARRAY_KEY,
   type NotificationRoomEntryMap,
 } from "@traycer/protocol/notifications/notification-room";
+import { NO_TRANSPORT_EVIDENCE } from "@traycer-clients/shared/host-selection/transport-evidence";
 
 const activeHostIdRef = vi.hoisted(() => ({
   value: null as string | null,
@@ -151,6 +152,7 @@ class MockWsStreamClient extends WsStreamClient<HostStreamRpcRegistry> {
       bearer: () => null,
       auth: null,
       hostCredentialMint: null,
+      evidence: NO_TRANSPORT_EVIDENCE,
       webSocketFactory: {
         create: () => {
           throw new Error("MockWsStreamClient should not open a websocket");

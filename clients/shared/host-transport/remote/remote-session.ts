@@ -144,6 +144,27 @@ function qosForStreamMethod(method: string): QosClassValue {
  * full attach.
  */
 
+/**
+ * Whether a connection loss is evidence ABOUT THE HOST, or only about us.
+ *
+ * The one funnel (`handleConnectionLost`) is shared by both, deliberately -
+ * backoff, stream re-subscribe and pending-unary rejection belong in one
+ * place. What is NOT shared is the verdict that leaves it:
+ *
+ *  - `host-transport-plane` - the relay socket closed, a Noise/handshake step
+ *    was rejected, the peer went away, a phase deadline elapsed with the host
+ *    silent. The host's own transport plane answered (or failed to), so this
+ *    is `confirmed-refusal` evidence.
+ *  - `not-host-evidence` - we tore the connection down ourselves (a caller's
+ *    reconnect nudge) or could not present a credential (no bearer). The host
+ *    refused nothing; it may be perfectly healthy. Reported `indeterminate`.
+ *
+ * This is the durable classification rule applied one layer down from where
+ * it was written: `confirmed-refusal` requires evidence from the HOST's
+ * transport plane, and a client's own teardown request is self-evidence.
+ */
+type ConnectionLossProvenance = "host-transport-plane" | "not-host-evidence";
+
 export interface RemoteSessionOptions<
   RpcRegistry extends VersionedRpcRegistry,
   StreamRegistry extends VersionedStreamRpcRegistry,
@@ -998,17 +1019,23 @@ export class RemoteSession<
 
   /**
    * `LogicalStreamPort.requestSessionReconnect`. Routes a caller-requested
-   * reconnect (a post-sleep/wake liveness nudge) through the SAME
-   * `handleConnectionLost` path a real transport drop takes, so the backoff
-   * state machine, stream re-subscribe, and pending-unary rejection stay in
-   * one place. No-op when idle or closed - there is no socket to replace, and
-   * the existing `beginConnect`/backoff already owns getting one.
+   * reconnect (a post-sleep/wake liveness nudge, a store discarding a socket
+   * whose frames it could not parse) through the SAME `handleConnectionLost`
+   * path a real transport drop takes, so the backoff state machine, stream
+   * re-subscribe, and pending-unary rejection stay in one place. No-op when
+   * idle or closed - there is no socket to replace, and the existing
+   * `beginConnect`/backoff already owns getting one.
+   *
+   * `not-host-evidence`: WE asked for this teardown. The host refused
+   * nothing - it may be answering perfectly, which is exactly the case a
+   * caller nudging for liveness is in. Sharing the funnel is right; sharing
+   * its VERDICT is not.
    */
   requestSessionReconnect(reason: string): void {
     if (this.phase === "closed" || this.phase === "idle") {
       return;
     }
-    this.handleConnectionLost(this.connectGeneration, reason);
+    this.handleConnectionLost(this.connectGeneration, reason, "not-host-evidence");
   }
 
   closeStream(streamId: number, reason: string): void {
@@ -1102,7 +1129,7 @@ export class RemoteSession<
 
     const scheduler = new PriorityScheduler({
       write: (frame) => this.writeFrame(generation, frame),
-      onWriteError: () => this.handleConnectionLost(generation, "write-failed"),
+      onWriteError: () => this.handleConnectionLost(generation, "write-failed", "host-transport-plane"),
       initialBulkCredits: INITIAL_BULK_SEND_CREDITS,
       now: undefined,
     });
@@ -1127,6 +1154,7 @@ export class RemoteSession<
           this.handleConnectionLost(
             generation,
             describeSocketClose(this.phase, info),
+            "host-transport-plane",
           ),
       },
     });
@@ -1166,7 +1194,11 @@ export class RemoteSession<
         return;
       }
       if (!connection.relaySocket.sendData(msg0)) {
-        this.handleConnectionLost(generation, "handshake-send-failed");
+        this.handleConnectionLost(
+          generation,
+          "handshake-send-failed",
+          "host-transport-plane",
+        );
       }
     })();
   }
@@ -1188,7 +1220,11 @@ export class RemoteSession<
         }
         this.sendOpenFrame(generation, connection);
       })().catch(() =>
-        this.handleConnectionLost(generation, "handshake-read-failed"),
+        this.handleConnectionLost(
+          generation,
+          "handshake-read-failed",
+          "host-transport-plane",
+        ),
       );
       return;
     }
@@ -1248,7 +1284,11 @@ export class RemoteSession<
       }
       this.dispatchInbound(generation, connection, message);
     })().catch(() =>
-      this.handleConnectionLost(generation, "inbound-decode-failed"),
+      this.handleConnectionLost(
+        generation,
+        "inbound-decode-failed",
+        "host-transport-plane",
+      ),
     );
   }
 
@@ -1344,8 +1384,13 @@ export class RemoteSession<
   ): void {
     const bearer = this.readBearerOrNull();
     if (bearer === null) {
-      // No bearer to present → cannot authenticate the session; stay in backoff.
-      this.handleConnectionLost(generation, "missing-bearer");
+      // No bearer to present → cannot authenticate the session; stay in
+      // backoff. `not-host-evidence` for the same reason a failed grant mint
+      // is indeterminate: this is the CREDENTIAL plane refusing us, one step
+      // before the host was ever asked anything. Counting it would let a
+      // signed-out moment march every remote host toward confirmed death at
+      // once.
+      this.handleConnectionLost(generation, "missing-bearer", "not-host-evidence");
       return;
     }
     this.phase = "opening";
@@ -1408,7 +1453,11 @@ export class RemoteSession<
         if (parsed.success) {
           this.handleSessionFatal(generation, parsed.data.details);
         } else {
-          this.handleConnectionLost(generation, "malformed-session-fatal");
+          this.handleConnectionLost(
+            generation,
+            "malformed-session-fatal",
+            "host-transport-plane",
+          );
         }
         return;
       }
@@ -1552,7 +1601,11 @@ export class RemoteSession<
     }
     const parsed = sessionOpenAckPayloadSchema.safeParse(json);
     if (!parsed.success) {
-      this.handleConnectionLost(generation, "malformed-openAck");
+      this.handleConnectionLost(
+        generation,
+        "malformed-openAck",
+        "host-transport-plane",
+      );
       return;
     }
     const hostRpcMerged = mergeConnectionManifests(
@@ -1735,7 +1788,11 @@ export class RemoteSession<
       // fresh `NoiseChannel` + relay dial + `open{bearer}` - rather than a
       // second state machine or a new wire frame (`session_reset{sid}`
       // stays deferred/telemetry-gated; see the S2 ticket).
-      this.handleConnectionLost(generation, "host-attached-stale-noise");
+      this.handleConnectionLost(
+        generation,
+        "host-attached-stale-noise",
+        "host-transport-plane",
+      );
     }
   }
 
@@ -1755,11 +1812,28 @@ export class RemoteSession<
       });
       return;
     }
-    this.handleConnectionLost(generation, `peer-gone:${reason}`);
+    this.handleConnectionLost(
+      generation,
+      `peer-gone:${reason}`,
+      "host-transport-plane",
+    );
   }
 
-  /** Any transport loss → drop the connection and full-resume from backoff. */
-  private handleConnectionLost(generation: number, cause: string): void {
+  /**
+   * Any transport loss → drop the connection and full-resume from backoff.
+   *
+   * `provenance` is REQUIRED, and is the whole reason this parameter exists:
+   * the funnel is shared by losses that are host evidence and losses that are
+   * not, and before it was threaded here every caller was laundered into a
+   * confirmed refusal on the way past. A required argument makes the census
+   * mechanical - a new caller cannot reach this funnel without stating which
+   * kind of loss it is.
+   */
+  private handleConnectionLost(
+    generation: number,
+    cause: string,
+    provenance: ConnectionLossProvenance,
+  ): void {
     if (!this.isCurrent(generation) || this.phase === "closed") {
       return;
     }
@@ -1773,6 +1847,15 @@ export class RemoteSession<
     // has already retracted the announced session, so the refusal is not
     // suppressed by liveness that no longer exists.
     //
+    // ...but only for losses that ARE host evidence. A caller-requested
+    // reconnect and a missing local bearer both arrive here too, and neither
+    // is a statement about the host: the durable rule is that
+    // `confirmed-refusal` requires evidence from the HOST's transport plane,
+    // and a client's own teardown request is self-evidence. Reporting those as
+    // refusals let three app-driven reconnects reach the confirmed-death
+    // streak on a host that never stopped answering - the false-Offline class
+    // invariant 5 exists to prevent, reintroduced from inside the client.
+    //
     // Its own attempt id, NOT the generation's: a generation that reached
     // ready already reported success under `#<generation>`, and the authority
     // deduplicates by attempt id - so reusing it would swallow the very first
@@ -1780,7 +1863,10 @@ export class RemoteSession<
     // funnel runs at most once per generation (`isCurrent` fails the moment
     // `dropConnection` nulls the connection), so the suffixed id stays a
     // faithful one-attempt-one-outcome report.
-    this.reportEvidenceOutcome(`${this.evidenceScope}#${generation}-lost`, "refusal");
+    this.reportEvidenceOutcome(
+      `${this.evidenceScope}#${generation}-lost`,
+      provenance === "host-transport-plane" ? "refusal" : "indeterminate",
+    );
   }
 
   /**
@@ -1831,11 +1917,26 @@ export class RemoteSession<
     generation: number,
     details: FatalErrorDetails,
   ): void {
+    // The restart tombstone (P1.4 / D5 / M1), reported BEFORE the teardown it
+    // announces. This is the ingress by which a restart issued from ANY
+    // client - a GUI on the user's other machine, a CLI on the box, an update
+    // install - reaches this window's selection authority, which otherwise
+    // sees only a socket dying and cannot tell deliberate from dead.
+    //
+    // It does not replace the loss report below, and must not: the session
+    // really is going away, and the authority's derivation order is what puts
+    // the expected-outage HOLD above the death streak the loss feeds. Two
+    // honest reports beat one that tries to mean both.
+    this.reportRestartIntentIfPresent(details);
     if (details.retryable === true) {
       // A transient host blip must not count toward the credential give-up
       // bound - clear any streak left by a prior genuine UNAUTHORIZED episode.
       this.noProgressUnauthorizedReconnects = 0;
-      this.handleConnectionLost(generation, "session-fatal-retryable");
+      this.handleConnectionLost(
+        generation,
+        "session-fatal-retryable",
+        "host-transport-plane",
+      );
       return;
     }
     const auth = this.revalidator();
@@ -2168,7 +2269,11 @@ export class RemoteSession<
     const generation = this.connectGeneration;
     this.standingTimer = setTimeout(() => {
       this.standingTimer = null;
-      this.handleConnectionLost(generation, "host-standing-lapsed");
+      this.handleConnectionLost(
+        generation,
+        "host-standing-lapsed",
+        "host-transport-plane",
+      );
     }, HOST_STANDING_BOUND_MS);
   }
 
@@ -2404,6 +2509,27 @@ export class RemoteSession<
    * hand, and there is deliberately no path here that could consult a
    * directory verdict (invariant 5).
    */
+  /**
+   * Forwards a host-published restart tombstone to the selection authority.
+   *
+   * Every observation is forwarded, including duplicates across reconnects:
+   * the authority keys episodes by (hostId, tombstoneId) and a repeat receipt
+   * is inert by contract, so suppressing here would only add a second,
+   * weaker copy of a rule that already exists in the one place that can
+   * enforce it across every window in the app.
+   */
+  private reportRestartIntentIfPresent(details: FatalErrorDetails): void {
+    const restartIntent = details.restartIntent;
+    if (restartIntent === undefined) {
+      return;
+    }
+    this.options.evidence.reportRestartIntent(
+      this.options.hostId,
+      restartIntent.tombstoneId,
+      restartIntent.expiresAt,
+    );
+  }
+
   private reportEvidenceOutcome(
     attemptId: string,
     outcome: "success" | "refusal" | "plan-restricted" | "indeterminate",
@@ -2524,7 +2650,7 @@ export class RemoteSession<
     this.clearPhaseTimer();
     this.phaseTimer = setTimeout(() => {
       this.phaseTimer = null;
-      this.handleConnectionLost(generation, cause);
+      this.handleConnectionLost(generation, cause, "host-transport-plane");
     }, timeoutMs);
   }
 

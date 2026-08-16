@@ -96,6 +96,27 @@ export interface TransportEvidenceReporter {
     readonly hostVersion: string | null;
     readonly incompatibility: SelectionIncompatibility | null;
   }): void;
+  /**
+   * A restart tombstone this transport observed the HOST publish on its way
+   * down (P1.4 / D5 / M1). Unlike every other member here it is not an
+   * outcome of an attempt: it is the host stating that the outage about to
+   * happen is deliberate, which is the one thing no renderer-local signal can
+   * know when the restart was issued by somebody else - another machine, a
+   * CLI on the box, an update install.
+   *
+   * Report it and keep going. It does NOT replace the ordinary teardown
+   * evidence that follows on the same connection: the refusal/`sessionLost`
+   * reports still fire, and the authority's derivation order is what puts the
+   * expected-outage HOLD above the death streak they feed.
+   *
+   * `expiresAt` is the host's clock, carried for display only - the authority
+   * bounds the episode with its own ceiling.
+   */
+  reportRestartIntent(
+    hostId: string,
+    tombstoneId: string,
+    expiresAt: number | null,
+  ): void;
 }
 
 /**
@@ -112,6 +133,7 @@ export const NO_TRANSPORT_EVIDENCE: TransportEvidenceReporter = {
   reportDialTimeout: () => undefined,
   reportDialIndeterminate: () => undefined,
   reportCompatVerdict: () => undefined,
+  reportRestartIntent: () => undefined,
 };
 
 /**
@@ -217,5 +239,13 @@ export class TransportEvidenceRelay implements TransportEvidenceReporter {
     readonly incompatibility: SelectionIncompatibility | null;
   }): void {
     this.target?.reportCompatVerdict(input);
+  }
+
+  reportRestartIntent(
+    hostId: string,
+    tombstoneId: string,
+    expiresAt: number | null,
+  ): void {
+    this.target?.reportRestartIntent(hostId, tombstoneId, expiresAt);
   }
 }

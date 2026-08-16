@@ -36,6 +36,7 @@ import {
   selectHostNotificationIds,
   useHostNotificationsStore,
 } from "@/stores/notifications/host-notifications-store";
+import { NO_TRANSPORT_EVIDENCE } from "@traycer-clients/shared/host-selection/transport-evidence";
 
 const EMPTY_SUMMARY: HostNotificationsSummary = {
   unreadCount: 0,
@@ -211,6 +212,7 @@ class MockWsStreamClient extends WsStreamClient<HostStreamRpcRegistry> {
       bearer: () => null,
       auth: null,
       hostCredentialMint: null,
+      evidence: NO_TRANSPORT_EVIDENCE,
       webSocketFactory: {
         create: () => {
           throw new Error("MockWsStreamClient should not open a websocket");

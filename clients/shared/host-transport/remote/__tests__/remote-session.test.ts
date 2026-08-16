@@ -14,6 +14,7 @@ import {
   defineRpcContract,
   defineUpgradePath,
   defineVersionedRpcRegistry,
+  HOST_RESTARTING_FATAL_CODE,
   type FatalErrorDetails,
   type VersionedRpcRegistry,
 } from "@traycer/protocol/framework/index";
@@ -601,7 +602,14 @@ type RecordedEvidenceCall =
         readonly hostVersion: string | null;
         readonly incompatibility: SelectionIncompatibility | null;
       };
+    }
+  | {
+      readonly method: "reportRestartIntent";
+      readonly hostId: string;
+      readonly tombstoneId: string;
+      readonly expiresAt: number | null;
     };
+
 
 /**
  * Records every call a transport makes into a `TransportEvidenceReporter`, in
@@ -703,6 +711,19 @@ class RecordingEvidence implements TransportEvidenceReporter {
       (call): call is RecordedEvidenceCall & { readonly method: Method } =>
         call.method === method,
     );
+  }
+
+  reportRestartIntent(
+    hostId: string,
+    tombstoneId: string,
+    expiresAt: number | null,
+  ): void {
+    this.calls.push({
+      method: "reportRestartIntent",
+      hostId,
+      tombstoneId,
+      expiresAt,
+    });
   }
 }
 
@@ -2569,6 +2590,312 @@ describe("RemoteSession connection-loss attempt id is distinct from its generati
         // swallow the very first refusal after a live session died.
         expect(lostAttemptId).not.toBe(successAttemptId);
         expect(lostAttemptId).toBe(`${successAttemptId}-lost`);
+      } finally {
+        session.close();
+      }
+    },
+    TEST_BUDGET_MS,
+  );
+});
+
+describe("RemoteSession restart tombstone forwarding (P1.4 / D5 / M1)", () => {
+  it(
+    "a session-level FATAL carrying restartIntent + retryable:true reports exactly one reportRestartIntent with the right hostId/tombstoneId/expiresAt, and the session reconnects instead of going terminal",
+    async () => {
+      const relay = new FakeRelayHost();
+      const lease = new MutableBearerLease("valid-token", "user-1");
+      const recorder = new RecordingEvidence();
+      const session = new RemoteSession({
+        ...buildSessionOptions(relay, lease, null),
+        evidence: recorder,
+      });
+      try {
+        session.start();
+        await vi.waitFor(() => expect(session.isReady()).toBe(true), WAIT);
+
+        await relay.sendStreamFatal(SESSION_CONTROL_STREAM_ID, {
+          code: HOST_RESTARTING_FATAL_CODE,
+          reason: "The host is restarting and expects to be back shortly",
+          incompatibleMethods: null,
+          upgradeGuidance: null,
+          retryable: true,
+          restartIntent: {
+            tombstoneId: "tombstone-c1",
+            expiresAt: 1_700_000_000_000,
+          },
+        });
+
+        await vi.waitFor(
+          () =>
+            expect(
+              recorder.callsNamed("reportRestartIntent").length,
+            ).toBeGreaterThan(0),
+          WAIT,
+        );
+        const tombstones = recorder.callsNamed("reportRestartIntent");
+        expect(tombstones).toHaveLength(1);
+        expect(tombstones[0].hostId).toBe("host-1");
+        expect(tombstones[0].tombstoneId).toBe("tombstone-c1");
+        expect(tombstones[0].expiresAt).toBe(1_700_000_000_000);
+
+        // The session must NOT go terminal - it reconnects, exactly like any
+        // other retryable session-fatal.
+        expect(session.isClosed()).toBe(false);
+        await vi.waitFor(() => expect(session.isReady()).toBe(true), WAIT);
+      } finally {
+        session.close();
+      }
+    },
+    TEST_BUDGET_MS,
+  );
+
+  it(
+    "a session-level FATAL with NO restartIntent produces zero reportRestartIntent calls - old-host compat",
+    async () => {
+      const relay = new FakeRelayHost();
+      const lease = new MutableBearerLease("valid-token", "user-1");
+      const recorder = new RecordingEvidence();
+      const session = new RemoteSession({
+        ...buildSessionOptions(relay, lease, null),
+        evidence: recorder,
+      });
+      try {
+        session.start();
+        await vi.waitFor(() => expect(session.isReady()).toBe(true), WAIT);
+
+        await relay.sendStreamFatal(SESSION_CONTROL_STREAM_ID, {
+          code: "SOME_TRANSIENT_CODE",
+          reason: "a transient host-side rejection carrying no tombstone",
+          incompatibleMethods: null,
+          upgradeGuidance: null,
+          retryable: true,
+        });
+
+        // Positive control in the SAME test: the retryable path DOES still
+        // run and produce its ordinary loss evidence, so the absence of a
+        // tombstone report below is not because nothing happened at all.
+        await vi.waitFor(
+          () =>
+            expect(
+              recorder.callsNamed("reportDialRefusal").length,
+            ).toBeGreaterThan(0),
+          WAIT,
+        );
+        expect(recorder.callsNamed("reportRestartIntent")).toHaveLength(0);
+      } finally {
+        session.close();
+      }
+    },
+    TEST_BUDGET_MS,
+  );
+
+  it(
+    "the tombstone report does not replace the ordinary connection-loss evidence - both are present, in order",
+    async () => {
+      const relay = new FakeRelayHost();
+      const lease = new MutableBearerLease("valid-token", "user-1");
+      const recorder = new RecordingEvidence();
+      const session = new RemoteSession({
+        ...buildSessionOptions(relay, lease, null),
+        evidence: recorder,
+      });
+      try {
+        session.start();
+        await vi.waitFor(() => expect(session.isReady()).toBe(true), WAIT);
+
+        await relay.sendStreamFatal(SESSION_CONTROL_STREAM_ID, {
+          code: HOST_RESTARTING_FATAL_CODE,
+          reason: "restarting",
+          incompatibleMethods: null,
+          upgradeGuidance: null,
+          retryable: true,
+          restartIntent: { tombstoneId: "tombstone-c3", expiresAt: null },
+        });
+
+        await vi.waitFor(
+          () =>
+            expect(
+              recorder.callsNamed("reportDialRefusal").length,
+            ).toBeGreaterThan(0),
+          WAIT,
+        );
+
+        const restartIntentIndex = recorder.calls.findIndex(
+          (call) => call.method === "reportRestartIntent",
+        );
+        const dialRefusalIndex = recorder.calls.findIndex(
+          (call) => call.method === "reportDialRefusal",
+        );
+        expect(restartIntentIndex).toBeGreaterThanOrEqual(0);
+        expect(dialRefusalIndex).toBeGreaterThanOrEqual(0);
+        // Two honest reports, not one that tries to mean both: the tombstone
+        // is filed before the funnel retracts liveness and reports the loss.
+        expect(restartIntentIndex).toBeLessThan(dialRefusalIndex);
+      } finally {
+        session.close();
+      }
+    },
+    TEST_BUDGET_MS,
+  );
+
+  it(
+    "a FATAL carrying restartIntent with retryable absent still reports the tombstone - every arm reports it, not only the retryable one",
+    async () => {
+      const relay = new FakeRelayHost();
+      const lease = new MutableBearerLease("valid-token", "user-1");
+      const recorder = new RecordingEvidence();
+      const session = new RemoteSession({
+        ...buildSessionOptions(relay, lease, null),
+        evidence: recorder,
+      });
+      try {
+        session.start();
+        await vi.waitFor(() => expect(session.isReady()).toBe(true), WAIT);
+
+        await relay.sendStreamFatal(SESSION_CONTROL_STREAM_ID, {
+          code: "INCOMPATIBLE",
+          reason: "manifest mismatch",
+          incompatibleMethods: null,
+          upgradeGuidance: null,
+          restartIntent: { tombstoneId: "tombstone-c4", expiresAt: null },
+        });
+
+        await vi.waitFor(() => expect(session.isClosed()).toBe(true), WAIT);
+
+        const tombstones = recorder.callsNamed("reportRestartIntent");
+        expect(tombstones).toHaveLength(1);
+        expect(tombstones[0].tombstoneId).toBe("tombstone-c4");
+      } finally {
+        session.close();
+      }
+    },
+    TEST_BUDGET_MS,
+  );
+});
+
+describe("RemoteSession F7: a caller-requested reconnect is self-evidence, not host evidence", () => {
+  it(
+    "a caller-requested reconnect (LogicalStream.requestReconnect -> requestSessionReconnect) reports reportDialIndeterminate, NOT reportDialRefusal",
+    async () => {
+      const relay = new FakeRelayHost();
+      const lease = new MutableBearerLease("valid-token", "user-1");
+      const recorder = new RecordingEvidence();
+      const session = new RemoteSession({
+        ...buildSessionOptions(relay, lease, null),
+        evidence: recorder,
+      });
+      try {
+        session.start();
+        await vi.waitFor(() => expect(session.isReady()).toBe(true), WAIT);
+
+        // `RemoteSession.requestSessionReconnect` is the exact
+        // `LogicalStreamPort` member `LogicalStream.requestReconnect()`
+        // delegates to in production (see `logical-stream.ts`); calling it
+        // directly here avoids simulating a full subscribe/restore cycle
+        // through the fake relay while still driving the SAME funnel arm.
+        session.requestSessionReconnect("caller-requested-reconnect");
+
+        await vi.waitFor(
+          () =>
+            expect(
+              recorder.callsNamed("reportDialIndeterminate").length,
+            ).toBeGreaterThan(0),
+          WAIT,
+        );
+        expect(recorder.callsNamed("reportDialRefusal")).toHaveLength(0);
+      } finally {
+        session.close();
+      }
+    },
+    TEST_BUDGET_MS,
+  );
+
+  it(
+    "a genuine relay-socket close still reports reportDialRefusal - the control arm proving the caller-requested test above was not bought by a silenced funnel",
+    async () => {
+      const relay = new FakeRelayHost();
+      const lease = new MutableBearerLease("valid-token", "user-1");
+      const recorder = new RecordingEvidence();
+      const session = new RemoteSession({
+        ...buildSessionOptions(relay, lease, null),
+        evidence: recorder,
+      });
+      try {
+        session.start();
+        await vi.waitFor(() => expect(session.isReady()).toBe(true), WAIT);
+
+        relay.dropCurrentConnection();
+
+        await vi.waitFor(
+          () =>
+            expect(
+              recorder.callsNamed("reportDialRefusal").length,
+            ).toBeGreaterThan(0),
+          WAIT,
+        );
+        expect(recorder.callsNamed("reportDialRefusal")).toHaveLength(1);
+        expect(recorder.callsNamed("reportDialIndeterminate")).toHaveLength(0);
+      } finally {
+        session.close();
+      }
+    },
+    TEST_BUDGET_MS,
+  );
+
+  it(
+    "the missing-bearer path reports indeterminate - credential plane, never dialed the host",
+    async () => {
+      const relay = new FakeRelayHost();
+      // Empty from the start: every attach attempt fails to present a
+      // bearer at `sendOpenFrame`, so this drives the SAME `not-host-evidence`
+      // funnel arm without needing a mid-session credential drop.
+      const lease = new MutableBearerLease("", "user-1");
+      const recorder = new RecordingEvidence();
+      const session = new RemoteSession({
+        ...buildSessionOptions(relay, lease, null),
+        evidence: recorder,
+      });
+      try {
+        session.start();
+        await vi.waitFor(
+          () =>
+            expect(
+              recorder.callsNamed("reportDialIndeterminate").length,
+            ).toBeGreaterThan(0),
+          WAIT,
+        );
+        expect(recorder.callsNamed("reportDialRefusal")).toHaveLength(0);
+        expect(session.isReady()).toBe(false);
+      } finally {
+        session.close();
+      }
+    },
+    TEST_BUDGET_MS,
+  );
+
+  it(
+    "three consecutive caller-requested reconnects produce ZERO refusals - three app-driven reconnects must not reach the confirmed-death streak on a host that never stopped answering",
+    async () => {
+      const relay = new FakeRelayHost();
+      const lease = new MutableBearerLease("valid-token", "user-1");
+      const recorder = new RecordingEvidence();
+      const session = new RemoteSession({
+        ...buildSessionOptions(relay, lease, null),
+        evidence: recorder,
+      });
+      try {
+        session.start();
+        await vi.waitFor(() => expect(session.isReady()).toBe(true), WAIT);
+
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          session.requestSessionReconnect("caller-requested-reconnect");
+          await vi.waitFor(() => expect(session.isReady()).toBe(true), WAIT);
+        }
+
+        expect(recorder.callsNamed("reportDialRefusal")).toHaveLength(0);
+        expect(
+          recorder.callsNamed("reportDialIndeterminate").length,
+        ).toBeGreaterThanOrEqual(3);
       } finally {
         session.close();
       }

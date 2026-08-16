@@ -67,6 +67,49 @@ export type IncompatibilityUpgradeGuidance = {
 export const RPC_REQUEST_TIMEOUT_FATAL_CODE = "RPC_REQUEST_TIMEOUT";
 
 /**
+ * Fatal code a host emits on every live connection when it is deliberately
+ * standing itself down and expects to come back - the restart tombstone
+ * (connection registry §3 / D5 / M1). Always paired with `retryable: true`
+ * and a {@link FatalErrorDetails.restartIntent} payload.
+ *
+ * The code is stable and separate from the payload on purpose: the payload is
+ * what a selection authority acts on, while the code is what a log line, a
+ * support transcript, or a client that never grew the payload reads.
+ */
+export const HOST_RESTARTING_FATAL_CODE = "HOST_RESTARTING";
+
+/**
+ * The restart tombstone a host publishes to every client attached to it, at
+ * the moment it latches restart intent and before any teardown step runs.
+ *
+ * It rides {@link FatalErrorDetails} rather than a frame kind of its own
+ * because that one payload is shared verbatim by all three host->client
+ * planes - the unary `/rpc` `fatalError` frame, the `/stream` `fatalError`
+ * frame, and the relay mux's `FATAL` on the session control stream - so one
+ * additive field reaches every attached client whatever transport it holds.
+ * The alternatives are both fail-closed against peers that predate them: a
+ * new mux frame type throws `MuxFrameDecodeError` in `decodeMuxFrame`
+ * (unknown type bytes are rejected, not skipped), and a new `/stream` control
+ * kind falls through to the application-frame envelope, whose required
+ * `hasBinaryPayload` is absent - tearing the socket down as malformed. A new
+ * METHOD name is barred outright by the two-sided release invariant.
+ *
+ * `tombstoneId` is minted once per teardown episode and is IDENTICAL on every
+ * connection and both planes. That is what makes the authority's
+ * (hostId, tombstoneId) episode key work: first receipt anchors one fixed
+ * expected-outage episode and every duplicate - another window, the other
+ * plane, a replay - is inert.
+ *
+ * `expiresAt` is the HOST's clock (epoch ms) and is display-only; an
+ * authority bounds the episode with its own ceiling, never with a peer's
+ * clock.
+ */
+export type HostRestartIntent = {
+  readonly tombstoneId: string;
+  readonly expiresAt: number | null;
+};
+
+/**
  * Full detail payload carried by a fatal error frame prior to WebSocket
  * close. The subsequent close event is only the fatal signal - all rich
  * detail MUST travel inside this frame.
@@ -86,6 +129,16 @@ export type FatalErrorDetails = {
    * a newer client then reads "not retryable".
    */
   readonly retryable?: boolean;
+  /**
+   * Present exactly when this connection is being closed by a host that is
+   * deliberately restarting - see {@link HostRestartIntent} and
+   * {@link HOST_RESTARTING_FATAL_CODE}. Additive and optional in both
+   * directions: an older host omits it and a newer client reads "no
+   * tombstone" (bouncing exactly as it does today), while an older client
+   * STRIPS it at the schema below and handles the frame as the ordinary
+   * retryable fatal it already understands.
+   */
+  readonly restartIntent?: HostRestartIntent;
 };
 
 /**
@@ -211,9 +264,25 @@ export const incompatibilityUpgradeGuidanceSchema = z.object({
   hostShouldUpgrade: z.boolean(),
 });
 
+/** Canonical schema for the restart tombstone carried on a fatal error frame. */
+export const hostRestartIntentSchema = z.object({
+  tombstoneId: z.string().min(1),
+  // The host's own clock, and display-only - so a peer whose clock is absurd
+  // costs a wrong tooltip, never a wrong deadline. Nullable rather than
+  // omitted-when-unknown: "the host did not say" is a real answer here.
+  expiresAt: z.number().nullable(),
+});
+
 /**
  * Canonical schema for the full detail payload carried by a fatal error
  * frame.
+ *
+ * Deliberately NOT `.strict()`, and load-bearingly so: every additive field
+ * below (`retryable`, `restartIntent`) is backward-safe precisely because a
+ * peer that predates it parses the frame with its own older copy of this
+ * schema, which STRIPS the unknown key instead of rejecting the frame. A
+ * `.strict()` here would turn each future addition into a connection-killing
+ * parse error on every older peer in the field.
  */
 export const fatalErrorDetailsSchema = z.object({
   code: z.string().min(1),
@@ -226,6 +295,9 @@ export const fatalErrorDetailsSchema = z.object({
   // timeout) that the client recovers from with plain reconnect backoff, not
   // credential revalidation.
   retryable: z.boolean().optional(),
+  // Additive/optional, same rule as `retryable`: absent from every host that
+  // predates the restart tombstone, and stripped by every client that does.
+  restartIntent: hostRestartIntentSchema.optional(),
 });
 
 /** Canonical schema for the client `open` frame. */

@@ -48,6 +48,7 @@ import type {
   StreamConnectionStatus,
   StreamFrameEnvelope,
 } from "./i-stream-session";
+import type { TransportEvidenceReporter } from "@traycer-clients/shared/host-selection/transport-evidence";
 import type { IStreamClient } from "./i-stream-client";
 import type {
   IStreamWebSocketFactory,
@@ -95,6 +96,21 @@ export interface WsStreamClientOptions<
    * another and leave the host with nothing.
    */
   readonly hostCredentialMint: HostCredentialMintFlow | null;
+  /**
+   * Where this transport's observations reach the selection authority.
+   *
+   * `/stream` is the LOCAL host's long-lived connection - a remote host's
+   * streams ride the relay mux instead - so this is the leg that hears a
+   * restart tombstone from a local host somebody else restarted: a
+   * `traycer host restart` on the box, an update install, a second app
+   * window. The desktop's own mutation lane covers restarts IT issued and is
+   * structurally blind to those.
+   *
+   * Required, not defaulted, for the same reason the unary transport's is:
+   * a new construction site has to say whether it feeds an authority or
+   * `NO_TRANSPORT_EVIDENCE`.
+   */
+  readonly evidence: TransportEvidenceReporter;
   readonly webSocketFactory: IStreamWebSocketFactory;
   readonly dialTimeoutMs: number;
   readonly openAckTimeoutMs: number;
@@ -281,6 +297,7 @@ export class WsStreamClient<
       endpoint: this.options.endpoint,
       bearer: this.options.bearer,
       auth: this.options.auth,
+      evidence: this.options.evidence,
       webSocketFactory: this.options.webSocketFactory,
       dialTimeoutMs: this.options.dialTimeoutMs,
       openAckTimeoutMs: this.options.openAckTimeoutMs,
@@ -786,6 +803,7 @@ interface StreamSessionOptions<Registry extends VersionedStreamRpcRegistry> {
   readonly endpoint: HostEndpointProvider;
   readonly bearer: BearerSourceProvider;
   readonly auth: StreamAuthRevalidator | null;
+  readonly evidence: TransportEvidenceReporter;
   readonly webSocketFactory: IStreamWebSocketFactory;
   readonly dialTimeoutMs: number;
   readonly openAckTimeoutMs: number;
@@ -1486,6 +1504,34 @@ class StreamSession<
     }
   }
 
+  /**
+   * Forwards a host-published restart tombstone to the selection authority.
+   *
+   * Silent when the host published none - every host predating the tombstone,
+   * and every ordinary fatal on a host that does publish them. Duplicates are
+   * forwarded rather than filtered here: the authority keys episodes by
+   * (hostId, tombstoneId) and treats a repeat as inert, and that rule belongs
+   * in the one place that can apply it across every window in the app.
+   */
+  private reportRestartIntentIfPresent(details: FatalErrorDetails): void {
+    const restartIntent = details.restartIntent;
+    if (restartIntent === undefined) {
+      return;
+    }
+    const hostId = this.openFrameHostId;
+    if (hostId === null) {
+      // No dialed identity captured yet, so there is no host to file the
+      // tombstone against. Dropping is right: a guess would hold the wrong
+      // lease, and a fatal this early means nothing was serving anyway.
+      return;
+    }
+    this.config.evidence.reportRestartIntent(
+      hostId,
+      restartIntent.tombstoneId,
+      restartIntent.expiresAt,
+    );
+  }
+
   private handleFatalErrorFrame(parsed: object): void {
     const termParse = hostStreamFatalErrorFrameSchema.safeParse(parsed);
     if (!termParse.success) {
@@ -1494,6 +1540,16 @@ class StreamSession<
       return;
     }
     const details = termParse.data.details;
+    // The restart tombstone (P1.4 / D5 / M1), read BEFORE the frame is routed
+    // by `retryable`/`UNAUTHORIZED` so every arm reports it. The host is
+    // stating that the outage it is about to cause is deliberate - the one
+    // thing this window cannot infer for a restart it did not issue.
+    //
+    // `openFrameHostId`, not `endpoint()`: the identity THIS connection
+    // dialed, for the same reason the credential path reads it - the endpoint
+    // provider may already point somewhere else, and a tombstone filed
+    // against the wrong host would hold the wrong lease.
+    this.reportRestartIntentIfPresent(details);
     // `retryable` marks a transient host-side rejection. The stable subscribe-
     // timeout code is checked too because hosts through 1.1.9 emitted it without
     // the additive flag; a new client must still recover when paired with one of

@@ -417,7 +417,14 @@ type RecordedEvidenceCall =
         readonly hostVersion: string | null;
         readonly incompatibility: SelectionIncompatibility | null;
       };
+    }
+  | {
+      readonly method: "reportRestartIntent";
+      readonly hostId: string;
+      readonly tombstoneId: string;
+      readonly expiresAt: number | null;
     };
+
 
 /**
  * Records every call a transport makes into a `TransportEvidenceReporter`, in
@@ -519,6 +526,19 @@ class RecordingEvidence implements TransportEvidenceReporter {
       (call): call is RecordedEvidenceCall & { readonly method: Method } =>
         call.method === method,
     );
+  }
+
+  reportRestartIntent(
+    hostId: string,
+    tombstoneId: string,
+    expiresAt: number | null,
+  ): void {
+    this.calls.push({
+      method: "reportRestartIntent",
+      hostId,
+      tombstoneId,
+      expiresAt,
+    });
   }
 }
 

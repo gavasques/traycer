@@ -48,6 +48,7 @@ vi.mock("@/hooks/git/use-git-refresh-worktree-status", () => ({
 }));
 
 import { GitDiffTile } from "../git-diff-tile";
+import { NO_TRANSPORT_EVIDENCE } from "@traycer-clients/shared/host-selection/transport-evidence";
 
 /**
  * A stream session that just tracks whether it has been closed. Unlike the
@@ -91,6 +92,7 @@ class MockWsStreamClient extends WsStreamClient<HostStreamRpcRegistry> {
       bearer: () => null,
       auth: null,
       hostCredentialMint: null,
+      evidence: NO_TRANSPORT_EVIDENCE,
       webSocketFactory: {
         create: () => {
           throw new Error("MockWsStreamClient should not open a websocket");

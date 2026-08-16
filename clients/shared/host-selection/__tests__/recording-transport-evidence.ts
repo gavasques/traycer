@@ -45,6 +45,12 @@ export type RecordedTransportEvidence =
   | {
       readonly kind: "compat";
       readonly hostId: string;
+    }
+  | {
+      readonly kind: "restartIntent";
+      readonly hostId: string;
+      readonly tombstoneId: string;
+      readonly expiresAt: number | null;
     };
 
 /** Recording {@link TransportEvidenceReporter} for producer-suite tests. */
@@ -147,5 +153,18 @@ export class RecordingTransportEvidence implements TransportEvidenceReporter {
       (event): event is Extract<RecordedTransportEvidence, { kind: K }> =>
         event.kind === kind,
     );
+  }
+
+  reportRestartIntent(
+    hostId: string,
+    tombstoneId: string,
+    expiresAt: number | null,
+  ): void {
+    this.events.push({
+      kind: "restartIntent",
+      hostId,
+      tombstoneId,
+      expiresAt,
+    });
   }
 }

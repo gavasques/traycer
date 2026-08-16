@@ -74,6 +74,7 @@ import {
   usePrDetailSubscription,
   __resetPrDetailSubscriptionsForTesting,
 } from "../use-pr-detail-subscription";
+import { NO_TRANSPORT_EVIDENCE } from "@traycer-clients/shared/host-selection/transport-evidence";
 
 /**
  * Mock stream session for `pr.subscribeDetail`. Frame fields ride directly
@@ -142,6 +143,7 @@ class MockWsStreamClient extends WsStreamClient<HostStreamRpcRegistry> {
       bearer: () => null,
       auth: null,
       hostCredentialMint: null,
+      evidence: NO_TRANSPORT_EVIDENCE,
       webSocketFactory: {
         create: () => {
           throw new Error("MockWsStreamClient should not open a websocket");

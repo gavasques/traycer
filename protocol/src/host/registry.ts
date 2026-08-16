@@ -222,7 +222,9 @@ import {
   hostUpdateInstallUpgradeV10ToV11,
 } from "@traycer/protocol/host/maintenance/contracts";
 import {
+  lifecycleClaimShutdownUpgradeV10ToV11,
   lifecycleClaimShutdownV10,
+  lifecycleClaimShutdownV11,
   lifecycleCommitShutdownV10,
   lifecycleReleaseShutdownV10,
 } from "@traycer/protocol/host/lifecycle/contracts";
@@ -4082,11 +4084,20 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     // claim, so reconciliation must re-probe and use its legacy-safe path.
     degrade: { kind: "unsupported" },
     1: {
-      latestMinor: 0,
+      // @1.1 adds the additive `intent`, which is how a coordinator tells the
+      // host a start follows the stop - the only way the host can know, and
+      // what lets it publish its restart tombstone (D5/M1). @1.0 stays
+      // installed: its requests upgrade to `intent: "shutdown"`, reproducing
+      // today's no-tombstone behaviour exactly.
+      latestMinor: 1,
       versions: {
         0: {
           contract: lifecycleClaimShutdownV10,
           upgradeFromPreviousVersion: null,
+        },
+        1: {
+          contract: lifecycleClaimShutdownV11,
+          upgradeFromPreviousVersion: lifecycleClaimShutdownUpgradeV10ToV11,
         },
       },
       downgradePathsFromLatest: {},

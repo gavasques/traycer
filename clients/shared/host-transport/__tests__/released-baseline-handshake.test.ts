@@ -587,6 +587,7 @@ describe.skipIf(baselines.length === 0)(
           bearer: () => ctx.credentials,
           auth: null,
           hostCredentialMint: null,
+          evidence: NO_TRANSPORT_EVIDENCE,
           webSocketFactory: factory,
           dialTimeoutMs: 1000,
           openAckTimeoutMs: 1000,

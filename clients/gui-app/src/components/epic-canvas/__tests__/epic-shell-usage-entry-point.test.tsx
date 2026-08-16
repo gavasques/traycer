@@ -167,6 +167,8 @@ vi.mock("@/lib/host", async (importOriginal) => {
   return {
     ...actual,
     useHostClient: () => liveHostClient,
+    // The SPINE, a separate export since redesign P2.1.
+    useHostRuntimeClient: () => liveHostClient,
     useHostBinding: () => ({ hostClient: liveHostClient }),
     useAuthService: () => authService,
   };

@@ -27,6 +27,8 @@ const authService = {
 
 vi.mock("@/lib/host", () => ({
   useHostClient: () => hostClient,
+  // The SPINE, a separate export since redesign P2.1.
+  useHostRuntimeClient: () => hostClient,
   useHostBinding: () => ({ hostClient }),
   useAuthService: () => authService,
 }));

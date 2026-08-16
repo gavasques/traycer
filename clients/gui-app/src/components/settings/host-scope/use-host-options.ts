@@ -3,6 +3,7 @@ import { queryOptions, useQuery } from "@tanstack/react-query";
 import type { HostInstalledRecord } from "@traycer-clients/shared/platform/runner-host";
 import { useHostDirectoryList } from "@/hooks/host/use-host-directory-list-query";
 import { useRemoteSessionsPollReadiness } from "@/hooks/host/use-remote-sessions-poll-readiness";
+import { useHostProvisioningProgress } from "@/hooks/host/use-host-provisioning-progress";
 import { useRegisteredHosts } from "@/hooks/auth/use-registered-hosts-query";
 import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
 import { useRemoteHostsPlanRestricted } from "@/hooks/host/use-remote-hosts-plan-gate";
@@ -166,6 +167,15 @@ export function useHostOptions(): HostOptions {
   );
   const hasLiveSession = useRemoteSessionsPollReadiness(scopeHostIds);
 
+  // M5's "setting up" row state, sourced HERE rather than in the row component.
+  // Every picker suite mocks this module wholesale, so a runner-host read down
+  // in the row sat below that boundary and threw in each of them while
+  // production was fine - the fact belongs where its siblings
+  // (`connectable`, `health`) are built. Actor-agnostic by construction: the
+  // lane is the host controller's own, so it is busy whether the desktop's
+  // launch reconciler, the authority's ensure, or a user's Retry asked.
+  const localHostSettingUp = useHostProvisioningProgress() !== null;
+
   const hosts = useMemo(
     () =>
       buildHostScopeOptions({
@@ -177,6 +187,7 @@ export function useHostOptions(): HostOptions {
         hasLiveSession,
         viewerCheck: getViewerReachabilityCheck,
         remoteHostsPlanRestricted,
+        localHostSettingUp,
         nowMs,
       }),
     [
@@ -186,6 +197,7 @@ export function useHostOptions(): HostOptions {
       activeHostId,
       localService,
       hasLiveSession,
+      localHostSettingUp,
       remoteHostsPlanRestricted,
       nowMs,
     ],

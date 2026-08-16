@@ -47,6 +47,21 @@ export interface HostScopeOption {
    * erases the actual remedy — the fix is an upgrade, not a retry.
    */
   readonly planRestricted: boolean;
+  /**
+   * This machine's own host is being installed or started right now (M5).
+   *
+   * A per-host fact, and it lives here beside `connectable` and `health` for
+   * the same reason they do: every picker must answer "what is going on with
+   * this machine" identically. It was briefly derived inside the row component
+   * instead, which put a `useRunnerHost` read BELOW the boundary every picker
+   * suite mocks — the pickers kept working in production and every one of
+   * those suites threw, which is the shape of a fact living at the wrong
+   * layer.
+   *
+   * Always false for a host that is not this machine: the mutation lane
+   * belongs to the local host controller and says nothing about anyone else's.
+   */
+  readonly settingUp: boolean;
   /** Present in the account's host registry. */
   readonly registered: boolean;
   readonly platform: string | null;
@@ -75,6 +90,13 @@ export interface BuildHostScopeOptionsInput {
    * is not usable even though it looks like one.
    */
   readonly remoteHostsPlanRestricted: boolean;
+  /**
+   * The local host controller's mutation lane is busy (install, start,
+   * restart, update). Actor-agnostic by construction — the lane is the
+   * controller's own, so this is true whether the desktop's launch reconciler,
+   * the selection authority's ensure, or a user's Retry asked for it.
+   */
+  readonly localHostSettingUp: boolean;
   readonly nowMs: number;
 }
 
@@ -104,6 +126,7 @@ export function buildHostScopeOptions(
         input.remoteHostsPlanRestricted,
         input.hasLiveSession(hostId),
       ),
+      settingUp: isLocalMachine && input.localHostSettingUp,
       registered: item !== null,
       platform: item?.platform ?? null,
       version: item?.status.appVersion ?? entry?.version ?? null,
@@ -451,6 +474,10 @@ export function unavailableHostOption(
     isActive: false,
     connectable: false,
     planRestricted: false,
+    // A host the merged list has never heard of is not a machine we are
+    // installing: the mutation lane only ever describes THIS machine, and this
+    // stand-in is by definition some other one.
+    settingUp: false,
     registered: false,
     platform: null,
     version: null,

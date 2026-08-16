@@ -416,6 +416,34 @@ export function projectDefaultHostReadiness(args: {
  */
 export type PostLatchSurface = "app" | "switching" | "error" | "splash";
 
+/**
+ * Whether the WINDOW NARRATOR owns this readiness kind (status narration,
+ * D10).
+ *
+ * Exactly one narrator per scope is the rule, and these three kinds are the
+ * ones the global modal now speaks for: a window with no host yet, a window
+ * whose host cannot be reached, and a window whose host is being installed.
+ * The modal derives its own verdict from the authority's leases rather than
+ * from readiness, so leaving the gate's full-screen splash on these kinds
+ * would put two surfaces on screen describing the same fact in two
+ * vocabularies - which is the layering this epic is deleting, rebuilt.
+ *
+ * The kinds NOT listed stay with the gate deliberately, each for its own
+ * reason: `mobile-no-host` is a shell with no host concept at all (not a
+ * lease state); `restoring-request-context` is an auth fact; the
+ * `compatibility-*` pair and `provisioning-error`/`removed-host` are local
+ * lifecycle terminals that P3.2/P3.4 re-home with the machinery that owns
+ * them. Adding a kind here without a matching modal variant would silently
+ * delete its narration.
+ */
+export function windowNarratorOwns(kind: SurfaceReadiness["kind"]): boolean {
+  return (
+    kind === "loading-host" ||
+    kind === "unavailable-host" ||
+    kind === "provisioning-host"
+  );
+}
+
 export function postLatchSurfaceFor(
   kind: SurfaceReadiness["kind"],
 ): PostLatchSurface {

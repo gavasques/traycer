@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
-import type { MutationProgress } from "@traycer-clients/shared/platform/runner-host";
+import {
+  HOST_PROGRESS_IDLE_HEADING,
+  type HostProgressView,
+} from "@/lib/host/host-progress-copy";
 import { AppHeader } from "@/components/layout/header/app-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -15,7 +18,7 @@ export type LocalHostLoadingStage = "loading" | "slow";
 
 export interface LocalHostLoadingProps {
   readonly stage: LocalHostLoadingStage;
-  readonly progress: MutationProgress | null;
+  readonly progress: HostProgressView | null;
   /**
    * Called when the user clicks "Configure shell…". The caller drives
    * router navigation directly because the loading card is rendered
@@ -75,7 +78,13 @@ export function LocalHostLoading(props: LocalHostLoadingProps): ReactNode {
 
 export interface LocalHostLoadingContentProps {
   readonly stage: LocalHostLoadingStage;
-  readonly progress: MutationProgress | null;
+  /**
+   * The shared host-progress view (F19's one copy table), not a raw lane
+   * event. Built by the caller so this body and Settings ▸ Host read the same
+   * table: they used to phrase the same install two different ways, one keyed
+   * on the progress stage and one on the mutation kind.
+   */
+  readonly progress: HostProgressView | null;
   readonly onConfigureShell: () => void;
   /**
    * Drives the slow-stage Retry button. Injected rather than reading
@@ -109,7 +118,7 @@ export function LocalHostLoadingContent(
     pollIntervalMs: showDetails ? BOOTSTRAP_TAIL_POLL_MS : null,
   });
   const tail = status.data?.bootstrapLogTail ?? "";
-  const progressView = buildProgressView(props.progress);
+  const progressView = props.progress;
   // Only on the slow stage: while a start is progressing normally there is no
   // failed attempt to explain, and showing spawn diagnostics under a healthy
   // spinner reads as an error. Recomputed per render rather than memoised -
@@ -127,23 +136,9 @@ export function LocalHostLoadingContent(
         className="h-8 min-w-8 text-title-md text-foreground"
       />
       <p className="text-ui font-medium text-foreground">
-        {progressView.heading}
+        {progressView?.heading ?? HOST_PROGRESS_IDLE_HEADING}
       </p>
-      {progressView.detail !== null ? (
-        <p
-          data-testid="local-host-loading-progress-detail"
-          className="text-ui-sm text-muted-foreground"
-        >
-          {progressView.detail}
-        </p>
-      ) : null}
-      {progressView.percent !== null ? (
-        <HostDownloadProgress
-          percent={progressView.percent}
-          stage={progressView.stage}
-          byteLabel={progressView.byteLabel}
-        />
-      ) : null}
+      <ProgressLines view={progressView} />
       {props.stage === "slow" ? (
         <div
           data-testid="local-host-loading-slow-copy"
@@ -191,65 +186,51 @@ export function LocalHostLoadingContent(
   );
 }
 
-interface ProgressView {
-  readonly heading: string;
-  readonly detail: string | null;
-  readonly stage: string | null;
-  readonly percent: number | null;
-  readonly byteLabel: string | null;
-}
-
-function buildProgressView(progress: MutationProgress | null): ProgressView {
-  if (progress === null) {
-    return {
-      heading: "Starting local Traycer Host…",
-      detail: null,
-      stage: null,
-      percent: null,
-      byteLabel: null,
-    };
-  }
-  const percent =
-    progress.percent === null
-      ? null
-      : Math.min(100, Math.max(0, Math.round(progress.percent)));
-  return {
-    heading:
-      progress.stage === "download"
-        ? "Downloading Traycer Host…"
-        : "Setting up Traycer Host…",
-    detail: progress.message,
-    stage: progress.stage,
-    percent,
-    byteLabel:
-      progress.bytes !== null && progress.totalBytes !== null
-        ? `${formatBytes(progress.bytes)} of ${formatBytes(progress.totalBytes)}`
-        : null,
-  };
-}
-
-function formatBytes(bytes: number): string {
-  const mib = bytes / (1024 * 1024);
-  if (mib >= 10) return `${Math.round(mib)} MB`;
-  return `${mib.toFixed(1)} MB`;
+/**
+ * The lane's detail line and its progress bar, both of which only exist when
+ * the lane has said something. Split out of the body so the body's branch
+ * count stays about its own layout rather than about the view's optionality.
+ */
+function ProgressLines(props: {
+  readonly view: HostProgressView | null;
+}): ReactNode {
+  const { view } = props;
+  if (view === null) return null;
+  return (
+    <>
+      {view.detail === null ? null : (
+        <p
+          data-testid="local-host-loading-progress-detail"
+          className="text-ui-sm text-muted-foreground"
+        >
+          {view.detail}
+        </p>
+      )}
+      {view.percent === null ? null : (
+        <HostDownloadProgress
+          percent={view.percent}
+          shortLabel={view.shortLabel}
+          transferLabel={view.transferLabel}
+        />
+      )}
+    </>
+  );
 }
 
 interface HostDownloadProgressProps {
   readonly percent: number;
-  readonly stage: string | null;
-  readonly byteLabel: string | null;
+  readonly shortLabel: string;
+  readonly transferLabel: string | null;
 }
 
 function HostDownloadProgress(props: HostDownloadProgressProps) {
-  const fallbackLabel =
-    props.stage === "download" ? "Downloading…" : "Setting up…";
   return (
     <div
       data-testid="local-host-download-progress"
       className="flex w-full flex-col gap-2"
     >
       <div className="flex items-center justify-between text-ui-xs text-muted-foreground">
-        <span>{props.byteLabel ?? fallbackLabel}</span>
+        <span>{props.transferLabel ?? props.shortLabel}</span>
         <span className="font-medium text-foreground">{props.percent}%</span>
       </div>
       <div

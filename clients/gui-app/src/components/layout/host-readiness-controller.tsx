@@ -23,6 +23,7 @@ import {
   resolveSurfaceReadiness,
   useHostReadinessController,
   useSurfaceReadiness,
+  windowNarratorOwns,
   type DefaultHostReadinessPresentation,
   type HostReadinessController,
   type HostReadinessScope,
@@ -35,6 +36,8 @@ import {
   type HostProvisioningLifecycle,
 } from "@/components/local-host-gate";
 import { LocalHostLoadingContent } from "@/components/local-host-loading";
+import type { HostProgressView } from "@/lib/host/host-progress-copy";
+import { useHostProvisioningProgress } from "@/hooks/host/use-host-provisioning-progress";
 import { useReactiveHostReadiness } from "@/hooks/host/use-reactive-host-readiness";
 import { useRemoteSessionsPollReadiness } from "@/hooks/host/use-remote-sessions-poll-readiness";
 import { describeHostCompatibilityError, useHostBinding } from "@/lib/host";
@@ -442,6 +445,14 @@ function SurfaceReadinessFallback(props: {
 }): ReactNode {
   const controller = useHostReadinessController();
   const presentation = controller.defaultHostPresentation;
+  // The mutation LANE, not the presentation's `progress`. The latter is gated
+  // on this renderer's own `convergeReady.isPending`, so it can only ever show
+  // episodes this window started - a first launch, where the desktop's launch
+  // reconciler is the actor, streams real progress that read as a blank card.
+  // Reading the lane here fixes the live surfaces without touching the legacy
+  // wrapper that still derives it the old way (that read is a recorded interim
+  // hazard, extinguished when the wrapper is deleted).
+  const progress = useHostProvisioningProgress();
   const testId =
     props.variant === "splash"
       ? `host-ready-gate-${props.readiness.kind}`
@@ -456,6 +467,7 @@ function SurfaceReadinessFallback(props: {
     return (
       <SlowHostFallback
         presentation={presentation}
+        progress={progress}
         variant={props.variant}
         testId={testId}
       />
@@ -464,7 +476,12 @@ function SurfaceReadinessFallback(props: {
   return (
     <FallbackFrame
       variant={props.variant}
-      fallback={fallbackContent(props.readiness, presentation, props.scope)}
+      fallback={fallbackContent(
+        props.readiness,
+        presentation,
+        props.scope,
+        progress,
+      )}
       testId={testId}
       messageTestId={
         props.readiness.kind === "mobile-no-host" ? "mobile-no-host" : null
@@ -475,6 +492,7 @@ function SurfaceReadinessFallback(props: {
 
 function SlowHostFallback(props: {
   readonly presentation: DefaultHostReadinessPresentation;
+  readonly progress: HostProgressView | null;
   readonly variant: "slot" | "splash";
   readonly testId: string;
 }): ReactNode {
@@ -489,7 +507,7 @@ function SlowHostFallback(props: {
         body: (
           <LocalHostLoadingContent
             stage="slow"
-            progress={props.presentation.progress}
+            progress={props.progress}
             onConfigureShell={props.presentation.configureShell}
             onRetry={props.presentation.requestRespawn}
             retryPending={props.presentation.respawnPending}
@@ -584,18 +602,32 @@ export function DefaultHostReadyGate(props: {
   if (hasBeenReady && postLatchSurfaceFor(readiness.kind) !== "splash") {
     return props.children;
   }
+  // The window narrator (the global modal) speaks for these kinds now, so the
+  // gate keeps the app from mounting against a host that cannot serve it but
+  // draws no card of its own - one narrator per scope. Rendering both put two
+  // surfaces on screen for one fact, each with its own copy and its own
+  // recovery actions; the modal derives from the authority's leases, which is
+  // the vocabulary this whole redesign narrates from.
+  //
+  // The frame stays (header + background) so the block still looks like the
+  // app rather than a blank document, and so a user whose modal is suppressed
+  // on `/settings` is not left staring at nothing.
+  const narrated = windowNarratorOwns(readiness.kind);
   return (
     <div
       className="flex min-h-svh w-full flex-col bg-background text-foreground"
       data-testid="host-ready-gate"
       data-readiness={readiness.kind}
+      data-narrated-by-window-modal={narrated ? "true" : "false"}
     >
       <AppHeader variant="host-loading" />
-      <SurfaceReadinessFallback
-        readiness={readiness}
-        scope="default-host"
-        variant="splash"
-      />
+      {narrated ? null : (
+        <SurfaceReadinessFallback
+          readiness={readiness}
+          scope="default-host"
+          variant="splash"
+        />
+      )}
     </div>
   );
 }
@@ -706,6 +738,7 @@ function fallbackContent(
   readiness: Exclude<SurfaceReadiness, { readonly kind: "ready" }>,
   presentation: DefaultHostReadinessPresentation,
   scope: HostReadinessScope,
+  progress: HostProgressView | null,
 ): ReadinessFallback {
   switch (readiness.kind) {
     case "restoring-request-context":
@@ -730,7 +763,7 @@ function fallbackContent(
     case "loading-host":
     case "provisioning-host":
     case "compatibility-checking":
-      return loadingFallback(readiness.kind, presentation);
+      return loadingFallback(readiness.kind, presentation, progress);
     case "provisioning-error":
       return provisioningErrorFallback(presentation);
     case "removed-host":
@@ -774,6 +807,7 @@ function fallbackContent(
 function loadingFallback(
   kind: "loading-host" | "provisioning-host" | "compatibility-checking",
   presentation: DefaultHostReadinessPresentation,
+  progress: HostProgressView | null,
 ): ReadinessFallback {
   // Every local-bootstrap wait - including the compatibility probe - shows the
   // SAME loading body. The old gate passed one `checking={props.loading}` node
@@ -808,7 +842,7 @@ function loadingFallback(
     body: (
       <LocalHostLoadingContent
         stage="loading"
-        progress={presentation.progress}
+        progress={progress}
         onConfigureShell={presentation.configureShell}
         onRetry={presentation.requestRespawn}
         retryPending={presentation.respawnPending}

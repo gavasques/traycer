@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   cleanup,
-  fireEvent,
   render,
   screen,
   type RenderResult,
@@ -285,19 +284,16 @@ describe("<HostReadyGate />", () => {
     expect(screen.queryByTestId("host-ready-gate")).toBeNull();
   });
 
-  it("draws the setup card the standalone splash drew", () => {
-    // This view predates the split work and the user asked for it unchanged.
-    // The gate took over rendering it from `LocalHostLoading`, which wrapped
-    // the body in a max-w-md shadowed Card; the shared frame's bare max-w-sm
-    // column dropped that outline. Pinned because the frame is now shared with
-    // the in-surface fallback, which must stay card-less.
+  it("defers loading-host to the window modal: draws the frame, no card", () => {
+    // The window narrator (D10) now speaks for this kind. The gate used to
+    // draw the setup card itself (the view `LocalHostLoading` drew, wrapped
+    // in a max-w-md shadowed Card); it now draws only the shared frame
+    // (header + background) and leaves the card to the modal, so the two
+    // surfaces never describe the same fact twice.
     renderGate({ kind: "loading-host" }, PRESENTATION);
-    const card = screen
-      .getByTestId("host-ready-gate")
-      .querySelector('[data-slot="card"]');
-    if (card === null) throw new Error("Expected the setup card");
-    expect(card.className).toContain("max-w-md");
-    expect(card.className).toContain("shadow-sm");
+    const gate = screen.getByTestId("host-ready-gate");
+    expect(gate.dataset.narratedByWindowModal).toBe("true");
+    expect(gate.querySelector('[data-slot="card"]')).toBeNull();
   });
 
   it("keeps the same loading body through the compatibility probe", () => {
@@ -326,22 +322,25 @@ describe("<HostReadyGate />", () => {
     ).toBeTruthy();
   });
 
-  it("offers Retry when the local host failed to start", () => {
-    // The lockout this pins. The gate used to call `fallbackContent` directly,
-    // skipping the slow-local-host branch that only `SurfaceReadinessFallback`
-    // had - so a full-screen block on a host that never came up rendered
-    // "This tab's host is unavailable." with NO recovery at all, and copy that
-    // called the whole app a tab.
+  it("defers unavailable-host (slow local start) to the window modal: no card, no Retry here", () => {
+    // The lockout this used to pin (a full-screen block with no recovery) is
+    // now the window modal's job - it carries its own Retry, wired through
+    // `WindowHostModalHost` (see deliverable E). The gate itself must draw
+    // nothing but the frame for this kind now, or the two surfaces would
+    // offer two Retry buttons for one fact.
     renderGate({ kind: "unavailable-host" }, SLOW_PRESENTATION);
-    expect(screen.getByTestId("local-host-retry")).toBeTruthy();
+    const gate = screen.getByTestId("host-ready-gate");
+    expect(gate.dataset.narratedByWindowModal).toBe("true");
+    expect(gate.querySelector('[data-slot="card"]')).toBeNull();
+    expect(screen.queryByTestId("local-host-retry")).toBeNull();
     expect(screen.queryByText("This tab's host is unavailable.")).toBeNull();
   });
 
-  it("shows what was tried and where the full log lives", () => {
+  it("no longer draws the bootstrap.log path/details itself - moved to the window modal, not dropped", () => {
     // The bootstrap.log PATH is the one thing that lets a user take a stuck
-    // startup somewhere else. It lived on the old unavailable card and was
-    // orphaned with it. Rendered outside the "Show details" disclosure - a
-    // path you must expand a toggle to discover is a path most never find.
+    // startup somewhere else, and it must survive this move even though it no
+    // longer lives on the gate. Deliverable E pins that it still renders, on
+    // the modal, via `WindowHostModalHost`'s `LocalBootstrapAttempts`.
     hostStatus.data = {
       bootstrapMarkers: [
         {
@@ -356,12 +355,10 @@ describe("<HostReadyGate />", () => {
     };
     renderGate({ kind: "unavailable-host" }, SLOW_PRESENTATION);
 
-    expect(
-      screen.getByTestId("local-host-bootstrap-log-path").textContent,
-    ).toBe("/Users/me/.traycer/bootstrap.log");
-    const details = screen.getByTestId("local-host-bootstrap-details");
-    expect(details.textContent).toContain("/bin/zsh -i -l -c traycer");
-    expect(details.textContent).toContain("Host crashed with code 1.");
+    const gate = screen.getByTestId("host-ready-gate");
+    expect(gate.dataset.narratedByWindowModal).toBe("true");
+    expect(screen.queryByTestId("local-host-bootstrap-log-path")).toBeNull();
+    expect(screen.queryByTestId("local-host-bootstrap-details")).toBeNull();
   });
 
   it("keeps spawn diagnostics off a healthy start", () => {
@@ -451,11 +448,12 @@ describe("<HostReadyGate />", () => {
     expect(screen.getByText("boom")).toBeTruthy();
   });
 
-  it("names the zero-dialable default-host card without calling the app a tab", () => {
+  it("defers the zero-dialable default-host card to the window modal too - no gate-drawn card, no tab wording", () => {
     // D7 zero-dialable arm: default-host reaches unavailable-host only when
-    // nothing is dialable. The tab wording mislabelled the whole app; the
-    // slow-local branch (localHostState unavailable + stage slow) is a
-    // different card and must not be taken here.
+    // nothing is dialable. This card (and its copy, its report family) now
+    // belongs to the window modal - the gate draws only the frame. The old
+    // "tab" mislabelling pin still matters as a negative: neither the old nor
+    // the new copy should ever come from the gate itself.
     renderGate(
       { kind: "unavailable-host" },
       {
@@ -466,18 +464,18 @@ describe("<HostReadyGate />", () => {
         stage: "loading",
       },
     );
-    expect(screen.getByText("Traycer Host is unavailable")).toBeTruthy();
+    const gate = screen.getByTestId("host-ready-gate");
+    expect(gate.dataset.narratedByWindowModal).toBe("true");
+    expect(gate.querySelector('[data-slot="card"]')).toBeNull();
+    expect(screen.queryByText("Traycer Host is unavailable")).toBeNull();
     expect(screen.queryByText("This tab's host is unavailable.")).toBeNull();
-    // Must not have been routed to the slow-local startup card.
     expect(screen.queryByTestId("local-host-retry")).toBeNull();
   });
 
-  it("offers retry, open settings, and report-issue on the zero-dialable card", () => {
-    // Pins the affordances that ship with the zero-dialable card: re-read the
-    // registry, open settings, and report. Each used to be missing
-    // (`actions: []`, `footer: null`) behind a full-screen block. The header
-    // host picker was deleted (redesign P1.2), so "switch host" is no longer
-    // one of these affordances.
+  it("withholds retry/open-settings/report-issue from the gate on the zero-dialable card - the modal carries them now", () => {
+    // These affordances (re-read the registry, open settings, report) moved
+    // to `WindowHostModalHost` with the card itself. The gate must not offer
+    // a second, competing copy of any of them.
     useDesktopDialogStore.setState({ reportIssueAvailable: true });
     const refreshDirectory = vi.fn();
     const openSettings = vi.fn();
@@ -495,18 +493,18 @@ describe("<HostReadyGate />", () => {
       },
     );
 
-    fireEvent.click(screen.getByTestId("host-unavailable-retry"));
-    fireEvent.click(screen.getByTestId("host-unavailable-open-settings"));
-    expect(refreshDirectory).toHaveBeenCalledTimes(1);
-    expect(openSettings).toHaveBeenCalledTimes(1);
-
-    expect(screen.getByRole("button", { name: "Report issue" })).toBeTruthy();
+    expect(screen.queryByTestId("host-unavailable-retry")).toBeNull();
+    expect(screen.queryByTestId("host-unavailable-open-settings")).toBeNull();
+    expect(refreshDirectory).not.toHaveBeenCalled();
+    expect(openSettings).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Report issue" })).toBeNull();
   });
 
-  it("files HOST_NONE_DIALABLE when no host in the directory is dialable", () => {
-    // Pins the report family chosen by a fact (`anyHostDialable`), not by
-    // readiness kind alone - collapsing distinct causes into one code is the
-    // triage failure these families exist to end.
+  it("no longer files HOST_NONE_DIALABLE itself - the report-code coverage moved to the window modal suite (deliverable E)", () => {
+    // This report family (chosen by `anyHostDialable`, not by readiness kind
+    // alone) is now the window modal's to file. The gate must not surface
+    // either arm's copy nor offer a Report-issue button of its own for this
+    // kind.
     useDesktopDialogStore.setState({ reportIssueAvailable: true });
     renderGate(
       { kind: "unavailable-host" },
@@ -521,27 +519,19 @@ describe("<HostReadyGate />", () => {
     );
 
     expect(
-      screen.getByText(
+      screen.queryByText(
         "Traycer can't reach this host right now, and no other host in the directory is reachable either.",
       ),
-    ).toBeTruthy();
+    ).toBeNull();
     expect(
       screen.queryByText(
         "Traycer can't reach this host right now. Another host is available - switch to it, or retry.",
       ),
     ).toBeNull();
-
-    fireEvent.click(screen.getByRole("button", { name: "Report issue" }));
-    const context = useDesktopDialogStore.getState().reportIssueContext;
-    expect(context?.code).toBe("HOST_NONE_DIALABLE");
-    expect(context?.source).toBe("Host connection");
+    expect(screen.queryByRole("button", { name: "Report issue" })).toBeNull();
   });
 
-  it("files HOST_SELECTED_UNREACHABLE when another host in the directory is dialable", () => {
-    // Counterpart family: selected host dead but something else is reachable
-    // (two-read wait before failover, or this machine booting while a remote
-    // is listed). Detail copy must not silently converge with the zero-dialable
-    // arm.
+  it("no longer files HOST_SELECTED_UNREACHABLE itself - the counterpart report family also moved to the window modal", () => {
     useDesktopDialogStore.setState({ reportIssueAvailable: true });
     renderGate(
       { kind: "unavailable-host" },
@@ -556,19 +546,27 @@ describe("<HostReadyGate />", () => {
     );
 
     expect(
-      screen.getByText(
+      screen.queryByText(
         "Traycer can't reach this host right now. Another host is available - switch to it, or retry.",
       ),
-    ).toBeTruthy();
+    ).toBeNull();
     expect(
       screen.queryByText(
         "Traycer can't reach this host right now, and no other host in the directory is reachable either.",
       ),
     ).toBeNull();
+    expect(screen.queryByRole("button", { name: "Report issue" })).toBeNull();
+  });
 
-    fireEvent.click(screen.getByRole("button", { name: "Report issue" }));
-    const context = useDesktopDialogStore.getState().reportIssueContext;
-    expect(context?.code).toBe("HOST_SELECTED_UNREACHABLE");
-    expect(context?.source).toBe("Host connection");
+  it("still draws its own card for a NON-narrated kind (removed-host), pinning the deferral as selective, not blanket", () => {
+    // The window narrator owns exactly three kinds. Everything else - here,
+    // a user having removed the host - is still the gate's card to draw, with
+    // `data-narrated-by-window-modal="false"`. Without this pin, a future
+    // change that made `windowNarratorOwns` return `true` for everything
+    // would still pass every test above.
+    renderGate({ kind: "removed-host" }, PRESENTATION);
+    const gate = screen.getByTestId("host-ready-gate");
+    expect(gate.dataset.narratedByWindowModal).toBe("false");
+    expect(gate.querySelector('[data-slot="card"]')).not.toBeNull();
   });
 });

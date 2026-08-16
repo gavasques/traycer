@@ -254,3 +254,52 @@ describe("<HostSwitcher /> trailing action", () => {
     expect(screen.queryByTestId("settings-host-switcher-empty-add")).toBeNull();
   });
 });
+
+describe("<HostSwitcher /> setting-up status word (M5)", () => {
+  it("labels the LOCAL machine's row 'setting up' while a remote row keeps its own status", () => {
+    // `settingUp` is fed to each `HostScopeOption` individually (from the
+    // mutation lane), so the local row and a remote row can disagree even
+    // though they share the same picker.
+    render(
+      <HostSwitcher
+        hosts={[
+          hostScopeOptionFixture({
+            hostId: "host-local",
+            name: "This machine",
+            isLocalMachine: true,
+            settingUp: true,
+          }),
+          hostScopeOptionFixture({
+            hostId: "host-remote",
+            name: "Remote box",
+            isLocalMachine: false,
+            settingUp: false,
+          }),
+        ]}
+        selected={null}
+        activeHostId={null}
+        onSelect={() => undefined}
+        action={{ kind: "add-host", onSelect: () => undefined }}
+        surface="rail"
+        intent="view"
+        disabled={false}
+        isLoading={false}
+        listsFailed={false}
+        onRetryLists={() => undefined}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Settings host: none selected" }),
+    );
+
+    const localRow = screen.getByTestId(
+      "settings-host-switcher-option-host-local",
+    );
+    const remoteRow = screen.getByTestId(
+      "settings-host-switcher-option-host-remote",
+    );
+    expect(localRow.textContent).toContain("setting up");
+    expect(remoteRow.textContent).not.toContain("setting up");
+  });
+});

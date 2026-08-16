@@ -37,9 +37,13 @@ vi.mock("@/components/auth/user-menu", () => ({
 }));
 
 import { LocalHostLoading } from "@/components/local-host-loading";
+import { buildHostProgressView } from "@/lib/host/host-progress-copy";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { RunnerHostProvider } from "@/providers/runner-host-provider";
 import { useAuthStore } from "@/stores/auth/auth-store";
+
+/** Lane identity is irrelevant to the copy under test; fixed so it cannot drift. */
+const LANE_STARTED_AT = "2026-01-01T00:00:00.000Z";
 
 function buildHost(): MockRunnerHost {
   return new MockRunnerHost({
@@ -192,13 +196,20 @@ describe("<LocalHostLoading />", () => {
           <TooltipProvider>
             <LocalHostLoading
               stage="loading"
-              progress={{
-                stage: "download",
-                percent: 42,
-                bytes: 104_857_600,
-                totalBytes: 250_609_664,
-                message: "downloading host 1.2.3",
-              }}
+              // Built through the REAL shared table, not a hand-written view:
+              // the copy and the units are what this asserts, and a
+              // hand-assembled view would supply the very thing under test.
+              progress={buildHostProgressView({
+                kind: "ensure",
+                startedAt: LANE_STARTED_AT,
+                progress: {
+                  stage: "download",
+                  percent: 42,
+                  bytes: 104_857_600,
+                  totalBytes: 250_609_664,
+                  message: "downloading host 1.2.3",
+                },
+              })}
               onConfigureShell={() => undefined}
             />
           </TooltipProvider>
@@ -231,13 +242,17 @@ describe("<LocalHostLoading />", () => {
           <TooltipProvider>
             <LocalHostLoading
               stage="loading"
-              progress={{
-                stage: "extract",
-                percent: 80,
-                bytes: null,
-                totalBytes: null,
-                message: "extracting host runtime",
-              }}
+              progress={buildHostProgressView({
+                kind: "ensure",
+                startedAt: LANE_STARTED_AT,
+                progress: {
+                  stage: "extract",
+                  percent: 80,
+                  bytes: null,
+                  totalBytes: null,
+                  message: "extracting host runtime",
+                },
+              })}
               onConfigureShell={() => undefined}
             />
           </TooltipProvider>

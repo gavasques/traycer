@@ -43,8 +43,15 @@ export function isHostOptionSelectable(
  * could only ever fail. Plan-gated is named apart from unreachable: the first
  * is fixed by an upgrade, the second maybe by waiting, and one word covering
  * both sends people debugging their network over a billing limit.
+ *
+ * `host.settingUp` outranks both, and that ordering is the M5 requirement: a
+ * machine whose host is being installed right now is not "unreachable" in any
+ * sense a user can act on — it is mid-setup, and it will be dialable shortly.
+ * Calling it unreachable is what made the second device's first launch read as
+ * a broken machine while it was working perfectly.
  */
 export function hostOptionStatusWord(host: HostScopeOption): string | null {
+  if (host.settingUp) return "setting up";
   if (host.connectable) return null;
   return host.planRestricted ? "requires upgrade" : "unreachable";
 }

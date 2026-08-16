@@ -51,6 +51,9 @@ function buildOne(input: {
     hasLiveSession: () => false,
     viewerCheck: () => null,
     remoteHostsPlanRestricted: input.remoteHostsPlanRestricted,
+    // The helper models one host at a time and none of these cases is about a
+    // machine mid-install; the "setting up" row state has its own test.
+    localHostSettingUp: false,
     nowMs: 0,
   });
   return option;
@@ -251,6 +254,7 @@ describe("buildHostScopeOptions planRestricted — composed against a real local
       hasLiveSession: () => false,
       viewerCheck: () => null,
       remoteHostsPlanRestricted: false,
+      localHostSettingUp: false,
       nowMs: 0,
     });
     expect(option.connectable).toBe(false);
@@ -267,6 +271,7 @@ describe("buildHostScopeOptions planRestricted — composed against a real local
       hasLiveSession: () => true,
       viewerCheck: () => null,
       remoteHostsPlanRestricted: false,
+      localHostSettingUp: false,
       nowMs: 0,
     });
     expect(option.planRestricted).toBe(true);
@@ -305,6 +310,7 @@ describe("buildHostScopeOptions planRestricted — composed against a real local
       hasLiveSession: () => false,
       viewerCheck: () => null,
       remoteHostsPlanRestricted: true,
+      localHostSettingUp: false,
       nowMs: 0,
     });
     expect(option.connectable).toBe(false);
@@ -325,6 +331,7 @@ describe("buildHostScopeOptions planRestricted — composed against a real local
       hasLiveSession: () => true,
       viewerCheck: () => null,
       remoteHostsPlanRestricted: true,
+      localHostSettingUp: false,
       nowMs: 0,
     });
     expect(option.connectable).toBe(true);
@@ -526,5 +533,52 @@ describe("buildHostScopeOptions name resolution", () => {
         remoteHostsPlanRestricted: false,
       }).name,
     ).toBe("Registry Name");
+  });
+});
+
+describe("buildHostScopeOptions settingUp", () => {
+  // M5's host-scope narration. The mutation lane belongs to the LOCAL host
+  // controller, so it says nothing about any other machine — a fleet-wide
+  // "setting up" would tell a user their colleague's laptop was mid-install.
+  // Derived here rather than read per row: a runner-host read inside the row
+  // component sits below the boundary every picker suite mocks.
+  it("marks only THIS machine's row while the local mutation lane is busy", () => {
+    const options = buildHostScopeOptions({
+      directory: [
+        entry({ hostId: "local-host", kind: "local" }),
+        entry({ hostId: "remote-host", kind: "remote" }),
+      ],
+      registry: [],
+      localHostId: "local-host",
+      activeHostId: null,
+      localService: undefined,
+      hasLiveSession: () => false,
+      viewerCheck: () => null,
+      remoteHostsPlanRestricted: false,
+      localHostSettingUp: true,
+      nowMs: 0,
+    });
+
+    const local = options.find((o) => o.hostId === "local-host");
+    const remote = options.find((o) => o.hostId === "remote-host");
+    expect(local?.settingUp).toBe(true);
+    expect(remote?.settingUp).toBe(false);
+  });
+
+  it("marks nothing when the lane is idle", () => {
+    const options = buildHostScopeOptions({
+      directory: [entry({ hostId: "local-host", kind: "local" })],
+      registry: [],
+      localHostId: "local-host",
+      activeHostId: null,
+      localService: undefined,
+      hasLiveSession: () => false,
+      viewerCheck: () => null,
+      remoteHostsPlanRestricted: false,
+      localHostSettingUp: false,
+      nowMs: 0,
+    });
+
+    expect(options[0]?.settingUp).toBe(false);
   });
 });

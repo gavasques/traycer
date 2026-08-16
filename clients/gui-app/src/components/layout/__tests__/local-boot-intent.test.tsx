@@ -12,6 +12,7 @@ import {
   DefaultHostReadyGate,
   HostReadinessControllerProvider,
 } from "@/components/layout/host-readiness-controller";
+import { WindowHostModalHost } from "@/components/layout/dialogs/window-host-modal-host";
 import {
   HostCompatibilityProvider,
   hostRpcRegistry,
@@ -357,6 +358,14 @@ describe("local-boot intent", () => {
                 <DefaultHostReadyGate>
                   <main>app</main>
                 </DefaultHostReadyGate>
+                {/* The gate no longer draws "Connecting to Traycer Host…"
+                    itself for this kind (the window narrator, D10, owns it
+                    now) - see default-host-ready-gate.test.tsx deliverable D.
+                    Mounted here as the settle anchor: the modal appearing
+                    with NO local bootstrap body is the positive proof this
+                    surface reached its settled non-local state, which the
+                    negative assertions below then get to run after. */}
+                <WindowHostModalHost bypassed={false} />
               </HostReadinessControllerProvider>
             </HostCompatibilityProvider>
           </HostRuntimeProvider>
@@ -364,14 +373,16 @@ describe("local-boot intent", () => {
       </RunnerHostProvider>,
     );
 
-    // The surface settles on the non-local wait…
+    // The surface settles on the non-local wait: the window modal comes up
+    // with NO local bootstrap body (no spinner, no local-host-loading
+    // content) - the positive proof this reached its non-local settled state.
     await waitFor(() => {
-      expect(screen.getByText("Connecting to Traycer Host…")).toBeTruthy();
+      expect(screen.getByTestId("window-host-modal")).toBeTruthy();
     });
+    expect(screen.queryByTestId("local-host-loading-spinner")).toBeNull();
     // …and it must never claim this machine's host is starting, nor offer any
     // action against it.
     expect(screen.queryByText("Starting local Traycer Host…")).toBeNull();
-    expect(screen.queryByTestId("local-host-loading-spinner")).toBeNull();
     expect(screen.queryByTestId("local-host-retry")).toBeNull();
     // The two calls the blocker was about: both belong to a machine the user
     // is not pointed at, and neither may run.

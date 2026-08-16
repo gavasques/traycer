@@ -8,8 +8,10 @@ import type {
   IHostManagement,
   LocalHostSnapshot,
 } from "@traycer-clients/shared/platform/runner-host";
-import { SurfaceReadinessBoundary } from "@/components/layout/host-readiness-controller";
-import { HostReadinessControllerProvider } from "@/components/layout/host-readiness-controller";
+import {
+  DefaultHostReadyGate,
+  HostReadinessControllerProvider,
+} from "@/components/layout/host-readiness-controller";
 import {
   HostCompatibilityProvider,
   hostRpcRegistry,
@@ -19,6 +21,12 @@ import {
 } from "@/lib/host";
 import { RunnerHostProvider } from "@/providers/runner-host-provider";
 import { useAuthStore } from "@/stores/auth/auth-store";
+
+vi.mock("@tanstack/react-router", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@tanstack/react-router")>();
+  return { ...actual, useRouterState: () => "/" };
+});
 
 /**
  * The blocker this file pins: `canProvision` used to be "the target is not
@@ -198,9 +206,9 @@ function mountRealChain(
               onConfigureShell={() => undefined}
               onOpenSettings={() => undefined}
             >
-              <SurfaceReadinessBoundary scope="default-host" tabHostId={null}>
+              <DefaultHostReadyGate>
                 <main>app</main>
-              </SurfaceReadinessBoundary>
+              </DefaultHostReadyGate>
             </HostReadinessControllerProvider>
           </HostCompatibilityProvider>
         </HostRuntimeProvider>
@@ -323,7 +331,10 @@ describe("local-boot intent", () => {
       },
     ]);
     const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
     });
     render(
       <RunnerHostProvider runnerHost={runnerHost}>
@@ -333,7 +344,9 @@ describe("local-boot intent", () => {
             messengerFactory={messengerFactory()}
             invalidator={null}
             requestId={null}
-            remoteFetcher={() => Promise.resolve({ kind: "hosts", entries: [] })}
+            remoteFetcher={() =>
+              Promise.resolve({ kind: "hosts", entries: [] })
+            }
             fallback={<div data-testid="runtime-fallback">runtime loading</div>}
           >
             <HostCompatibilityProvider>
@@ -341,9 +354,9 @@ describe("local-boot intent", () => {
                 onConfigureShell={() => undefined}
                 onOpenSettings={() => undefined}
               >
-                <SurfaceReadinessBoundary scope="default-host" tabHostId={null}>
+                <DefaultHostReadyGate>
                   <main>app</main>
-                </SurfaceReadinessBoundary>
+                </DefaultHostReadyGate>
               </HostReadinessControllerProvider>
             </HostCompatibilityProvider>
           </HostRuntimeProvider>

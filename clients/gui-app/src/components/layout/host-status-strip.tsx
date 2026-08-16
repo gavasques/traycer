@@ -33,8 +33,8 @@ import { cn } from "@/lib/utils";
  * Why a strip is enough for the error states: tabs are bound to their host
  * for life, so a broken DEFAULT host does not invalidate a single open tab.
  * Default-host-scoped surfaces (composer, landing terminal) already project
- * their own in-surface fallbacks through `HostScopeReady` /
- * `SurfaceReadinessBoundary`; what they could not do is SAY why they went
+ * their own in-surface fallbacks through `HostScopeReady`; what they could
+ * not do is SAY why they went
  * quiet. That is this component's job.
  *
  * Reads the compat context directly rather than through

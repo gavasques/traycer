@@ -5,9 +5,8 @@ import { v4 as uuidv4 } from "uuid";
 import type { EpicArtifactKind } from "@traycer/protocol/common/registry";
 import type { ArtifactOperationAction } from "@traycer/protocol/persistence/epic/content-blocks";
 import { StaticEpicNodeIcon } from "@/components/epic-canvas/epic-node-tab-icon";
+import { useTabHostId } from "@/components/epic-canvas/hooks/use-tab-host-id";
 import { STATUS_LABELS } from "@/components/epic-canvas/sidebar/epic-sidebar-tree-shared";
-// eslint-disable-next-line @typescript-eslint/no-restricted-imports -- expires P2.2 — tab content must use useTabHostId; F12. epics/c6042be5-cbd3-4923-8cbe-d2bc00ae7ade/artifacts/host-lifecycle-redesign
-import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
 import { useEpicTileNavigation } from "@/hooks/epic/use-epic-tile-navigation";
 import { EPIC_NODE_LABELS } from "@/lib/artifacts/node-display";
 import {
@@ -501,7 +500,7 @@ function ArtifactCardSegmentContent(props: ArtifactCardSegmentProps) {
   const live = useArtifactById(artifactId);
   const tombstone = useEpicDeletedArtifact(artifactId);
   const epicId = useOpenEpicId();
-  const activeHostId = useReactiveActiveHostId();
+  const activeHostId = useTabHostId();
   const tileNavigation = useEpicTileNavigation();
   const [diffOpen, setDiffOpen] = useState(false);
 
@@ -537,7 +536,7 @@ function ArtifactCardSegmentContent(props: ArtifactCardSegmentProps) {
   const canOpen = canOpenArtifactCard({
     isDeleted,
     hasLiveArtifact,
-    hasHost: activeHostId !== null,
+    hasHost: true,
   });
 
   // Drag source (mirrors the sidebar): the card opens its artifact in the
@@ -555,21 +554,18 @@ function ArtifactCardSegmentContent(props: ArtifactCardSegmentProps) {
   } = useArtifactDragSource({
     epicId,
     viewTabId,
-    identity:
-      activeHostId === null
-        ? null
-        : {
-            id: artifactId,
-            type: displayKind,
-            name: openTitle,
-            hostId: activeHostId,
-          },
+    identity: {
+      id: artifactId,
+      type: displayKind,
+      name: openTitle,
+      hostId: activeHostId,
+    },
     enabled: canOpen,
   });
 
   const openArtifact = (): void => {
     // Re-check the raw conditions so the host id narrows to a non-null string.
-    if (isDeleted || live === null || activeHostId === null) return;
+    if (isDeleted || live === null) return;
     tileNavigation.openTileInEpic(epicId, {
       id: artifactId,
       instanceId: uuidv4(),

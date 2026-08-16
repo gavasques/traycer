@@ -98,8 +98,7 @@ import {
 } from "@/stores/chats/rendered-messages";
 import { useAuthStore } from "@/stores/auth/auth-store";
 import { useTabHostId } from "@/components/epic-canvas/hooks/use-tab-host-id";
-// eslint-disable-next-line @typescript-eslint/no-restricted-imports -- expires P2.2 — tab content must use useTabHostClient; F12. epics/c6042be5-cbd3-4923-8cbe-d2bc00ae7ade/artifacts/host-lifecycle-redesign
-import { useHostClient, useHostBinding } from "@/lib/host";
+import { useHostBinding } from "@/lib/host";
 import { useHostReachability } from "@/hooks/agent/use-host-reachability";
 import { useEpicUpdateChatRunSettings } from "@/hooks/epic/use-epic-chat-mutations";
 import { useChatCloneOnHostSwitch } from "@/components/epic-canvas/renderers/use-chat-clone-on-host-switch";
@@ -2421,7 +2420,6 @@ function ChatSessionMessagesSurface(
         <WorkingVerbContext.Provider value={workingVerb}>
           <ChatMarkdownLinkProvider
             tabId={props.viewTabId}
-            hostId={props.tabHostId}
             workspaceRoots={props.workspaceRoots}
           >
             <ChatMessages
@@ -2619,7 +2617,7 @@ function currentSettingsForChatTile(input: {
 function useCachedCollaborators(
   epicId: string,
 ): SenderDisplayContext["collaborators"] {
-  const client = useHostClient();
+  const client = useTabHostClient();
   const { data } = useHostQuery({
     cacheKeyIdentity: undefined,
     client,

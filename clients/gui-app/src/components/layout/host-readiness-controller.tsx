@@ -418,22 +418,6 @@ function compatibilityPresentation(
   };
 }
 
-export function SurfaceReadinessBoundary(props: {
-  readonly scope: HostReadinessScope;
-  readonly tabHostId: string | null;
-  readonly children: ReactNode;
-}): ReactNode {
-  const readiness = useSurfaceReadiness(props.scope, props.tabHostId);
-  if (readiness.kind === "ready") return props.children;
-  return (
-    <SurfaceReadinessFallback
-      readiness={readiness}
-      scope={props.scope}
-      variant="slot"
-    />
-  );
-}
-
 export function HostScopeReady(props: {
   readonly scope: Exclude<HostReadinessScope, "none">;
   readonly children: ReactNode;

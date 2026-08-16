@@ -2,16 +2,15 @@ import { useMemo } from "react";
 import { Square } from "lucide-react";
 import type { HostClient } from "@traycer-clients/shared/host-client/host-client";
 import type { HostDirectoryEntry } from "@traycer-clients/shared/host-client/host-directory";
+import { useTabHostId } from "@/components/epic-canvas/hooks/use-tab-host-id";
 import { Button } from "@/components/ui/button";
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
-// eslint-disable-next-line @typescript-eslint/no-restricted-imports -- expires P2.2 — tab content must use useTabHostClient; F12. epics/c6042be5-cbd3-4923-8cbe-d2bc00ae7ade/artifacts/host-lifecycle-redesign
-import { useHostClient, type HostRpcRegistry } from "@/lib/host";
+import { type HostRpcRegistry } from "@/lib/host";
 import { useHostMutation } from "@/hooks/host/use-host-query";
 import { useHostClientFor } from "@/hooks/host/use-host-client-for";
 import { useHostReachability } from "@/hooks/agent/use-host-reachability";
 import { useHostDirectoryList } from "@/hooks/host/use-host-directory-list-query";
-// eslint-disable-next-line @typescript-eslint/no-restricted-imports -- expires P2.2 — tab content must use useTabHostId; F12. epics/c6042be5-cbd3-4923-8cbe-d2bc00ae7ade/artifacts/host-lifecycle-redesign
-import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
+import { useTabHostClient } from "@/hooks/host/use-tab-host-client";
 import { isUnknownHost } from "@/lib/host/constants";
 import { agentMutationKeys } from "@/lib/query-keys";
 import { toastFromHostError } from "@/lib/host-error-toast";
@@ -20,7 +19,7 @@ import { TooltipWrapper } from "@/components/ui/tooltip-wrapper";
 /**
  * Resolves the directory entry for `hostId`, referentially stable across
  * renders (`useHostClientFor` requires a stable target). `null` for a local /
- * unknown host (which routes through the global client instead) or a host
+ * unknown host (which routes through the surrounding tile's client instead) or a host
  * absent from the directory.
  */
 function useStableHostEntry(hostId: string | null): HostDirectoryEntry | null {
@@ -120,8 +119,8 @@ function ReachableStopButton(props: {
 }
 
 /**
- * Stops an agent on its OWN host. Agents on the active host use the global
- * client (unchanged behaviour); agents on another reachable host use a
+ * Stops an agent on its OWN host. Agents on the surrounding tile's host use
+ * the tile client; agents on another reachable host use a
  * transient client dialed to it; agents on an unreachable host render a
  * disabled button ("Runs on <device>") - visible but not actionable. The stop's
  * effect surfaces via the cross-host awareness working set, so no query
@@ -135,13 +134,13 @@ export function AgentStopButton(props: {
   readonly iconOnly: boolean;
   readonly testId: string | undefined;
 }) {
-  const globalClient = useHostClient();
-  const activeHostId = useReactiveActiveHostId();
-  const local = isUnknownHost(props.hostId) || props.hostId === activeHostId;
+  const tabHostId = useTabHostId();
+  const tabHostClient = useTabHostClient();
+  const local = isUnknownHost(props.hostId) || props.hostId === tabHostId;
   const reachability = useHostReachability(props.hostId);
   const entry = useStableHostEntry(local ? null : props.hostId);
   const transientClient = useHostClientFor(entry);
-  const client = local ? globalClient : transientClient;
+  const client = local ? tabHostClient : transientClient;
   const reachable = local || reachability.status === "reachable";
 
   if (!reachable || client === null) {

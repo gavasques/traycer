@@ -10,10 +10,9 @@ import type {
 import type { SegmentEndState } from "@/stores/composer/chat-store";
 import { deriveA2ASendCollapsibleKey } from "@/components/chat/chat-collapsible-key";
 import { chatFindA2ASendBodyUnitId } from "@/components/chat/chat-find";
+import { useTabHostId } from "@/components/epic-canvas/hooks/use-tab-host-id";
 import { SegmentEndStateBadge } from "./segment-end-state-badge";
 import { LivePulse } from "@/components/ui/live-pulse";
-// eslint-disable-next-line @typescript-eslint/no-restricted-imports -- expires P2.2 — tab content must use useTabHostId; F12. epics/c6042be5-cbd3-4923-8cbe-d2bc00ae7ade/artifacts/host-lifecycle-redesign
-import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
 import { useEpicAgentReference, useOpenEpicId } from "@/lib/epic-selectors";
 import {
   resolveToolInputDetail,
@@ -627,7 +626,7 @@ function A2ASendToolSegment(
     isStopped: false,
   });
   const receiverNode = useEpicAgentReference(send.receiverAgentId);
-  const activeHostId = useReactiveActiveHostId();
+  const activeHostId = useTabHostId();
   const epicId = useOpenEpicId();
   const tileNavigation = useEpicTileNavigation();
   const receiverName = receiverDisplayName(receiverNode, send.receiverAgentId);

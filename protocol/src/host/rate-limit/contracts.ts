@@ -16,7 +16,6 @@ import {
   rateLimitUsageResponseSchemaV21,
   rateLimitUsageResponseSchemaV30,
   rateLimitUsageResponseSchemaV40,
-  rateLimitUsageResponseSchemaV50,
   mapGrokAvailableToUnavailable,
   mapHuggingFaceAvailableToUnavailable,
   mapOpenCodeAvailableToUnavailable,
@@ -256,11 +255,17 @@ export const hostGetRateLimitUsageDowngradeV3ToV1 = defineDowngradePath<
   }),
 });
 
-// v4.0 adds the Hugging Face available arm to the provider-account snapshot.
-// Shipped as a major for the same reason v3.0 was: a new available union arm is
-// not strippable by the within-major skew handler, so it needs explicit bridges
-// that degrade it. The request shape is unchanged from v1.2/v2.x/v3.0, so this
-// reuses `rateLimitUsageRequestSchemaV12` directly.
+// v4.0 adds the Hugging Face AND OpenCode Go available arms to the
+// provider-account snapshot. Shipped as a major for the same reason v3.0 was: a
+// new available union arm is not strippable by the within-major skew handler,
+// so it needs explicit bridges that degrade it. The request shape is unchanged
+// from v1.2/v2.x/v3.0, so this reuses `rateLimitUsageRequestSchemaV12`
+// directly.
+//
+// Both arms ride ONE major because neither has shipped: the newest released
+// baseline (`host-v1.1.11`, commit c785d864) tops out at `host.getRateLimitUsage`
+// major `3`, so no peer in the field has ever negotiated `4`, and a second
+// major bought nothing but an extra hop in every downgrade fan below.
 export const hostGetRateLimitUsageV40 = defineRpcContract({
   method: "host.getRateLimitUsage",
   schemaVersion: { major: 4, minor: 0 } as const,
@@ -298,7 +303,7 @@ export const hostGetRateLimitUsageDowngradeV4ToV3 = defineDowngradePath<
     value: rateLimitUsageResponseSchemaV30.parse({
       ...response,
       providerRateLimits: mapHuggingFaceAvailableToUnavailable(
-        response.providerRateLimits,
+        mapOpenCodeAvailableToUnavailable(response.providerRateLimits),
       ),
     }),
   }),
@@ -319,7 +324,9 @@ export const hostGetRateLimitUsageDowngradeV4ToV2 = defineDowngradePath<
     value: rateLimitUsageResponseSchemaV21.parse({
       ...response,
       providerRateLimits: mapGrokAvailableToUnavailable(
-        mapHuggingFaceAvailableToUnavailable(response.providerRateLimits),
+        mapHuggingFaceAvailableToUnavailable(
+          mapOpenCodeAvailableToUnavailable(response.providerRateLimits),
+        ),
       ),
     }),
   }),
@@ -343,102 +350,6 @@ export const hostGetRateLimitUsageDowngradeV4ToV1 = defineDowngradePath<
       ...response,
       providerRateLimits: mapUsageFetchFailedToNotAvailable(
         mapGrokAvailableToUnavailable(
-          mapHuggingFaceAvailableToUnavailable(response.providerRateLimits),
-        ),
-      ),
-    }),
-  }),
-});
-
-// v5.0 adds OpenCode Go's available arm. It is unrepresentable on v4, so it
-// degrades to `unsupported_provider`; unavailable snapshots keep their reason
-// while the older schema strips the optional renderer-cache generation.
-export const hostGetRateLimitUsageV50 = defineRpcContract({
-  method: "host.getRateLimitUsage",
-  schemaVersion: { major: 5, minor: 0 } as const,
-  requestSchema: rateLimitUsageRequestSchemaV12,
-  responseSchema: rateLimitUsageResponseSchemaV50,
-});
-
-export const hostGetRateLimitUsageUpgradeV40ToV50 = defineUpgradePath<
-  typeof hostGetRateLimitUsageV40,
-  typeof hostGetRateLimitUsageV50
->({
-  from: hostGetRateLimitUsageV40.schemaVersion,
-  to: hostGetRateLimitUsageV50.schemaVersion,
-  upgradeRequest: (request) => request,
-  upgradeResponse: (response) => response,
-});
-
-export const hostGetRateLimitUsageDowngradeV5ToV4 = defineDowngradePath<
-  typeof hostGetRateLimitUsageV50,
-  typeof hostGetRateLimitUsageV40
->({
-  from: hostGetRateLimitUsageV50.schemaVersion,
-  to: hostGetRateLimitUsageV40.schemaVersion,
-  downgradeRequest: (request) => ({ ok: true, value: request }),
-  downgradeResponse: (response) => ({
-    ok: true,
-    value: rateLimitUsageResponseSchemaV40.parse({
-      ...response,
-      providerRateLimits: mapOpenCodeAvailableToUnavailable(
-        response.providerRateLimits,
-      ),
-    }),
-  }),
-});
-
-export const hostGetRateLimitUsageDowngradeV5ToV3 = defineDowngradePath<
-  typeof hostGetRateLimitUsageV50,
-  typeof hostGetRateLimitUsageV30
->({
-  from: hostGetRateLimitUsageV50.schemaVersion,
-  to: hostGetRateLimitUsageV30.schemaVersion,
-  downgradeRequest: (request) => ({ ok: true, value: request }),
-  downgradeResponse: (response) => ({
-    ok: true,
-    value: rateLimitUsageResponseSchemaV30.parse({
-      ...response,
-      providerRateLimits: mapHuggingFaceAvailableToUnavailable(
-        mapOpenCodeAvailableToUnavailable(response.providerRateLimits),
-      ),
-    }),
-  }),
-});
-
-export const hostGetRateLimitUsageDowngradeV5ToV2 = defineDowngradePath<
-  typeof hostGetRateLimitUsageV50,
-  typeof hostGetRateLimitUsageV21
->({
-  from: hostGetRateLimitUsageV50.schemaVersion,
-  to: hostGetRateLimitUsageV21.schemaVersion,
-  downgradeRequest: (request) => ({ ok: true, value: request }),
-  downgradeResponse: (response) => ({
-    ok: true,
-    value: rateLimitUsageResponseSchemaV21.parse({
-      ...response,
-      providerRateLimits: mapGrokAvailableToUnavailable(
-        mapHuggingFaceAvailableToUnavailable(
-          mapOpenCodeAvailableToUnavailable(response.providerRateLimits),
-        ),
-      ),
-    }),
-  }),
-});
-
-export const hostGetRateLimitUsageDowngradeV5ToV1 = defineDowngradePath<
-  typeof hostGetRateLimitUsageV50,
-  typeof hostGetRateLimitUsageV12
->({
-  from: hostGetRateLimitUsageV50.schemaVersion,
-  to: hostGetRateLimitUsageV12.schemaVersion,
-  downgradeRequest: (request) => ({ ok: true, value: request }),
-  downgradeResponse: (response) => ({
-    ok: true,
-    value: rateLimitUsageResponseSchemaV12.parse({
-      ...response,
-      providerRateLimits: mapUsageFetchFailedToNotAvailable(
-        mapGrokAvailableToUnavailable(
           mapHuggingFaceAvailableToUnavailable(
             mapOpenCodeAvailableToUnavailable(response.providerRateLimits),
           ),
@@ -447,3 +358,4 @@ export const hostGetRateLimitUsageDowngradeV5ToV1 = defineDowngradePath<
     }),
   }),
 });
+

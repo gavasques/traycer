@@ -712,24 +712,24 @@ export type RateLimitUsageResponseV30 = z.infer<
   typeof rateLimitUsageResponseSchemaV30
 >;
 
-// v4.0 response - identical to v3.0 except its frozen provider snapshot adds
-// the Hugging Face available arm. Same reasoning as the v3.0 cut for grok: a
-// new available union arm needs an explicit downgrade bridge, so it is a major
-// rather than a v3.1 minor. The request shape is unchanged from v1.2/v2.x/v3.0.
+// v4.0 response - identical to v3.0 except the provider-account snapshot ranges
+// over the LIVE `providerRateLimitsSchema`, which adds the Hugging Face and
+// OpenCode Go available arms. Same reasoning as the v3.0 cut for grok: a new
+// available union arm is not strippable by the within-major skew handler, so it
+// needs an explicit downgrade bridge that degrades it to the unavailable
+// `unsupported_provider` shape. The request shape is unchanged from
+// v1.2/v2.x/v3.0.
+//
+// This is the LIVE line: it ranges over `providerRateLimitsSchema` rather than
+// a frozen snapshot, because `4` is the newest major and no released peer has
+// ever negotiated it (the newest released baseline tops out at `3`). Freezing
+// it costs a pre-image and buys nothing until it ships.
 export const rateLimitUsageResponseSchemaV40 =
-  rateLimitUsageResponseSchema.extend({
-    providerRateLimits: providerRateLimitsSchemaV70.nullable(),
-  });
-export type RateLimitUsageResponseV40 = z.infer<
-  typeof rateLimitUsageResponseSchemaV40
->;
-
-export const rateLimitUsageResponseSchemaV50 =
   rateLimitUsageResponseSchema.extend({
     providerRateLimits: providerRateLimitsSchema.nullable(),
   });
-export type RateLimitUsageResponseV50 = z.infer<
-  typeof rateLimitUsageResponseSchemaV50
+export type RateLimitUsageResponseV40 = z.infer<
+  typeof rateLimitUsageResponseSchemaV40
 >;
 
 /**

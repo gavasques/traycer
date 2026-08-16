@@ -440,6 +440,14 @@ export function hostDirectoryEntryEquals(
     // Not part of the base shape (R-1): a same-host public-key rotation leaves
     // every base field byte-identical, and session registries key their
     // durable owners on it.
+    //
+    // What this comparison produces is the row-changed SIGNAL: consumers are
+    // told to re-read. It is deliberately NOT the query-scope sweep a rebuilt
+    // host also needs - that lives in gui-app's `host-key-rotation-sweep`,
+    // watching the DIRECTORY, because a record here exists only for a host
+    // some consumer named and expires a linger after the last holder lets go.
+    // A host with a populated cache and nobody holding it is exactly the case
+    // this module cannot see.
     remotePublicKeyOf(a) === remotePublicKeyOf(b)
   );
 }

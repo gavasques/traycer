@@ -43,6 +43,7 @@ import {
   type SelectionAuthorityBridge,
 } from "@/lib/host/selection-authority-bridge";
 import { createSessionRetirementSweep } from "@/lib/host/session-retirement";
+import { buildHostKeyRotationSweep } from "@/lib/host/host-key-rotation-sweep";
 import { buildRuntimeChangeScopeHandler } from "@/lib/host/runtime-change-scope";
 import { appLogger } from "@/lib/logger";
 import { useSelectionAuthorityStore } from "@/stores/host/selection-authority-store";
@@ -300,7 +301,7 @@ export function createHostRuntime<Registry extends VersionedRpcRegistry>(
                 if (runtime === null) {
                   return;
                 }
-                runtime.hostClient.invalidateHostScopeForAvailability(hostId);
+                runtime.hostClient.invalidateHostScopeUnannounced(hostId);
               },
             })).messenger;
       // Closes the unary-RPC auth-recovery loop: a mid-call 401 from
@@ -390,6 +391,31 @@ export function createHostRuntime<Registry extends VersionedRpcRegistry>(
           sweepRetiredSessions: sweepRetiredContextSessions,
         }),
       );
+      // R-1: a remote host whose public key rotated under its OWN id was
+      // rebuilt, so everything cached for that id describes a machine that no
+      // longer exists. `bind()` swept it as a by-product of pointing at the
+      // host; P4.2 deleted the slot and nothing swept it after.
+      //
+      // UNANNOUNCED on purpose: a rotation is not an availability recovery,
+      // and the reason-scoped listener directly above would be answering an
+      // event that did not happen. Subscribed to the DIRECTORY rather than the
+      // connection registry because a registry record exists only for a host
+      // someone named and lingers only 60s past the last holder - a host with
+      // a populated scope and no live transport is exactly the case that needs
+      // the sweep. The diffing lives in its own module for the same reason the
+      // change-scope filter above does: a closure inside this provider's
+      // startup path is a thing no suite can observe.
+      const sweepRotatedHostScopes = buildHostKeyRotationSweep({
+        sweepHostScope: (hostId) => {
+          if (runtime === null) {
+            return;
+          }
+          runtime.hostClient.invalidateHostScopeUnannounced(hostId);
+        },
+      });
+      const rotationSweepSubscription = directory.onChange(
+        sweepRotatedHostScopes,
+      );
       void (async () => {
         let phase = "auth.start";
         try {
@@ -447,6 +473,7 @@ export function createHostRuntime<Registry extends VersionedRpcRegistry>(
           selectionBridge?.dispose();
           runtimeMessenger?.dispose();
           runtimeTransportUnsubscribe();
+          rotationSweepSubscription.dispose();
           auth.dispose();
           activeRuntime.dispose();
           directory.dispose();
@@ -471,6 +498,7 @@ export function createHostRuntime<Registry extends VersionedRpcRegistry>(
         // sessions reporting into a disposed kernel across any remount.
         runtimeMessenger?.dispose();
         runtimeTransportUnsubscribe();
+        rotationSweepSubscription.dispose();
         activeRuntime.dispose();
         directory.dispose();
         auth.dispose();

@@ -30,8 +30,26 @@ export interface AvailabilityEvidenceSource {
   subscribeAvailabilityRecovered(listener: () => void): () => void;
 }
 
-export interface AvailabilityRecoveryTarget {
-  notifyAvailabilityRecovered(): void;
+/**
+ * Where one wiring's recovery evidence lands.
+ *
+ * The member takes NO host argument, and that is a statement about this
+ * interface rather than an omission: a target is constructed for exactly one
+ * host and closes over it, so the host is already named by the time anything
+ * calls in. The two implementations say so plainly - the app-wide stream binds
+ * the host it heartbeats, a durable transport binds the host its tab is
+ * pinned to.
+ *
+ * It used to be `AvailabilityRecoveryTarget.notifyAvailabilityRecovered()`,
+ * which spelled the no-arg method the active slot exposed on `HostClient` -
+ * the one that read the slot to work out whose queries to un-strand, and that
+ * P4.2 deleted for becoming a silent permanent no-op. Nothing here ever had
+ * that defect; the name simply outlived the thing it echoed, and a member
+ * whose spelling implies a privileged host is how a reader concludes the two
+ * are related.
+ */
+export interface NamedHostRecoveryTarget {
+  notifyRecoveredForNamedHost(): void;
 }
 
 /**
@@ -52,7 +70,7 @@ export interface AvailabilityRecoveryTarget {
  */
 export function wireAvailabilityRecovery(args: {
   readonly wsStreamClient: AvailabilityEvidenceSource;
-  readonly target: AvailabilityRecoveryTarget;
+  readonly target: NamedHostRecoveryTarget;
   readonly cooldownMs: number;
   readonly now: () => number;
 }): () => void {
@@ -75,7 +93,7 @@ export function wireAvailabilityRecovery(args: {
       "[stream] host availability recovered - refetching host-scoped queries",
       {},
     );
-    args.target.notifyAvailabilityRecovered();
+    args.target.notifyRecoveredForNamedHost();
   };
   const disposeEvidence = args.wsStreamClient.subscribeAvailabilityRecovered(
     () => {

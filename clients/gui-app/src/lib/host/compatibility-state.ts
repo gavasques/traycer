@@ -1,4 +1,5 @@
 import { createContext, use, useEffect, useRef, type Context } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   HostRequestAbortedError,
   HostTransportFailureError,
@@ -23,9 +24,10 @@ const HOST_STATUS_PROBE = {};
  * verdict, one render before the query re-keys".
  *
  * Its last such reader was the status strip's switch trigger, deleted with the
- * strip (D11). The export is kept for the provider's own cache assertions and
- * because the per-host question is a real one; a future per-host reader must
- * still not re-derive this key.
+ * strip (D11). It has one again - {@link useHostStatusReprobeOnRepoint}, which
+ * names the INCOMING host by definition and so cannot ask through
+ * `useHostCompatibility()` - and the rule it reads through this export for is
+ * unchanged: a per-host reader must not re-derive this key.
  */
 export function hostStatusProbeQueryKey(hostId: string): readonly unknown[] {
   return queryKeys.hostMethod<HostRpcRegistry, "host.status">(
@@ -33,6 +35,62 @@ export function hostStatusProbeQueryKey(hostId: string): readonly unknown[] {
     "host.status",
     HOST_STATUS_PROBE,
   );
+}
+
+/**
+ * Re-probes the INCOMING host when the app-wide pointer moves to it.
+ *
+ * The probe caches at `staleTime: Infinity` / `gcTime: Infinity`, so a host
+ * the window has already met answers from a verdict that may be arbitrarily
+ * old. That was survivable while `HostClient.bind()` force-refetched the whole
+ * incoming scope on every switch; P4.2 deleted the slot and that sweep with
+ * it, leaving a re-point served entirely from held data.
+ *
+ * INVALIDATE, never `reset`/`remove`, and the distinction is the whole
+ * behaviour. Invalidation refetches in the background while TanStack keeps the
+ * held `data`, so the verdict below still renders from `probe.data` and the
+ * user sees no transition. Dropping the entry instead would put the app behind
+ * a "checking" splash carrying local-bootstrap copy for a host that has been
+ * running the entire time - which is traycer#860 exactly, reintroduced by the
+ * mechanism meant to keep the answer fresh.
+ *
+ * Triggered by the SELECTION STORE moving, not by a `HostClient` change event:
+ * post-P4.2 a host becoming effective emits no event at all - it is a fact the
+ * selection layer publishes.
+ *
+ * Two deliberate abstentions:
+ *
+ *  - The OPENING derivation (`null` -> A). There is nothing stale to sweep at
+ *    startup, and invalidating an entry whose first fetch is still in flight
+ *    would double-probe every launch.
+ *  - A move to ∅ (`A` -> `null`). There is no incoming host to re-probe, and
+ *    the outgoing one is deliberately left alone: its held verdict is what
+ *    makes coming back to it render in the same frame.
+ */
+export function useHostStatusReprobeOnRepoint(
+  effectiveHostId: string | null,
+): void {
+  const queryClient = useQueryClient();
+  const previousHostId = useRef<string | null>(null);
+  useEffect(() => {
+    const previous = previousHostId.current;
+    previousHostId.current = effectiveHostId;
+    if (
+      previous === null ||
+      effectiveHostId === null ||
+      previous === effectiveHostId
+    ) {
+      return;
+    }
+    // `exact` so the sweep is structurally one entry: this host's probe slot,
+    // never the outgoing host's and never the surrounding host scope. The
+    // narrowness is the invariant, so it is expressed in the call rather than
+    // left to the key's prefix shape.
+    void queryClient.invalidateQueries({
+      queryKey: hostStatusProbeQueryKey(effectiveHostId),
+      exact: true,
+    });
+  }, [queryClient, effectiveHostId]);
 }
 
 /**
@@ -165,17 +223,26 @@ export function useHostCompatibilityProbe(): HostCompatibility {
       // entire time. Holding the entry for the session makes A -> B -> A
       // render from the held verdict in the same render.
       //
-      // WHAT BACKS THE HELD ANSWER CHANGED IN P4.2, and this is the honest
-      // statement of it. The held verdict used to be a bridge across the
-      // switch rather than a substitute for a fresh probe, because
-      // `bind()`'s `refetchActive: true` sweep force-refetched the incoming
-      // host's scope on every switch - overriding `staleTime: Infinity`, which
-      // otherwise means no background refetch at all. That sweep is gone with
-      // the active slot: a host becoming effective now sweeps nothing, so
-      // returning to A re-renders the held verdict WITHOUT a re-probe behind
-      // it. Availability recovery is the remaining forced refetch.
+      // WHAT BACKS THE HELD ANSWER, in three eras, because the middle one is
+      // the reason this block is worth reading at all.
       //
-      // Safety is unchanged, and it never rested on the sweep: a terminal
+      // Originally the held verdict was a bridge across the switch rather than
+      // a substitute for a fresh probe: `bind()`'s `refetchActive: true` sweep
+      // force-refetched the incoming host's whole scope on every switch,
+      // overriding `staleTime: Infinity` (which otherwise means no background
+      // refetch at all). P4.2 deleted the active slot and that sweep with it,
+      // and for one phase a host becoming effective swept nothing - returning
+      // to A re-rendered a held verdict with no re-probe behind it.
+      //
+      // It is backed again, by `useHostStatusReprobeOnRepoint`: a re-point
+      // INVALIDATES this host's probe entry, which refetches in the background
+      // while the held `data` keeps rendering. So the contract now is "answer
+      // instantly from what this host last said, and go ask again" - never
+      // "answer instantly and never ask". The narrower sweep is deliberate:
+      // one entry, this host's, rather than the whole scope the old bind()
+      // path took with it.
+      //
+      // Safety is unchanged and never rested on any of this: a terminal
       // INCOMPATIBLE answer is checked before held data below.
       gcTime: Infinity,
     },

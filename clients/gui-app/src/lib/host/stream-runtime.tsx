@@ -89,7 +89,7 @@ export function HostStreamProvider(props: HostStreamProviderProps): ReactNode {
   // `useSurfaceReadiness("default-host")`, which made the app-wide stream
   // client exist only while the default-host surface reported ready - and
   // that inverted the dependency it was supposed to protect. The stream's
-  // ready boundary drives `notifyAvailabilityRecovered()`, the ONLY designed
+  // ready boundary drives `notifyRecoveredForNamedHost()`, the ONLY designed
   // signal that un-strands host-scoped queries left in a terminal error state
   // (`availability-recovery.ts`); withholding the client until readiness is
   // `ready` means the one mechanism that can RESTORE readiness is disabled
@@ -306,7 +306,9 @@ export function HostStreamProvider(props: HostStreamProviderProps): ReactNode {
   // stalled host would stay errored with no path back, and nothing would
   // fail. `notifyHostAvailabilityRecovered(hostId)` says the same thing about
   // a host the caller can actually name, which here is the host this stream
-  // is heartbeating against.
+  // is heartbeating against. The target member below carries no argument for
+  // the same reason it is now spelled `notifyRecoveredForNamedHost`: the host
+  // is captured in this closure, not read from anywhere.
   const recoveredHostId = readiness.hostId;
   useEffect(() => {
     if (
@@ -319,7 +321,7 @@ export function HostStreamProvider(props: HostStreamProviderProps): ReactNode {
     return wireAvailabilityRecovery({
       wsStreamClient,
       target: {
-        notifyAvailabilityRecovered: () => {
+        notifyRecoveredForNamedHost: () => {
           hostClient.notifyHostAvailabilityRecovered(recoveredHostId);
         },
       },

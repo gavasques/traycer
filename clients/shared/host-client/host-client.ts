@@ -354,51 +354,66 @@ export class HostClient<Registry extends VersionedRpcRegistry> {
    * expressible at all now.
    *
    * Delivery is coalesced per host per microtask tick (see
-   * {@link deliverAvailabilityRecovered}): one shared remote session's ready
+   * {@link deliverHostScopeSweep}): one shared remote session's ready
    * boundary fans out to every consumer wiring, each of which reports it here
    * in the same tick with its own cooldown state.
    */
   notifyHostAvailabilityRecovered(hostId: string): void {
-    this.deliverAvailabilityRecovered(hostId, true);
+    this.deliverHostScopeSweep(hostId, true);
   }
 
   /**
-   * The un-stranding half of {@link notifyHostAvailabilityRecovered} WITHOUT
-   * the active-host change announcement - the same host-scope invalidation the
-   * non-active branch above performs, for a host that happens to be active.
+   * Sweeps one host's query scope WITHOUT announcing it - the same host-scope
+   * invalidation {@link notifyHostAvailabilityRecovered} performs, with no
+   * `"availability-recovered"` change event behind it.
    *
-   * Exists for one caller: a remote binding that owes a ready boundary for a
-   * host which became active while its first dial was still in flight. Routing
-   * that through the active-host path would emit a `"availability-recovered"`
-   * change event, and the runtime answers a change by resetting the very
-   * binding delivering the news. Dropping it instead is not an option either -
-   * `subscribeAvailabilityRecovered` reports a RECOVERY, not current state, so
-   * the active stream runtime attaching afterwards to an already-ready session
-   * gets no replay and the queries stranded by that dial never refetch.
+   * TWO callers, and neither is reporting an availability recovery. The name
+   * says what the method does rather than why any one caller wants it, which
+   * is what lets both of them share it honestly:
+   *
+   *  1. A remote binding that owes a ready boundary for a host whose first
+   *     dial was still in flight. Routing that through the announcing form
+   *     would emit `"availability-recovered"`, and the runtime answers a
+   *     change by resetting the very binding delivering the news. Dropping it
+   *     instead is not an option either - `subscribeAvailabilityRecovered`
+   *     reports a RECOVERY, not current state, so a stream runtime attaching
+   *     afterwards to an already-ready session gets no replay and the queries
+   *     stranded by that dial never refetch.
+   *  2. A same-host public-key ROTATION (R-1): the host was rebuilt under its
+   *     own id, so everything cached for it describes a machine that is gone.
+   *     Nothing recovered availability there - the rotation rebuilds transport
+   *     on its own - and a reason-scoped consumer woken by an
+   *     `"availability-recovered"` it can only read as true would be acting on
+   *     an event that did not happen.
+   *
+   * This used to be `invalidateHostScopeForAvailability`, documented as
+   * existing for one caller. It has two, and a name naming one of their
+   * reasons would have to be replaced by the next one.
    */
-  invalidateHostScopeForAvailability(hostId: string): void {
-    this.deliverAvailabilityRecovered(hostId, false);
+  invalidateHostScopeUnannounced(hostId: string): void {
+    this.deliverHostScopeSweep(hostId, false);
   }
 
   /**
-   * The choke point every availability-recovered report funnels through, so
-   * one physical ready boundary reaching N wirings costs ONE host-scope
-   * invalidation and at most one change event. Reports for the same host in
-   * the same microtask tick merge; a merged report emits the change event if
-   * ANY of its callers asked for one (the active-host variants do, the
-   * messenger's deliberately does not), and reads the active host at
-   * delivery time so a same-tick unbind cannot announce a stale identity.
+   * The choke point every host-scope sweep funnels through, so one physical
+   * trigger reaching N wirings costs ONE host-scope invalidation and at most
+   * one change event. Reports for the same host in the same microtask tick
+   * merge; a merged report emits the change event if ANY of its callers asked
+   * for one (the availability report does, the unannounced sweep deliberately
+   * does not). A rotation sweep landing in the same tick as a genuine
+   * availability recovery therefore still announces, and that is correct: the
+   * availability caller asked, and its announcement is true.
    */
-  private readonly pendingAvailabilityByHost = new Map<
+  private readonly pendingHostScopeSweeps = new Map<
     string,
     { emitChangeEvent: boolean }
   >();
 
-  private deliverAvailabilityRecovered(
+  private deliverHostScopeSweep(
     hostId: string,
     emitChangeEvent: boolean,
   ): void {
-    const pending = this.pendingAvailabilityByHost.get(hostId);
+    const pending = this.pendingHostScopeSweeps.get(hostId);
     if (pending !== undefined) {
       if (emitChangeEvent) {
         pending.emitChangeEvent = true;
@@ -406,9 +421,9 @@ export class HostClient<Registry extends VersionedRpcRegistry> {
       return;
     }
     const entry = { emitChangeEvent };
-    this.pendingAvailabilityByHost.set(hostId, entry);
+    this.pendingHostScopeSweeps.set(hostId, entry);
     queueMicrotask(() => {
-      this.pendingAvailabilityByHost.delete(hostId);
+      this.pendingHostScopeSweeps.delete(hostId);
       this.invalidator.invalidateHostScope(hostId, {
         refetchActive: true,
       });

@@ -1,14 +1,15 @@
 /**
- * Shared primitives for the mobile shell's whole-screen touch recognizers -
- * the left-edge pull that opens the navigation drawer, and the downward drag
- * that dismisses the soft keyboard.
+ * Shared primitives for the mobile shell's touch recognizers - the leftward
+ * pull that pushes the navigation drawer back off screen, the downward drag
+ * that dismisses the soft keyboard, and the row swipe that reveals a task's
+ * tray.
  *
- * Both sit at the document in the capture phase, over surfaces that own
- * gestures of their own, so both need the same questions answered the same
- * way: has this drag declared an axis, has it committed, and does something
- * under the finger already claim it. One definition, because a recognizer that
- * guesses differently from its neighbour is how one ends up stealing the
- * other's touches.
+ * They sit over surfaces that own gestures of their own - two of them at the
+ * document in the capture phase - so they need the same questions answered the
+ * same way: has this drag declared an axis, has it committed, and does
+ * something under the finger already claim it. One definition, because a
+ * recognizer that guesses differently from its neighbour is how one ends up
+ * stealing the other's touches.
  */
 
 export interface DirectionalGesture {
@@ -24,8 +25,8 @@ export interface DirectionalGesture {
  *
  * A two-state recognizer has to decide on the first pixel, so it either steals
  * scrolls or misses swipes. `wait` lets an ambiguous drag stay unclaimed until
- * it declares itself, which is what makes the edge zone usable for both
- * gestures at once.
+ * it declares itself, which is what lets these recognizers share a surface
+ * with the scrollers underneath them.
  */
 export type DirectionalIntent = "activate" | "fail" | "wait";
 
@@ -113,9 +114,8 @@ function asElement(target: EventTarget | null): Element | null {
  * own touches (`touch-action: none`).
  *
  * The mobile terminal key bar is the case that matters: it cancels `touchstart`
- * outright so a key press cannot blur the terminal, and its leftmost column
- * sits inside the drawer's edge zone. A shell recognizer firing there would
- * open the drawer - or dismiss the keyboard - in the middle of someone typing
+ * outright so a key press cannot blur the terminal. A shell recognizer firing
+ * on the same touch would dismiss the keyboard in the middle of someone typing
  * into a terminal.
  */
 export function declaresOwnTouchHandling(target: EventTarget | null): boolean {
@@ -132,20 +132,20 @@ export function declaresOwnTouchHandling(target: EventTarget | null): boolean {
  *
  * A few surfaces do: the tab strips (`touch-pan-x` over an `overflow-x-auto`
  * rail), the attachment strip, code blocks. Those are gestures a user could be
- * mid-way through when the drawer stole the touch, so this refuses rather than
- * competes.
+ * mid-way through when a shell recognizer stole the touch, so this refuses
+ * rather than competes.
  *
  * Answered by walking the ancestors at touch time rather than from a registry
  * of pannable surfaces. A registry is more precise - it can say "this rail is
  * scrolled away from its start, so it owns the drag" for surfaces that are not
  * ancestors of the touch - but it has to be kept in step with every surface
- * that gains or loses a pan, and the narrow edge zone already keeps the two
- * apart for every case in the app today.
+ * that gains or loses a pan, and each recognizer here already enters from a
+ * surface of its own, which keeps the two apart for every case in the app
+ * today.
  *
  * `scrollWidth > clientWidth` is part of the test on purpose: a rail whose tabs
  * all fit does not actually pan, and treating it as if it did would leave a
- * dead strip along the screen edge whose length varied with how many tabs
- * happened to be open.
+ * dead strip whose length varied with how many tabs happened to be open.
  */
 export function ownsHorizontalGesture(target: EventTarget | null): boolean {
   if (declaresOwnTouchHandling(target)) return true;
@@ -196,9 +196,10 @@ export function verticalScrollTargetForDownwardDrag(
  * true before it has anything to dismiss.
  *
  * A focused entry is not a reason for other shell gestures to stand down. The
- * drawer's edge pull deliberately runs while the keyboard is up and drops it as
- * part of opening, because a menu that becomes unreachable from any screen with
- * a live composer is unreachable from most of the app.
+ * drawer's close pull deliberately runs while the keyboard is up, because
+ * pushing the menu away mid-draft is an ordinary thing to do and nothing is
+ * claimed until the classifier has seen travel a caret could not have asked
+ * for.
  *
  * This is also the app's only usable "is the soft keyboard up" signal. The
  * viewport measurement that would answer it directly

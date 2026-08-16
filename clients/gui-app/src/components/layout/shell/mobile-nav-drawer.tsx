@@ -200,11 +200,11 @@ export function MobileNavDrawer(): ReactNode {
       />
       {installedApp ? (
         /* A hand-driven surface rather than a dialog primitive, for one
-           reason: it has to follow the finger from the screen edge. Every
-           dialog primitive available here mounts its panel on open, so there
-           is no panel to drag while the drawer is closed, and no amount of
-           configuration produces one - the panel has to outlive the open
-           state, which means owning the transform outright.
+           reason: dismissal has to follow the finger and stay interruptible
+           mid-flight. Every dialog primitive available here plays a canned
+           exit the hand cannot catch or reverse, and no amount of
+           configuration produces one - a panel that tracks a pointer 1:1 has
+           to own its transform outright.
 
            Branched on the PRODUCT flag, not the viewport, because the drawer
            itself is mounted by form factor: a narrow desktop window renders

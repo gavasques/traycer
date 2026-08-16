@@ -61,6 +61,11 @@ export function createFakeRunnerHost(
       Promise.resolve({ kind: "rejected" as const }),
     listRegisteredHosts: () =>
       Promise.resolve({ kind: "network-error" as const }),
+    // The membership announcement the renderer makes when it observes a fleet
+    // change (redesign P1.2 F6). Result-free and idempotent by contract, so
+    // the inert default is the honest one; a test that cares overrides it to
+    // republish its own snapshot, exactly as a real shell does.
+    refreshHostFleet: () => Promise.resolve(),
     listUserSessions: () => Promise.resolve({ kind: "network-error" as const }),
     revokeUserSession: () =>
       Promise.resolve({ kind: "network-error" as const }),

@@ -98,6 +98,36 @@ const stubHostClient = {
 vi.mock("@/lib/host", () => ({ useHostClient: () => stubHostClient }));
 vi.mock("@/lib/host/runtime", () => ({ useHostClient: () => stubHostClient }));
 
+// P1.2: the body resolves its placement through this hook and refuses to
+// create when it is unusable. This suite is about the SUBMIT GATE, not
+// placement, so it presents a usable one addressing the stub client's host.
+vi.mock("@/hooks/host/use-composer-placement", () => {
+  // Built inside the factory: `vi.mock` is hoisted above the module-level
+  // `stubHostClient`, so closing over it would read a TDZ binding.
+  const target = {
+    resolvedHostId: "host-1",
+    client: { getActiveHostId: () => "host-1" },
+    hostLabel: "Local",
+    isPinned: false,
+    pinnedHostDead: false,
+  };
+  return {
+    useComposerPlacement: () => ({
+      pin: {
+        selection: null,
+        setSelection: () => undefined,
+        resolvedHostId: "host-1",
+        isPinned: false,
+        latchOnFirstUse: () => undefined,
+        followEffective: () => undefined,
+      },
+      target,
+      submitTarget: target,
+      hostLabelFor: () => "Local",
+    }),
+  };
+});
+
 // The body resolves its host through `useHostClientForHostId`, which reads the
 // directory to pin an explicit id. This suite only exercises the unpinned
 // (`hostId: null`) path, where that lookup is skipped and the app-wide client

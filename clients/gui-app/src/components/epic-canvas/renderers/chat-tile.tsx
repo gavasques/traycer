@@ -13,7 +13,6 @@ import { useChatQueueActions } from "./use-chat-queue-actions";
 import type { ChatForkMode } from "@/components/chat/chat-message";
 import { useStore } from "zustand";
 import { useShallow } from "zustand/react/shallow";
-import { toast } from "sonner";
 import { useTabProvidersList } from "@/hooks/providers/use-tab-providers-list-query";
 import { TombstonedProfileProvider } from "@/components/chat/tombstoned-profile-provider";
 import type {
@@ -102,12 +101,8 @@ import { useTabHostId } from "@/components/epic-canvas/hooks/use-tab-host-id";
 // eslint-disable-next-line @typescript-eslint/no-restricted-imports -- expires P2.2 — tab content must use useTabHostClient; F12. epics/c6042be5-cbd3-4923-8cbe-d2bc00ae7ade/artifacts/host-lifecycle-redesign
 import { useHostClient, useHostBinding } from "@/lib/host";
 import { useHostReachability } from "@/hooks/agent/use-host-reachability";
-import {
-  useEpicCreateChat,
-  useEpicUpdateChatRunSettings,
-} from "@/hooks/epic/use-epic-chat-mutations";
-import { useEpicNestedFocusNavigation } from "@/hooks/epic/use-epic-nested-focus-navigation";
-import { cloneChatOnHostSwitch } from "@/lib/commands/actions/clone-chat-on-host-switch";
+import { useEpicUpdateChatRunSettings } from "@/hooks/epic/use-epic-chat-mutations";
+import { useChatCloneOnHostSwitch } from "@/components/epic-canvas/renderers/use-chat-clone-on-host-switch";
 import { enqueuePersistChatRunSettings } from "@/lib/chats/chat-run-settings-write-queue";
 import {
   findManualCompactCommand,
@@ -371,7 +366,8 @@ export function ChatTile(props: ChatTileProps) {
     enabled: true,
     subscribed: false,
   });
-  // The clone-offer hook runs `useEpicCreateChat`, which subscribes to
+  // The clone-offer hook runs `useEpicCreateChatForHostClient`, which
+  // subscribes to
   // the host runtime. Mount it only when the banner is actually
   // shown so the live render path does not pay the subscription cost
   // (and tests that omit the host runtime provider stay green).
@@ -501,115 +497,6 @@ export function ChatDeadTileBannerContainer(
       testId={props.testId}
     />
   );
-}
-
-interface UseChatCloneOnHostSwitchArgs {
-  readonly epicId: string;
-  readonly tabId: string;
-  readonly chatId: string;
-  readonly sourceHostId: string;
-  readonly sourceSettings: ChatRunSettings | null;
-  /** The owner this banner was showing, or `null` when it does not know. */
-  readonly sourceOwnerUserId: string | null;
-}
-
-/**
- * Wires the chat dead-tile banner's Clone action to
- * `cloneChatOnHostSwitch`. Targets the directory's currently selected
- * host (the user's active default). Tracks the returned cancel in a
- * ref and disposes it on unmount so an aborted clone doesn't leak the
- * projection-wait subscription (ticket 10).
- */
-function useChatCloneOnHostSwitch(args: UseChatCloneOnHostSwitchArgs): {
-  readonly clone: () => void;
-  readonly cloning: boolean;
-} {
-  const binding = useHostBinding();
-  const createChat = useEpicCreateChat();
-  const navigateNestedFocus = useEpicNestedFocusNavigation();
-  const cancelRef = useRef<(() => void) | null>(null);
-  const [cloning, setCloning] = useState(false);
-
-  useEffect(() => {
-    const cancelHandle = cancelRef;
-    return () => {
-      if (cancelHandle.current !== null) {
-        cancelHandle.current();
-        cancelHandle.current = null;
-      }
-    };
-  }, []);
-
-  const clone = useCallback(() => {
-    if (binding === null) {
-      toast("Can't clone this agent - no host connection.");
-      return;
-    }
-    const target = binding.directory.getSelected();
-    if (target === null) {
-      toast("Pick an active host before cloning this agent.");
-      return;
-    }
-    if (target.hostId === args.sourceHostId) {
-      // The refusal this finding is about: the active host IS the agent's
-      // own bound host, so there is nowhere to clone to - silently doing
-      // nothing here used to read as a broken button.
-      toast(
-        "The active host is this agent's own bound host - switch to a different host before cloning.",
-      );
-      return;
-    }
-    if (cancelRef.current !== null) cancelRef.current();
-    setCloning(true);
-    cancelRef.current = cloneChatOnHostSwitch({
-      epicId: args.epicId,
-      tabId: args.tabId,
-      sourceChatId: args.chatId,
-      sourceOwnerUserId: args.sourceOwnerUserId,
-      sourceHostId: args.sourceHostId,
-      targetHostId: target.hostId,
-      directory: binding.directory,
-      sourceSettings: args.sourceSettings,
-      globalClient: binding.hostClient,
-      onProfileFallbackToAmbient: () => {
-        toast(
-          "Continuing on the Terminal account - your profile isn't available on this host.",
-        );
-      },
-      onHistoryUnavailable: (reason) => {
-        toast(
-          reason === "no-checkpoint"
-            ? "This agent hasn't replied yet, so its history can't be carried - continuing with settings only."
-            : "This device can't send this agent's history to that host version - continuing with settings only.",
-        );
-      },
-      onCloneFailed: () => {
-        setCloning(false);
-      },
-      navigateNestedFocus,
-      createChat: (request, callbacks) => {
-        createChat.mutate(request, {
-          onSuccess: callbacks.onSuccess,
-          onError: callbacks.onError,
-        });
-      },
-    });
-  }, [
-    binding,
-    createChat,
-    navigateNestedFocus,
-    args.epicId,
-    args.tabId,
-    args.chatId,
-    // The cloud list can resolve AFTER this banner first renders, so the
-    // callback must be rebuilt when the owner lands - otherwise a click still
-    // sends the `null` this closed over on the first pass (ticket 37).
-    args.sourceOwnerUserId,
-    args.sourceHostId,
-    args.sourceSettings,
-  ]);
-
-  return { clone, cloning };
 }
 
 interface ChatTileAccessFlags {

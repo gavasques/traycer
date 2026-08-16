@@ -146,8 +146,11 @@ export function LandingComposer(props: LandingComposerProps) {
   // window-keyed surface pin, or the effective host while it follows. Not the
   // app-wide selection - the picker no longer moves that - so every RPC this
   // surface makes, and every create it performs, resolves through here.
-  const placement = useComposerPlacement();
+  const placement = useComposerPlacement(null);
+  // READ target for this surface's queries; SUBMIT target (host-frozen client)
+  // for anything that creates - see `useComposerPlacement`.
   const placementTarget = placement.target;
+  const submitTarget = placement.submitTarget;
   const composerIsPinned = placement.pin.isPinned;
   const hostLabelFromDirectory = placement.hostLabelFor;
   const resolvedHostId = placementTarget.resolvedHostId;
@@ -578,7 +581,7 @@ export function LandingComposer(props: LandingComposerProps) {
     workspaceCanStart &&
     hasSubmittableContent;
 
-  const actions = useLandingComposerActions(placementTarget);
+  const actions = useLandingComposerActions(submitTarget);
   // Submit-time refusal copy (selection model §54) and the G4 re-point notice
   // share one slot: both say "this composer's device is not what you think",
   // and showing two stacked banners about the same host would be noise.

@@ -1,6 +1,7 @@
 import { useCallback, useMemo } from "react";
 import type { HostClient } from "@traycer-clients/shared/host-client/host-client";
 import type {
+  ActivateRefusalReason,
   ActivateResult,
   SelectionAuthorityClient,
 } from "@traycer-clients/shared/host-selection/selection-authority-contract";
@@ -241,18 +242,41 @@ export async function requestActivate(
   toast.error(activateRefusalMessage(result.reason, option?.name ?? "That host"));
 }
 
+/**
+ * One line of copy per refusal arm, as a total map over the CONTRACT's union
+ * rather than a hand-written copy of it.
+ *
+ * A `Record` keyed on `ActivateRefusalReason` is the census: the day the
+ * contract grows a sixth arm, this object fails to compile with the missing
+ * key named, instead of silently routing a new refusal into the generic
+ * fallback and telling the user nothing about a reason the engine took the
+ * trouble to distinguish. That is exactly how `persist-failed` arrived.
+ *
+ * Two families, and the split matters for the copy: `unknown-host` /
+ * `incompatible` are statements ABOUT THE HOST and name it; `not-attached` /
+ * `persist-failed` are failures of this window's own machinery, where naming
+ * the host would misattribute the fault to a machine that is fine.
+ */
+const ACTIVATE_REFUSAL_COPY: Record<
+  ActivateRefusalReason,
+  (label: string) => string
+> = {
+  "unknown-host": (label) =>
+    `${label} is no longer registered to this account.`,
+  incompatible: (label) =>
+    `${label} needs a host update before it can be activated.`,
+  "not-attached": () =>
+    "This window lost its connection to the selection service - reload and try again.",
+  // Nothing moved: the preference was refused BEFORE any state changed and no
+  // event fired, so the same Activate is safe to retry verbatim - which is why
+  // this says "try again" and not "it may or may not have applied".
+  "persist-failed": () => "Couldn't save your choice - try again.",
+  unrecognized: (label) => `Couldn't activate ${label}.`,
+};
+
 function activateRefusalMessage(
-  reason: "unknown-host" | "incompatible" | "not-attached" | "unrecognized",
+  reason: ActivateRefusalReason,
   label: string,
 ): string {
-  if (reason === "unknown-host") {
-    return `${label} is no longer registered to this account.`;
-  }
-  if (reason === "incompatible") {
-    return `${label} needs a host update before it can be activated.`;
-  }
-  if (reason === "not-attached") {
-    return "This window lost its connection to the selection service - reload and try again.";
-  }
-  return `Couldn't activate ${label}.`;
+  return ACTIVATE_REFUSAL_COPY[reason](label);
 }

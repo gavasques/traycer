@@ -67,8 +67,13 @@ import { useOwnerWorkspaceInheritanceSeed } from "@/hooks/worktree/use-owner-wor
 import { useEpicStore } from "@/hooks/use-epic-store";
 import type { HostClient } from "@traycer-clients/shared/host-client/host-client";
 import type { HostRpcRegistry } from "@/lib/host";
-import { useHostClientForHostId } from "@/hooks/host/use-host-client-for-host-id";
-import { useComposerSurfaceHostPin } from "@/hooks/host/use-composer-surface-host-pin";
+import { useComposerPlacement } from "@/hooks/host/use-composer-placement";
+import { resolveLandingPlacement } from "@/lib/composer/landing-placement";
+import { subscribeFollowingSurfaceReset } from "@/stores/host/surface-host-selection-store";
+import {
+  ComposerHostNotice,
+  type ComposerHostNoticeState,
+} from "@/components/home/composer/composer-host-notice";
 import { UNKNOWN_HOST_PLACEHOLDER } from "@/lib/host/constants";
 import { LEADER_SCOPE_NEW_CONVERSATION_MODAL } from "@/lib/keybindings/leader-scope";
 import {
@@ -132,7 +137,6 @@ import {
   worktreeStagingKeyString,
 } from "@/stores/worktree/worktree-intent-staging-store";
 import { useWorktreeIntentMemoryStore } from "@/stores/worktree/worktree-intent-memory-store";
-import { reportableErrorToast } from "@/lib/reportable-error-toast";
 import { usePromptStash } from "@/hooks/composer/use-prompt-stash";
 import { PromptStashControl } from "@/components/chat/composer/prompt-stash-control";
 import {
@@ -423,16 +427,6 @@ export function NewConversationModalHeader(props: {
   );
 }
 
-/**
- * Stand-in host id for the terminal-agent create, used only until the
- * projection carries the real binding - see `useCreateTuiAgent`.
- */
-function placeholderHostIdFor(
-  client: HostClient<HostRpcRegistry> | null,
-): string {
-  return client?.getActiveHostId() ?? UNKNOWN_HOST_PLACEHOLDER;
-}
-
 export function NewConversationModalBody(props: {
   readonly epicId: string;
   readonly tabId: string;
@@ -484,9 +478,15 @@ export function NewConversationModalBody(props: {
   // default instead would let this modal's chip name one device while its
   // create landed on another. A request that DOES name a host keeps it, with
   // the picker inert (§55).
-  const composerPin = useComposerSurfaceHostPin();
-  const resolvedHostId = hostId ?? composerPin.resolvedHostId;
-  const hostClient = useHostClientForHostId(hostId ?? composerPin.selection);
+  //
+  // Same placement UNIT as the landing composer, not merely the same key: the
+  // READ client for this body's queries, the host-FROZEN client every create
+  // below is sent on, and the submit-time refusal all come out of one hook.
+  const composerPlacement = useComposerPlacement(hostId);
+  const resolvedHostId = composerPlacement.target.resolvedHostId;
+  const hostClient = composerPlacement.target.client;
+  const submitTarget = composerPlacement.submitTarget;
+  const composerIsPinned = composerPlacement.pin.isPinned;
   const latestWorkspaceSeed = useModalWorkspaceSeed(
     epicId,
     parentId,
@@ -613,10 +613,13 @@ export function NewConversationModalBody(props: {
     isActive: chatComposerActive,
   });
 
-  const createChat = useEpicCreateChatForHostClient(hostClient);
+  // Creates bind to the SUBMIT client: host-frozen for the resolved host, so a
+  // derivation move between two awaits in the terminal chain cannot re-point
+  // later RPCs. Reads above stay on the mutable read client on purpose.
+  const createChat = useEpicCreateChatForHostClient(submitTarget.client);
   const terminalAgentCreate = useCreateTuiAgentForClient(
-    hostClient,
-    placeholderHostIdFor(hostClient),
+    submitTarget.client,
+    resolvedHostId ?? UNKNOWN_HOST_PLACEHOLDER,
   );
   const isSubmitting = createChat.isPending || terminalAgentCreate.isPending;
   const resolvedWorkspace = useResolvedWorkspaceFolders(
@@ -722,6 +725,26 @@ export function NewConversationModalBody(props: {
     />
   );
   const header = <NewConversationModalHeader switcher={switcher} />;
+  // §54 refusal copy and the G4 re-point notice share one slot, as on the
+  // landing composer.
+  const [hostNotice, setHostNotice] = useState<ComposerHostNoticeState | null>(
+    null,
+  );
+  const dismissHostNotice = useCallback(() => {
+    setHostNotice(null);
+  }, []);
+  // G4: this modal FOLLOWS the effective host whenever the request named no
+  // host, so a derivation move re-points it. Its staged worktree/branch intent
+  // names refs on the machine the user picked them on and must not travel; the
+  // §51 folder set stays, per the orchestrator's ruling on the landing row. A
+  // request that names its own host is pinned and ignores this (D6).
+  useEffect(() => {
+    return subscribeFollowingSurfaceReset(({ nextEffectiveHostId }) => {
+      if (composerIsPinned) return;
+      clearStagedIntent(stagingKey);
+      setHostNotice({ kind: "repointed", hostId: nextEffectiveHostId });
+    });
+  }, [clearStagedIntent, composerIsPinned, stagingKey]);
   const cleanupAfterSubmit = useCallback((): void => {
     clearDraft(epicId);
     clearStagedIntent(stagingKey);
@@ -753,27 +776,20 @@ export function NewConversationModalBody(props: {
     // Global, single-selection billing context captured at create time; it
     // rides as a sibling of the per-chat settings on the initial message.
     const accountContext = useAccountContextStore.getState().accountContext;
-    // Resolve the host BEFORE any persistent write: canSubmit gates on the
-    // permission role + workspace, not the active host, so the host can be null
-    // here (dropped after the modal opened). Bailing after writing last-run
-    // would pollute it for a chat that is never created and strand the modal
-    // open with no feedback - mirror the landing flow's host-first toast.
-    const activeHostId = hostClient?.getActiveHostId() ?? null;
-    if (activeHostId === null) {
-      reportableErrorToast(
-        "Couldn't start the agent.",
-        {
-          description: "No active device. Reconnect and try again.",
-        },
-        {
-          title: "Could not start agent",
-          message: "No active device was available.",
-          code: null,
-          source: "Chat",
-        },
-      );
+    // Selection model §54, and the ORDERING is the point: re-validate the
+    // placement BEFORE any persistent write, because `cleanupAfterSubmit`
+    // below clears the draft and closes the modal synchronously, well before
+    // the create can fail. An existence check (`getActiveHostId() !== null`)
+    // was not enough - it passes for a pinned host that has gone offline, and
+    // for a following client that has moved off the host the chip is
+    // rendering. A refusal here leaves the draft, its staged workspace and the
+    // modal exactly as the user left them, with the reason inline.
+    const placementVerdict = resolveLandingPlacement(submitTarget);
+    if (placementVerdict.kind === "refused") {
+      setHostNotice({ kind: "refused", message: placementVerdict.message });
       return;
     }
+    const activeHostId = placementVerdict.hostId;
     const content = buildSubmittedChatJSONContent(
       editor.getJSON(),
       pickerStore.getState().knownSlashCommands,
@@ -866,10 +882,12 @@ export function NewConversationModalBody(props: {
     canSubmit,
     cleanupAfterSubmit,
     createChat,
+    // The placement this submit re-validates MUST be the current one: a stale
+    // closure would check a host the chip stopped showing renders ago.
+    submitTarget,
     pickerStore,
     draftWorkspaceFolderCount,
     epicId,
-    hostClient,
     parentId,
     placement,
     rememberEpicIntent,
@@ -881,24 +899,13 @@ export function NewConversationModalBody(props: {
   const handleStartTerminal = useCallback(
     (launch: TerminalAgentLaunch) => {
       if (!canMutate || !workspaceCanStart) return;
-      // Same host-first gate as `handleSubmit`: with no resolved client (a
-      // pinned host still connecting, or no active device) the create below
-      // can only reject - and the draft would already be gone, because
-      // `cleanupAfterSubmit` runs before the async create. Keep the modal
-      // open and the draft intact instead.
-      if ((hostClient?.getActiveHostId() ?? null) === null) {
-        reportableErrorToast(
-          "Couldn't start the agent.",
-          {
-            description: "No active device. Reconnect and try again.",
-          },
-          {
-            title: "Could not start agent",
-            message: "No active device was available.",
-            code: null,
-            source: "Chat",
-          },
-        );
+      // Same §54 gate as `handleSubmit`, and for the same ordering reason:
+      // `cleanupAfterSubmit` runs before the async create, so a placement that
+      // cannot be created on must be refused here or the draft is gone before
+      // anything reports the failure.
+      const placementVerdict = resolveLandingPlacement(submitTarget);
+      if (placementVerdict.kind === "refused") {
+        setHostNotice({ kind: "refused", message: placementVerdict.message });
         return;
       }
       const worktreeIntent = worktreeIntentForSubmit();
@@ -934,9 +941,9 @@ export function NewConversationModalBody(props: {
     [
       canMutate,
       cleanupAfterSubmit,
+      submitTarget,
       draftWorkspaceFolderCount,
       epicId,
-      hostClient,
       parentId,
       placement,
       rememberEpicIntent,
@@ -981,7 +988,13 @@ export function NewConversationModalBody(props: {
       attachmentPending={attachmentPending}
       workspaceDisabledHint={composerDisabledHint}
       header={header}
-      topBanner={null}
+      topBanner={
+        <ComposerHostNotice
+          notice={hostNotice}
+          hostLabelFor={composerPlacement.hostLabelFor}
+          onDismiss={dismissHostNotice}
+        />
+      }
       stashControl={
         <PromptStashControl
           controller={promptStash}

@@ -93,6 +93,14 @@ export function resolveLandingPlacement(
   // host's id, and the app-wide client answers with whatever it is bound to.
   // A disagreement here means the composer would create somewhere other than
   // the machine it is showing.
+  //
+  // Callers that pass `useComposerPlacement().submitTarget` satisfy this by
+  // CONSTRUCTION - a frozen requester's id is the resolved id - and that is
+  // the point: freezing turns "checked once at submit" into "cannot drift
+  // mid-chain". The arm stays because it is what makes this resolver safe for
+  // any future caller that hands it a mutable client, and because the ∅-client
+  // arm above cannot distinguish "not addressable" from "addresses something
+  // else". Do not read a passing check here as proof a chain is frozen.
   if (target.client.getActiveHostId() !== target.resolvedHostId) {
     return {
       kind: "refused",

@@ -18,6 +18,7 @@ import type {
 } from "@traycer-clients/shared/platform/runner-host";
 import type { Disposable } from "@traycer-clients/shared/platform/uri-callback";
 import { appLogger, describeLogError } from "@/lib/logger";
+import { requestFleetRefresh } from "@/lib/host/fleet-refresh";
 import { lastLocalHostIdKey } from "@/lib/persist";
 import { useSettingsHostScopeStore } from "@/stores/settings/settings-host-scope-store";
 
@@ -705,7 +706,35 @@ export class HostDirectoryService implements IHostDirectoryService {
     }
     this.lastCommitCredentialGeneration = era.credentialGeneration;
     this.lastCommitIdentity = era.identity;
+    // Captured BEFORE the overwrite: this is the only place that holds both
+    // sides of a membership transition (F6b).
+    const previousRemoteIds = new Set(
+      this.remoteEntries.map((entry) => entry.hostId),
+    );
     this.remoteEntries = outcome.kind === "hosts" ? outcome.entries : [];
+    // A host registered late - from the CLI, or from another machine - reaches
+    // this directory through its own poll, while the selection authority's
+    // fleet (desktop main) stays stale. Activate on it then refuses
+    // `unknown-host`: the user is told a machine they just registered is "no
+    // longer registered to this account".
+    //
+    // ADDED ids only. A REMOVED id is the deregister mutation's own
+    // announcement and must not be made twice; a first fetch that finds hosts
+    // fires once, which is correct rather than noise - main's fleet can be
+    // exactly as stale at cold start as at any other moment, and the cost is
+    // one refetch.
+    //
+    // The `hosts` check is DOCUMENTARY, not load-bearing, and a mutation probe
+    // proved it: `failed` returns above this line, and `signed-out` commits an
+    // empty set, so neither can ever satisfy the added-ids predicate. It stays
+    // because it states the rule a future edit has to keep - but no test pins
+    // it, because no mutation of it can go red.
+    if (
+      outcome.kind === "hosts" &&
+      outcome.entries.some((entry) => !previousRemoteIds.has(entry.hostId))
+    ) {
+      requestFleetRefresh(this.runnerHost);
+    }
     await this.reseedLocalHostIdIfUnknown();
     this.refreshSelectedEntry();
     // Emit only when the merged snapshot actually changed. The 60s registry

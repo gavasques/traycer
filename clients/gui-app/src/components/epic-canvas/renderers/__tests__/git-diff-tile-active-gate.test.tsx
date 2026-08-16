@@ -28,6 +28,8 @@ vi.mock("@/hooks/agent/use-host-reachability", () => ({
     status: "reachable",
     hostLabel: "Host A",
   }),
+  resolvedHostLabel: (r: { status: string; hostLabel: string | null }) =>
+    r.status === "checking" ? null : r.hostLabel,
 }));
 
 vi.mock("react-virtuoso", () => ({

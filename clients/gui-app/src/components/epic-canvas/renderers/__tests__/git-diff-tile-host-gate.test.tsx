@@ -47,6 +47,8 @@ vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
 
 vi.mock("@/hooks/agent/use-host-reachability", () => ({
   useHostReachability: () => state.reachability,
+  resolvedHostLabel: (r: { status: string; hostLabel: string | null }) =>
+    r.status === "checking" ? null : r.hostLabel,
 }));
 
 vi.mock("@/hooks/git/use-git-list-changed-files-subscription", () => ({

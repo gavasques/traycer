@@ -1971,6 +1971,109 @@ describe("useLandingComposerActions", () => {
     ).toEqual(stagedIntent);
     queryClient.clear();
   });
+
+  /**
+   * `isPending`, the field `landing-composer.tsx`'s `isSubmitting` now reads
+   * (`runtimeState.isSubmitting || actions.isPending`). Before that change
+   * the composer built its OWN `useEpicCreateForClient` /
+   * `useCreateTuiAgentForClient` pair and read `isPending` off THOSE - two
+   * observers nobody ever called `.mutate()` on, so the read was permanently
+   * `false` no matter what a create in flight was actually doing. These pins
+   * are on the hook that now backs it, exercising the REAL
+   * `useEpicCreateForClient(target.client)` mutation this suite's harness
+   * already wires (a deferred `landingMocks.request`, not a mocked
+   * `isPending`), so a regression back to a second, uncalled observer would
+   * fail this rather than pass silently the way it did before.
+   */
+  describe("isPending", () => {
+    it("is false before any submit", () => {
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false, gcTime: 0 } },
+      });
+      const { result } = renderHook(
+        () => useLandingComposerActions(useTestPlacementTarget()),
+        { wrapper: queryClientWrapper(queryClient) },
+      );
+
+      expect(result.current.isPending).toBe(false);
+      queryClient.clear();
+    });
+
+    it("goes true while epic.create is in flight, and false again once it settles", async () => {
+      const createGate = deferred<unknown>();
+      landingMocks.request.mockImplementation((method) =>
+        method === "epic.create" ? createGate.promise : Promise.resolve({}),
+      );
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false, gcTime: 0 } },
+      });
+      const { result } = renderHook(
+        () => useLandingComposerActions(useTestPlacementTarget()),
+        { wrapper: queryClientWrapper(queryClient) },
+      );
+      expect(result.current.isPending).toBe(false);
+
+      act(() => {
+        result.current.submit({
+          draftId: null,
+          editor: editorHandleForPrompt(SUBMITTED_PROMPT),
+          slashCatalog: null,
+          toolbar: defaultToolbar(),
+        });
+      });
+
+      await waitFor(() => {
+        expect(
+          landingMocks.request.mock.calls.some(
+            (call) => call[0] === "epic.create",
+          ),
+        ).toBe(true);
+      });
+      await waitFor(() => {
+        expect(result.current.isPending).toBe(true);
+      });
+
+      createGate.resolve({ roomInfo: null });
+
+      await waitFor(() => {
+        expect(result.current.isPending).toBe(false);
+      });
+      queryClient.clear();
+    });
+
+    it("goes false again after epic.create REJECTS - a failed create must not strand the composer disabled", async () => {
+      const createGate = deferred<unknown>();
+      landingMocks.request.mockImplementation((method) =>
+        method === "epic.create" ? createGate.promise : Promise.resolve({}),
+      );
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false, gcTime: 0 } },
+      });
+      const { result } = renderHook(
+        () => useLandingComposerActions(useTestPlacementTarget()),
+        { wrapper: queryClientWrapper(queryClient) },
+      );
+
+      act(() => {
+        result.current.submit({
+          draftId: null,
+          editor: editorHandleForPrompt(SUBMITTED_PROMPT),
+          slashCatalog: null,
+          toolbar: defaultToolbar(),
+        });
+      });
+      await waitFor(() => {
+        expect(result.current.isPending).toBe(true);
+      });
+
+      createGate.reject(new Error("create rejected"));
+
+      await waitFor(() => {
+        expect(result.current.isPending).toBe(false);
+      });
+      queryClient.clear();
+    });
+  });
 });
 
 function queryClientWrapper(

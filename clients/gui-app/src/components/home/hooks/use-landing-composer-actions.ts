@@ -150,6 +150,22 @@ export interface LandingComposerActions {
     launch: TerminalAgentLaunch,
     draftId: string | null,
   ) => LandingPlacementRefusal | null;
+  /**
+   * Whether a create started here is still running.
+   *
+   * Exposed rather than left to the composer to observe, because the composer
+   * CANNOT observe it: TanStack v5 mutation state is per-OBSERVER, so the
+   * `useEpicCreateForClient` / `useCreateTuiAgentForClient` pair the composer
+   * used to build for itself tracked a second, never-mutated observer and its
+   * `isPending` was permanently false. A shared `mutationKey` would not have
+   * fixed it either (keys do not sync observers; only `useIsMutating` reads
+   * across them, and that is a GLOBAL count that would also light up for a
+   * create fired from the new-conversation modal on the same key - trading an
+   * inert read for a false-positive one).
+   *
+   * The observers that actually run live here, so the honest answer does too.
+   */
+  readonly isPending: boolean;
 }
 
 export interface LandingPlacementRefusal {
@@ -821,8 +837,14 @@ export function useLandingComposerActions(
     () => ({
       submit,
       selectTerminalAgent,
+      isPending: createEpic.isPending || terminalAgentCreate.isPending,
     }),
-    [selectTerminalAgent, submit],
+    [
+      createEpic.isPending,
+      selectTerminalAgent,
+      submit,
+      terminalAgentCreate.isPending,
+    ],
   );
 }
 

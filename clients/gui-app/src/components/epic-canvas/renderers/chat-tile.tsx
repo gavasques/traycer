@@ -99,7 +99,12 @@ import {
 import { useAuthStore } from "@/stores/auth/auth-store";
 import { useTabHostId } from "@/components/epic-canvas/hooks/use-tab-host-id";
 import { useHostBinding } from "@/lib/host";
-import { useHostReachability } from "@/hooks/agent/use-host-reachability";
+import {
+  useHostReachability,
+  resolvedHostLabel,
+} from "@/hooks/agent/use-host-reachability";
+import { useBoundedHostLoad } from "@/hooks/host/use-bounded-host-load";
+import { TileHostLoadState } from "./tile-host-load-state";
 import { useEpicUpdateChatRunSettings } from "@/hooks/epic/use-epic-chat-mutations";
 import { useChatCloneOnHostSwitch } from "@/components/epic-canvas/renderers/use-chat-clone-on-host-switch";
 import { enqueuePersistChatRunSettings } from "@/lib/chats/chat-run-settings-write-queue";
@@ -357,6 +362,18 @@ export function ChatTile(props: ChatTileProps) {
     chatRecord !== null || isCrossHostOpen || isCloudKnown,
   );
   const reachability = useHostReachability(tabHostId);
+  // The chat's own bounded load (invariant 6). `handle === null` is this
+  // tile's spinner-forever shape and it has THREE causes that look identical
+  // from here: the tab's host client is null so every `useHostQuery` disabled
+  // itself (audit S3), the subscription is live but nothing has arrived (S4),
+  // or the directory has not answered at all (S5's `checking`, which this tile
+  // had no arm for). The reader cannot act on the difference, so all three get
+  // one sentence naming the host - and an end.
+  const chatLoad = useBoundedHostLoad({
+    hostId: tabHostId,
+    hostLabel: resolvedHostLabel(reachability),
+    pending: handle === null,
+  });
   // Feeds `TombstonedProfileProvider` below - "ran on <label> (removed)" for
   // a message anchored to a since-tombstoned profile. Shares the same
   // tab-scoped query the reauth gate/rate-limit prompt already read, so this
@@ -414,7 +431,20 @@ export function ChatTile(props: ChatTileProps) {
         className="flex h-full min-h-0 flex-col"
       >
         {deadTileBanner}
-        <ChatTileLoading />
+        {chatLoad.kind === "ready" ? (
+          // Unreachable while `pending` is `handle === null` and we are inside
+          // that branch, but written as a fallback rather than a cast: the
+          // spinner is the strictly safer thing to render if that ever stops
+          // being true.
+          <ChatTileLoading />
+        ) : (
+          <TileHostLoadState
+            load={chatLoad}
+            subject="agent"
+            onRetry={null}
+            testId={`chat-tile-load-${node.id}`}
+          />
+        )}
       </div>
     );
   }

@@ -39,6 +39,8 @@ vi.mock("@/hooks/agent/use-host-reachability", () => ({
     status: reachability.value,
     hostLabel: "Work laptop",
   }),
+  resolvedHostLabel: (r: { status: string; hostLabel: string | null }) =>
+    r.status === "checking" ? null : r.hostLabel,
 }));
 
 vi.mock(
@@ -501,4 +503,32 @@ describe("managed-command output window", () => {
       screen.getByTestId("managed-command-output-unreachable"),
     ).not.toBeNull();
   });
+
+  // S5: this tile used to render a bare spinner for BOTH `checking` and
+  // `host-starting` - indistinguishable from a window about to appear, and
+  // neither state ended. It now names the host it is waiting on through the
+  // shared `TileHostLoadState`. Asserting the SENTENCE, not merely that no
+  // spinner-only element exists - an empty starved mount would also pass a
+  // "no spinner" check, which is exactly the vacuous shape this pin exists to
+  // avoid.
+  it.each([
+    // `resolvedHostLabel` nulls the label for `checking` specifically (the
+    // directory has not answered at all yet) but not for `host-starting`
+    // (the directory answered "not yet published", and DOES know this
+    // host's label) - so the two arms' bounded words differ in exactly this
+    // one respect, and both must still be WORDS, never a bare skeleton.
+    ["checking", "the host"],
+    ["host-starting", 'Work laptop'],
+  ] as const)(
+    "names the host it is waiting on, worded and bounded, for reachability %s",
+    (status, expectedNaming) => {
+      reachability.value = status;
+      installOutputStub();
+      renderTile();
+
+      const load = screen.getByTestId("managed-command-output-load");
+      expect(load.textContent).toContain(expectedNaming);
+      expect(load.getAttribute("data-load-kind")).not.toBe("ready");
+    },
+  );
 });

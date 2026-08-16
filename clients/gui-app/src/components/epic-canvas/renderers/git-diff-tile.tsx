@@ -55,6 +55,7 @@ import { GitErrorBlock } from "@/components/epic-canvas/git-diff/git-error-block
 import { GitWatcherStatusNotice } from "@/components/epic-canvas/git-diff/git-watcher-status-notice";
 import { useTabHostId } from "@/components/epic-canvas/hooks/use-tab-host-id";
 import { useHostReachability } from "@/hooks/agent/use-host-reachability";
+import { BoundedTileLoad } from "@/components/epic-canvas/renderers/tile-host-load-state";
 import { useTabHostClient } from "@/hooks/host/use-tab-host-client";
 import { useEditableGitDiffSurface } from "@/components/epic-canvas/git-diff/git-diff-editing";
 import { GitDiffEditStatusContent } from "@/components/epic-canvas/git-diff/git-diff-edit-status";
@@ -803,6 +804,7 @@ interface GitBundleDiffTileBodyProps {
 }
 
 function GitBundleDiffTileBody(props: GitBundleDiffTileBodyProps): ReactNode {
+  const bundleTabHostId = useTabHostId();
   const diffViewerPreferences = useSettingsStore(
     (s) => s.diffViewerPreferences,
   );
@@ -838,7 +840,18 @@ function GitBundleDiffTileBody(props: GitBundleDiffTileBodyProps): ReactNode {
     return <SubscriptionErrorState event={props.subscription.error} />;
   }
   if (props.subscription.isPending) {
-    return <DiffBundleLoadingSkeleton mode={diffViewerPreferences.mode} />;
+    // Invariant 6. The reachability gate above catches a host the directory
+    // knows is gone; this catches the other half - a host that stays listed
+    // while its subscription never delivers - which had no end at all.
+    return (
+      <BoundedTileLoad
+        hostId={bundleTabHostId}
+        subject="diff"
+        onRetry={null}
+        testId={`git-diff-tile-load-${props.node.id}`}
+        fallback={<DiffBundleLoadingSkeleton mode={diffViewerPreferences.mode} />}
+      />
+    );
   }
   if (data === null) return null;
   if (files.length === 0) {

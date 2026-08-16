@@ -57,8 +57,6 @@ import {
 import { isAttachmentIngestPending } from "@/hooks/composer/use-composer-paste";
 import { useLandingComposerMentionRoots } from "@/hooks/composer/use-workspace-mention-roots";
 import { useRunnerHost } from "@/providers/use-runner-host";
-import { useEpicCreateForClient } from "@/hooks/epic/use-epic-create-mutation";
-import { useCreateTuiAgentForClient } from "@/hooks/agent/use-create-tui-agent";
 import { useComposerToolbarStore } from "@/components/home/hooks/use-composer-toolbar-store";
 import { useProviderPackGate } from "@/hooks/providers/use-provider-pack-gate";
 import { fallbackSeedSource } from "@/lib/composer/composer-seed-source";
@@ -87,7 +85,6 @@ import {
   type ComposerMode,
 } from "@/components/home/data/landing-options";
 import { ComposerModeSwitcher } from "@/components/home/composer/composer-mode-switcher";
-import { UNKNOWN_HOST_PLACEHOLDER } from "@/lib/host/constants";
 import { useComposerPlacement } from "@/hooks/host/use-composer-placement";
 import { subscribeFollowingSurfaceReset } from "@/stores/host/surface-host-selection-store";
 import {
@@ -262,15 +259,15 @@ export function LandingComposer(props: LandingComposerProps) {
     isActive: chatComposerActive,
   });
 
-  const createEpic = useEpicCreateForClient(hostClient);
-  const terminalAgentCreate = useCreateTuiAgentForClient(
-    hostClient,
-    resolvedHostId ?? UNKNOWN_HOST_PLACEHOLDER,
-  );
-  const isSubmitting =
-    runtimeState.isSubmitting ||
-    createEpic.isPending ||
-    terminalAgentCreate.isPending;
+  // Hoisted from below so `isSubmitting` can read it. The create observers
+  // live in here, which is what actually mutates. This surface used to build a
+  // SECOND pair of them locally and read their `isPending` - two observers
+  // nobody ever called `.mutate()` on, so both booleans were permanently false
+  // and the OR below had exactly one live term. Deleted rather than
+  // re-pointed: they also cost two live mutation subscriptions for an answer
+  // they could not give.
+  const actions = useLandingComposerActions(submitTarget);
+  const isSubmitting = runtimeState.isSubmitting || actions.isPending;
 
   const hasSubmittableContent = contentIsSubmittable(runtimeState.content);
   const draftWorkspace = useLandingDraftStore((state) => {
@@ -581,7 +578,6 @@ export function LandingComposer(props: LandingComposerProps) {
     workspaceCanStart &&
     hasSubmittableContent;
 
-  const actions = useLandingComposerActions(submitTarget);
   // Submit-time refusal copy (selection model §54) and the G4 re-point notice
   // share one slot: both say "this composer's device is not what you think",
   // and showing two stacked banners about the same host would be noise.

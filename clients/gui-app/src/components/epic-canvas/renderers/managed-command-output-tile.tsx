@@ -28,7 +28,12 @@ import { ManagedCommandMonitorIcon } from "@/components/managed-commands/managed
 import { ManagedCommandStatusDot } from "@/components/managed-commands/managed-command-status-dot";
 import { ManagedCommandConnectionNotice } from "@/components/managed-commands/managed-command-connection-notice";
 import { ManagedCommandDeletedBanner } from "@/components/epic-canvas/renderers/dead-tile-banner";
-import { useHostReachability } from "@/hooks/agent/use-host-reachability";
+import {
+  useHostReachability,
+  resolvedHostLabel,
+} from "@/hooks/agent/use-host-reachability";
+import { useBoundedHostLoad } from "@/hooks/host/use-bounded-host-load";
+import { TileHostLoadState } from "@/components/epic-canvas/renderers/tile-host-load-state";
 import { useEffectiveTerminalFont } from "@/hooks/settings/use-effective-terminal-font";
 import { useStreamMethodSupport } from "@/lib/host/stream-runtime-context";
 import { useManagedCommandOutputSession } from "@/hooks/managed-command/use-managed-command-output-session";
@@ -120,6 +125,15 @@ export interface ManagedCommandOutputTileProps {
 export function ManagedCommandOutputTile(props: ManagedCommandOutputTileProps) {
   const { epicId, node } = props;
   const reachability = useHostReachability(node.hostId);
+  // Same bounded, worded wait the terminal tiles get (audit S5): a bare
+  // spinner said nothing about which host it was waiting on and had no end.
+  const hostLoad = useBoundedHostLoad({
+    hostId: node.hostId,
+    hostLabel: resolvedHostLabel(reachability),
+    pending:
+      reachability.status === "checking" ||
+      reachability.status === "host-starting",
+  });
   const closeCanvasTile = useCloseCanvasTileWithNestedFocus(
     props.viewTabId,
     props.tileId,
@@ -148,18 +162,14 @@ export function ManagedCommandOutputTile(props: ManagedCommandOutputTileProps) {
       </div>
     );
   }
-  if (
-    reachability.status === "checking" ||
-    reachability.status === "host-starting"
-  ) {
+  if (hostLoad.kind !== "ready") {
     return (
-      <div className="flex h-full w-full items-center justify-center bg-canvas">
-        <AgentSpinningDots
-          className="text-muted-foreground"
-          testId={undefined}
-          variant={undefined}
-        />
-      </div>
+      <TileHostLoadState
+        load={hostLoad}
+        subject="shell-output"
+        onRetry={null}
+        testId="managed-command-output-load"
+      />
     );
   }
   return (

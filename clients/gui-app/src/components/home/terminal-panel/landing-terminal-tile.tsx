@@ -17,7 +17,12 @@ import type {
 import type { TerminalScope } from "@traycer/protocol/host/terminal/unary-schemas";
 import { Button } from "@/components/ui/button";
 import type { HostUnavailability } from "@traycer-clients/shared/host-client/remote-fetcher";
-import { useHostReachability } from "@/hooks/agent/use-host-reachability";
+import {
+  useHostReachability,
+  resolvedHostLabel,
+} from "@/hooks/agent/use-host-reachability";
+import { useBoundedHostLoad } from "@/hooks/host/use-bounded-host-load";
+import { TileHostLoadState } from "@/components/epic-canvas/renderers/tile-host-load-state";
 import { focusActiveComposer } from "@/lib/composer/composer-focus-registry";
 import {
   clearPendingTerminalFocus,
@@ -95,6 +100,15 @@ function LandingTerminalTileBootstrap(
   // either. It used to read the coarse bit, so a single degraded liveness read
   // told someone their working terminal's host was off.
   const reachability = useHostReachability(props.tab.hostId);
+  // Bounded, worded wait - the same one the canvas terminal tiles use, so the
+  // landing panel and the canvas cannot describe one host two ways.
+  const hostLoad = useBoundedHostLoad({
+    hostId: props.tab.hostId,
+    hostLabel: resolvedHostLabel(reachability),
+    pending:
+      reachability.status === "checking" ||
+      reachability.status === "host-starting",
+  });
   const preparePayload = useCallback(
     (): Promise<TerminalCreatePayload> =>
       Promise.resolve({
@@ -134,14 +148,20 @@ function LandingTerminalTileBootstrap(
       />
     );
   }
-  if (
-    reachability.status === "checking" ||
-    reachability.status === "host-starting"
-  ) {
+  if (hostLoad.kind !== "ready") {
     // The directory has not answered yet, or is empty because this machine's
     // own host has not published. Neither is evidence about the bound host, and
-    // this tile used to render the dead state for both.
-    return <LandingTerminalWaiting />;
+    // this tile used to render the dead state for both. It is still not a dead
+    // state - but it now says which host it is waiting on, and it ends
+    // (invariant 6; audit S5's wordless skeleton).
+    return (
+      <TileHostLoadState
+        load={hostLoad}
+        subject="terminal"
+        onRetry={null}
+        testId="landing-terminal-load"
+      />
+    );
   }
   if (bootstrap.createIsError) {
     return (
@@ -288,14 +308,6 @@ function LandingTerminalTileLive(props: {
           />
         </Suspense>
       </div>
-    </div>
-  );
-}
-
-function LandingTerminalWaiting(): ReactNode {
-  return (
-    <div className="flex h-full min-h-0 w-full items-center justify-center bg-canvas">
-      <TerminalLoadingSkeleton />
     </div>
   );
 }

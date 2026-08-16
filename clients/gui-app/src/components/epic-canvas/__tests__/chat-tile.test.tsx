@@ -886,6 +886,9 @@ function chatTileTestTree(queryClient: QueryClient, chatVisible: boolean) {
 async function waitForChatTileLoaded(): Promise<void> {
   await waitFor(() => {
     expect(screen.queryByTestId("chat-tile-loading")).toBeNull();
+    // Since invariant 6 the pre-session state is this one; without it the
+    // wait above would be vacuous (an id that never renders is always absent).
+    expect(screen.queryByTestId("chat-tile-load-chat-1")).toBeNull();
   });
   // LegendList needs a few frames (plus its scroll-finish fallback) to
   // bootstrap its initial scroll position and measure rows in jsdom before
@@ -1041,7 +1044,11 @@ describe("<ChatTile />", () => {
     await advanceLegendListTime(0);
 
     expect(chatStreamSpy).not.toHaveBeenCalled();
-    expect(screen.queryByTestId("chat-tile-loading")).not.toBeNull();
+    // The pre-session presentation is now the BOUNDED load state, not the
+    // unbounded spinner: with no session handle the tile renders
+    // `TileHostLoadState`, which says which host it is waiting on and stops
+    // waiting (redesign invariant 6). The gating claim above is unchanged.
+    expect(screen.queryByTestId("chat-tile-load-chat-1")).not.toBeNull();
   });
 
   it("opens chat.subscribe for a record-less chat that is still cloud-known (ticket 49)", async () => {
@@ -1086,7 +1093,11 @@ describe("<ChatTile />", () => {
     await advanceLegendListTime(0);
 
     expect(chatStreamSpy).not.toHaveBeenCalled();
-    expect(screen.queryByTestId("chat-tile-loading")).not.toBeNull();
+    // The pre-session presentation is now the BOUNDED load state, not the
+    // unbounded spinner: with no session handle the tile renders
+    // `TileHostLoadState`, which says which host it is waiting on and stops
+    // waiting (redesign invariant 6). The gating claim above is unchanged.
+    expect(screen.queryByTestId("chat-tile-load-chat-1")).not.toBeNull();
   });
 
   it("keeps a cold sidebar-opened chat in one loading state until its first snapshot", async () => {

@@ -118,6 +118,13 @@ vi.mock("@/components/home/hooks/use-landing-composer-actions", () => ({
   useLandingComposerActions: () => ({
     submit: testState.submit,
     selectTerminalAgent: vi.fn(),
+    // `isSubmitting` now reads `actions.isPending` (the real hook's
+    // `createEpic.isPending || terminalAgentCreate.isPending`) rather than a
+    // permanently-false placeholder - mirror `testState.createPending` here
+    // too, the same flag the neighboring `useEpicCreateForClient` mock below
+    // already drives, so this gate suite's "a create is in flight" setup
+    // still reaches the composer now that it goes through this seam.
+    isPending: testState.createPending,
   }),
 }));
 
@@ -211,12 +218,18 @@ vi.mock("@/hooks/composer/use-composer-dictation", () => ({
 vi.mock("@/hooks/composer/use-landing-image-fetcher", () => ({
   useLandingImageFetcher: () => vi.fn(),
 }));
-vi.mock("@/hooks/epic/use-epic-create-mutation", () => ({
-  useEpicCreateForClient: () => ({ isPending: testState.createPending }),
-}));
-vi.mock("@/hooks/agent/use-create-tui-agent", () => ({
-  useCreateTuiAgentForClient: () => ({ isPending: false }),
-}));
+// `useEpicCreateForClient`/`useCreateTuiAgentForClient` mocks used to live
+// here, driven by `testState.createPending`. Before the isSubmitting change,
+// `landing-composer.tsx` called `useEpicCreateForClient` itself and these
+// mocks were reachable - that is what made "locks editor input... during a
+// submission" pass for a reason production could never produce: the
+// composer's own `isPending` observer was permanently false, so the mock was
+// supplying the very behaviour the real code was incapable of. Now that
+// `isSubmitting` reads `actions.isPending` through the (fully-stubbed)
+// `useLandingComposerActions` mock above instead, nothing in the mounted
+// tree reaches these two hooks - confirmed by removing them and finding the
+// suite stays green. Left removed rather than kept as a second, unreachable
+// copy of the same intent.
 // P1.2: the composer resolves its placement (pin ?? effective) through this
 // one hook. These suites are about paste/gating/banner behaviour, not
 // selection derivation, so it is stubbed at that single boundary - the same

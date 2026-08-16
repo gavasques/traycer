@@ -5,10 +5,35 @@ import {
   type HostUnavailability,
 } from "@traycer-clients/shared/host-client/remote-fetcher";
 import { useHostDirectoryList } from "@/hooks/host/use-host-directory-list-query";
+import { useLoadDeadline } from "@/hooks/host/use-load-deadline";
 import { isUnknownHost } from "@/lib/host/constants";
+import { HOST_STARTING_BUDGET_MS } from "@/lib/host/bounded-load-budgets";
 
 export type HostReachabilityStatus =
   "checking" | "reachable" | "unreachable" | "host-starting";
+
+/**
+ * What EVIDENCE produced this verdict.
+ *
+ * `directory` — the host directory resolved and answered. This is the strong
+ * form, and the only one that may drive a destructive or persisted side
+ * effect.
+ *
+ * `starting-deadline` — the host was starting and never finished within
+ * `HOST_STARTING_BUDGET_MS`, so the tile stopped waiting (invariant 6). The
+ * host may well be fine and merely slow; what expired is the UI's patience,
+ * not the machine.
+ *
+ * The distinction exists because three surfaces fire
+ * `emitTerminalClosedNotification` off `unreachable`, and that notification is
+ * a PERSISTED claim that a session ended. A boot that overruns its budget must
+ * be allowed to change what the tile SHOWS without also writing "Terminal
+ * permanently closed" into the notification feed for a PTY that is still
+ * running. Bounded loading owes the reader a terminal presentation; it does
+ * not owe them a death event, and manufacturing one would re-create the
+ * 2026-07-14 incident with a timer instead of an empty directory.
+ */
+export type HostReachabilityBasis = "directory" | "starting-deadline";
 
 export interface HostReachability {
   readonly status: HostReachabilityStatus;
@@ -19,6 +44,8 @@ export interface HostReachability {
    * machine AND about the remedy. `null` for every other status.
    */
   readonly unavailability: HostUnavailability | null;
+  /** How strong the evidence behind `status` is. See `HostReachabilityBasis`. */
+  readonly basis: HostReachabilityBasis;
 }
 
 /**
@@ -41,6 +68,12 @@ export interface HostReachability {
  * unavailable). A resolved-but-EMPTY directory reports "host-starting"
  * instead - the local host simply hasn't published yet.
  *
+ * "host-starting" is BOUNDED (invariant 6): after `HOST_STARTING_BUDGET_MS`
+ * the verdict falls to "unreachable" so the tile reaches a terminal
+ * presentation with its affordances instead of waiting forever. The fall
+ * carries `basis: "starting-deadline"` - read it before driving anything
+ * destructive off "unreachable".
+ *
  * A host that is merely BUSY is reachable. See `HostAvailability`: `busy`
  * means the shell proved the process is alive and only a probe went
  * unanswered, and the entry keeps its real `websocketUrl` throughout, so
@@ -51,19 +84,34 @@ export interface HostReachability {
 export function useHostReachability(hostId: string): HostReachability {
   const list = useHostDirectoryList();
   const hasReadySession = useRemoteSessionPollReadiness(hostId);
-  return useMemo<HostReachability>(() => {
+  const directoryVerdict = useMemo<HostReachability>(() => {
     if (list.data === undefined) {
       // The directory query is disabled when no host binding exists
       // (e.g., test harnesses that do not mount the renderer's host
       // provider). With no source of truth we cannot gate the tile;
       // fall through to "reachable" so the live render path proceeds.
       if (list.fetchStatus === "idle") {
-        return { status: "reachable", hostLabel: hostId, unavailability: null };
+        return {
+          status: "reachable",
+          hostLabel: hostId,
+          unavailability: null,
+          basis: "directory",
+        };
       }
-      return { status: "checking", hostLabel: hostId, unavailability: null };
+      return {
+        status: "checking",
+        hostLabel: hostId,
+        unavailability: null,
+        basis: "directory",
+      };
     }
     if (isUnknownHost(hostId)) {
-      return { status: "reachable", hostLabel: hostId, unavailability: null };
+      return {
+        status: "reachable",
+        hostLabel: hostId,
+        unavailability: null,
+        basis: "directory",
+      };
     }
     // An EMPTY directory means this machine's own host has not published
     // yet (boot, ensure/respawn in progress, post-wake re-probe) AND no
@@ -80,6 +128,7 @@ export function useHostReachability(hostId: string): HostReachability {
         status: "host-starting",
         hostLabel: hostId,
         unavailability: null,
+        basis: "directory",
       };
     }
     const entry = list.data.find((e) => e.hostId === hostId);
@@ -88,6 +137,7 @@ export function useHostReachability(hostId: string): HostReachability {
         status: "unreachable",
         hostLabel: hostId,
         unavailability: "offline",
+        basis: "directory",
       };
     }
     // The same "not published yet" state as the empty-directory arm above,
@@ -117,6 +167,7 @@ export function useHostReachability(hostId: string): HostReachability {
         status: "host-starting",
         hostLabel: entry.label.length > 0 ? entry.label : hostId,
         unavailability: null,
+        basis: "directory",
       };
     }
     // Remote entries answer from their directory status, same as local ones.
@@ -141,14 +192,24 @@ export function useHostReachability(hostId: string): HostReachability {
     const hostLabel = entry.label.length > 0 ? entry.label : hostId;
     const unavailability = hostUnavailability(entry);
     if (unavailability === null) {
-      return { status: "reachable", hostLabel, unavailability: null };
+      return {
+        status: "reachable",
+        hostLabel,
+        unavailability: null,
+        basis: "directory",
+      };
     }
     // A live E2E session is firsthand proof the host is up, and it outranks a
     // cloud verdict reached minutes ago through a different leg. Without this
     // the directory could kill the surfaces of a host this client is actively
     // talking to.
     if (hasReadySession) {
-      return { status: "reachable", hostLabel, unavailability: null };
+      return {
+        status: "reachable",
+        hostLabel,
+        unavailability: null,
+        basis: "directory",
+      };
     }
     if (unavailability === "indeterminate") {
       // The cloud could not read liveness. That is not evidence, and the cost
@@ -157,14 +218,79 @@ export function useHostReachability(hostId: string): HostReachability {
       // guessing "alive" costs a dial that fails recoverably. Fall through to
       // the live render path, exactly as the no-directory arm above does for
       // the same reason.
-      return { status: "reachable", hostLabel, unavailability: null };
+      return {
+        status: "reachable",
+        hostLabel,
+        unavailability: null,
+        basis: "directory",
+      };
     }
     // `offline` and `plan-restricted` both mean this client cannot open a
     // session, which is what the tab-open gate exists to decide. They read
     // differently to a person, though, so the reason travels with the verdict
     // and the banners branch on it rather than all saying "offline".
-    return { status: "unreachable", hostLabel, unavailability };
+    return {
+      status: "unreachable",
+      hostLabel,
+      unavailability,
+      basis: "directory",
+    };
   }, [hostId, list.data, list.fetchStatus, hasReadySession]);
+
+  // F4/S2. `host-starting` was the one arm with no way out: the directory
+  // cannot distinguish "this machine's host is three seconds from publishing"
+  // from "it is never going to", and it answered the optimistic one FOREVER.
+  // A chat bound to a host that never came back therefore sat behind
+  // "Waiting for the host to start…" with its Clone offer withheld - the
+  // affordance that would have let the user carry on was gated on the very
+  // state that never ended.
+  //
+  // So the wait is bounded and the verdict falls to `unreachable`, which every
+  // consumer already handles with its own affordances (Clone for chats, Close
+  // for terminals, the informational banners elsewhere). Clone becomes
+  // available AT the deadline rather than never.
+  //
+  // `basis` carries how we got here, and it is load-bearing rather than
+  // decorative: the presentation falls, but a deadline is not proof of death,
+  // so the persisted "Terminal permanently closed" notification stays gated on
+  // directory evidence. See `HostReachabilityBasis`.
+  const startingBudgetElapsed = useLoadDeadline(
+    directoryVerdict.status === "host-starting" ? hostId : null,
+    HOST_STARTING_BUDGET_MS,
+  );
+
+  return useMemo<HostReachability>(() => {
+    if (!startingBudgetElapsed) return directoryVerdict;
+    // Re-checked rather than assumed: the deadline's own key clears when the
+    // status leaves `host-starting`, but reading the CURRENT verdict here is
+    // what makes that a belt-and-braces invariant instead of a timing bet.
+    if (directoryVerdict.status !== "host-starting") return directoryVerdict;
+    return {
+      status: "unreachable",
+      hostLabel: directoryVerdict.hostLabel,
+      // `offline` is the retryable reason, and it is the honest one: the host
+      // did not come up. It is deliberately NOT `plan-restricted` (an
+      // entitlement verdict this arm has no evidence for) - the two read
+      // differently to a person and name different remedies.
+      unavailability: "offline",
+      basis: "starting-deadline",
+    };
+  }, [directoryVerdict, startingBudgetElapsed]);
+}
+
+/**
+ * The label a surface may NAME this host by, or `null` while the directory
+ * has not resolved one.
+ *
+ * `hostLabel` falls back to the raw `hostId` so callers always have a string,
+ * which is right for keys and diagnostics and wrong for copy: while the
+ * directory is still `checking` that fallback is a uuid, and "Waiting for
+ * 8f3c-…-a19 to start" is not a sentence to show a person. One rule, encoded
+ * once, rather than each of the six tile families inventing its own fallback
+ * phrase.
+ */
+export function resolvedHostLabel(reachability: HostReachability): string | null {
+  return reachability.status === "checking" ? null : reachability.hostLabel;
 }
 
 /**

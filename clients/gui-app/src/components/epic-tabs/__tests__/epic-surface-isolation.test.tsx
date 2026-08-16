@@ -118,6 +118,8 @@ vi.mock("@/hooks/agent/use-host-reachability", () => ({
     }
     return { status: "reachable" as const, hostLabel: hostId };
   },
+  resolvedHostLabel: (r: { readonly status: string; readonly hostLabel: string }) =>
+    r.status === "checking" ? null : r.hostLabel,
 }));
 
 vi.mock("@/hooks/host/use-host-directory-list-query", () => ({

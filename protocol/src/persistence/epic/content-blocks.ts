@@ -417,7 +417,7 @@ export const toolCallBlockSchema = z.object({
   // a genuine failure. `status` itself is unchanged - this only adds the
   // finer distinction. Defaulted so pre-existing blocks parse cleanly.
   stopped: z.boolean().default(false),
-  // Images this call produced (`chat.subscribe@1.7`). Defaulted so blocks
+  // Images this call produced (`chat.subscribe@1.6`). Defaulted so blocks
   // persisted before this field existed parse cleanly. See
   // `imageGenerationResultSchema`.
   imageResults: z.array(imageGenerationResultSchema).default([]),

@@ -647,7 +647,7 @@ export const chatSnapshotSchema = z.object({
   // rendering "old host" and "none yet" identically either way.
   managedCommands: z.array(managedCommandSchema).default([]),
   // The subset of this chat's shells whose last output a committed Stop fence
-  // is holding back (`chat.subscribe@1.7`). A SUBSET, not a parallel set: every
+  // is holding back (`chat.subscribe@1.6`). A SUBSET, not a parallel set: every
   // entry has a `managedCommands` row under the same id, and this only marks
   // which of them are waiting on an explicit Deliver.
   //
@@ -747,7 +747,7 @@ const chatSubscribeManagedCommandsChangedServerFrameSchema =
   managedCommandsChangedServerFrameSchema(managedCommandSchema);
 
 /**
- * The chat's HELD updates changed (`chat.subscribe@1.7`). Same "upsert the
+ * The chat's HELD updates changed (`chat.subscribe@1.6`). Same "upsert the
  * world" shape as `managedCommandsChanged`, and its own frame for the same
  * reason that one is: its trigger is neither a turn nor a command lifecycle
  * transition. A hold appears when a Stop commits and disappears when the
@@ -755,7 +755,7 @@ const chatSubscribeManagedCommandsChangedServerFrameSchema =
  * none of which move the command's own status, so a held change would ride
  * `managedCommandsChanged` only by re-broadcasting an unchanged command set.
  *
- * Sent only to a peer that negotiated ≥1.7. A `1.6` peer has no variant for
+ * Sent only to a peer that negotiated ≥1.6. A `1.5` peer has no variant for
  * this kind and would fail its strict decode of the frame, so the host drops
  * it there rather than degrading the surface halfway - exactly how
  * `managedCommandsChanged` is withheld from ≤1.5.
@@ -1291,9 +1291,9 @@ export type ChatSubscribeClientFrame = z.infer<
   typeof chatSubscribeClientFrameSchema
 >;
 
-// `1.4` through `1.6` are released lines. Keep their client frames on the
-// pre-collision intent shape while the live `1.7` line uses the current one.
-const chatSubscribeClientFrameSchemaV14ToV16 = z.discriminatedUnion(
+// `1.4` and `1.5` are released lines. Keep their client frames on the
+// pre-collision intent shape while the live `1.6` line uses the current one.
+const chatSubscribeClientFrameSchemaV14ToV15 = z.discriminatedUnion(
   "kind",
   [...chatSubscribeClientFrameSchemaBeforeV14Options, activeProfileUpdateClientFrameSchema],
 );
@@ -1864,7 +1864,7 @@ export const chatSubscribeV14 = defineStreamRpcContract({
   schemaVersion: { major: 1, minor: 4 } as const,
   openRequestSchema: chatSubscribeOpenRequestSchema,
   serverFrameSchema: chatSubscribeServerFrameSchemaV14,
-  clientFrameSchema: chatSubscribeClientFrameSchemaV14ToV16,
+  clientFrameSchema: chatSubscribeClientFrameSchemaV14ToV15,
 });
 
 // ─── Frozen `chat.subscribe@1.5` shape (`archivedAt` + steering capability) ─
@@ -1918,7 +1918,7 @@ export const chatSubscribeV15 = defineStreamRpcContract({
   schemaVersion: { major: 1, minor: 5 } as const,
   openRequestSchema: chatSubscribeOpenRequestSchema,
   serverFrameSchema: chatSubscribeServerFrameSchemaV15,
-  clientFrameSchema: chatSubscribeClientFrameSchemaV14ToV16,
+  clientFrameSchema: chatSubscribeClientFrameSchemaV14ToV15,
 });
 
 // ─── Live `chat.subscribe@1.6` contract ────────────────────────────────────

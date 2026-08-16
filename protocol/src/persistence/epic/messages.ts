@@ -176,9 +176,9 @@ export const assistantMessageSchema = z.object({
   serviceTier: z.string().nullable().default(null),
   /**
    * Durable image resolution record for this message's markdown-referenced
-   * images (`chat.subscribe@1.7`), one entry per distinct `canonicalSource`.
+   * images (`chat.subscribe@1.6`), one entry per distinct `canonicalSource`.
    * Defaulted so messages persisted before image support existed parse
-   * cleanly - a pre-1.7 message has no record, and its images render as
+   * cleanly - a pre-1.6 message has no record, and its images render as
    * consent chips (see `imageResolutionEntrySchema`).
    */
   imageResolutions: z.array(imageResolutionEntrySchema).default([]),

@@ -2177,7 +2177,7 @@ describe("chat.subscribe@1.6 (image generation)", () => {
     expect(toolCall.imageResults).toHaveLength(2);
   });
 
-  it("stays frozen without image fields on every released minor 1.0-1.6", () => {
+  it("stays frozen without image fields on every released minor 1.0-1.5", () => {
     const snapshotFrame = snapshotFrameWithChat(chatWithImages);
     const completedWithImages = blockDeltaFrame({
       type: "tool_call.completed",

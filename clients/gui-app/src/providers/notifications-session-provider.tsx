@@ -105,7 +105,7 @@ interface FocusedNotificationScope {
  * never whichever host happens to be active in a composer/tab elsewhere in
  * the app. The stream is therefore bound to `useReactiveLocalHostEntry()` (a
  * transient, non-rebinding client via `useHostStreamClientFor`), not
- * `useReactiveActiveHostId()` / the app-wide `useWsStreamClient()`. The cloud
+ * `useAddressableHostId()` / the app-wide `useWsStreamClient()`. The cloud
  * feed rides the same local client: it is reached THROUGH a host, so binding
  * it anywhere else would reintroduce the active-host coupling G8 removed.
  */

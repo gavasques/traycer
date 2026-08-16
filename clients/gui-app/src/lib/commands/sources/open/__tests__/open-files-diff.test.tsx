@@ -61,8 +61,8 @@ vi.mock("@/hooks/worktree/use-worktree-list-bindings-for-epic-query", () => ({
   }),
 }));
 vi.mock("@/lib/host", () => ({ useHostClient: () => ({}) }));
-vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
-  useReactiveActiveHostId: () => state.defaultHostId,
+vi.mock("@/hooks/host/use-addressable-host-id", () => ({
+  useAddressableHostId: () => state.defaultHostId,
 }));
 vi.mock("@/hooks/ui/use-debounced-value", () => ({
   useDebouncedValue: (value: unknown) => value,

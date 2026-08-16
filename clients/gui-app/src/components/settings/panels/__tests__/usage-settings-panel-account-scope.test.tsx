@@ -66,8 +66,8 @@ const activeHostIdHolder: { current: string | null } = {
   current: ACTIVE_HOST_ID,
 };
 
-vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
-  useReactiveActiveHostId: () => activeHostIdHolder.current,
+vi.mock("@/hooks/host/use-addressable-host-id", () => ({
+  useAddressableHostId: () => activeHostIdHolder.current,
 }));
 
 vi.mock("@/lib/host", async (importOriginal) => {

@@ -19,8 +19,8 @@ vi.mock("@/providers/use-open-epic-handle", () => ({
 
 let mockActiveHostId: string | null = "active-host-1";
 
-vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
-  useReactiveActiveHostId: () => mockActiveHostId,
+vi.mock("@/hooks/host/use-addressable-host-id", () => ({
+  useAddressableHostId: () => mockActiveHostId,
 }));
 vi.mock("@/components/epic-canvas/view-tab-context", () => ({
   useEpicViewTabId: () => "tab-for-open-epic",

@@ -64,8 +64,8 @@ interface RecordedReset {
 const resetPathsCalls: RecordedReset[] = [];
 const setSearchCalls: Array<string | null> = [];
 
-vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
-  useReactiveActiveHostId: () => HOST_ID,
+vi.mock("@/hooks/host/use-addressable-host-id", () => ({
+  useAddressableHostId: () => HOST_ID,
 }));
 
 // Only `useHostClient` is replaced: the real `useWorkspaceSearchPaths`,

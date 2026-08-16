@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { DEFAULT_ACCOUNT_CONTEXT } from "@traycer/protocol/common/schemas";
 import { useHostClient } from "@/lib/host";
-import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
+import { useAddressableHostId } from "@/hooks/host/use-addressable-host-id";
 import { useRefreshProviderRateLimitsOnTurn } from "@/hooks/host/use-refresh-provider-rate-limits-on-turn";
 import { useConfiguredRateLimitProviders } from "@/hooks/rate-limits/use-configured-rate-limit-providers";
 import {
@@ -51,7 +51,7 @@ export { EPHEMERAL_RATE_LIMIT_POLL_INTERVAL_MS };
  * into table-owned polling and never enter this queue.
  */
 export function RateLimitQueueProvider(): null {
-  const hostId = useReactiveActiveHostId();
+  const hostId = useAddressableHostId();
   const client = useHostClient();
   const queryClient = useQueryClient();
   const configuredProviders = useConfiguredRateLimitProviders();

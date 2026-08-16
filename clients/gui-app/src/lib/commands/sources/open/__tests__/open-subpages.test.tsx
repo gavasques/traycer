@@ -204,8 +204,8 @@ vi.mock("@/lib/commands/actions", () => ({
 vi.mock("@/lib/commands/sources/open/use-active-epic-projection", () => ({
   useActiveEpicProjection: () => FAKE_PROJECTION,
 }));
-vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
-  useReactiveActiveHostId: () => activeHostIdMock.current,
+vi.mock("@/hooks/host/use-addressable-host-id", () => ({
+  useAddressableHostId: () => activeHostIdMock.current,
 }));
 vi.mock("@/hooks/host/use-host-client-for-host-id", () => ({
   useHostClientForHostId: (hostId: string) => ({ mockHostId: hostId }),

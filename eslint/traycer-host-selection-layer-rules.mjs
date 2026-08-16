@@ -24,7 +24,7 @@ const SELECT_BY_ID_MESSAGE =
   " (selection model §5).";
 
 const ACTIVE_HOST_READ_MESSAGE =
-  "Do not import `useReactiveActiveHostId` or default-client hooks (`useHostClient`, `useDefaultHostClient`) outside the allowlisted layer (feeds, landing, epic-session registry, app chrome). Tab content must use `useTabHostId` / `useTabHostClient` / `useSurfaceHostPin`. See " +
+  "Do not import `useAddressableHostId` or default-client hooks (`useHostClient`, `useDefaultHostClient`) outside the allowlisted layer (feeds, landing, epic-session registry, app chrome). Tab content must use `useTabHostId` / `useTabHostClient` / `useSurfaceHostPin`. See " +
   HOST_SELECTION_REDESIGN_PLAN +
   " (selection model §5).";
 
@@ -139,11 +139,11 @@ export const selectionAuthorityWriteAllowlist = [
 
 /**
  * Read-path allowlist. Every entry is a directory or file that may import
- * `useReactiveActiveHostId` / `useHostClient` / `useDefaultHostClient`.
+ * `useAddressableHostId` / `useHostClient` / `useDefaultHostClient`.
  * Tab-content trees are deliberately absent.
  */
 export const hostSelectionReadAllowlist = [
-  // CRITICAL: P1.2 swap alias — legal re-export of useReactiveActiveHostId.
+  // CRITICAL: P1.2 swap alias — legal re-export of useAddressableHostId.
   // Removing this entry breaks useEffectiveHostId / useSurfaceHostPin.
   "src/hooks/host/use-effective-host-id.ts",
 
@@ -228,10 +228,10 @@ export const hostSelectionReadImportRestrictions = {
   patterns: [
     {
       group: [
-        "**/use-reactive-active-host-id",
-        "**/use-reactive-active-host-id.*",
+        "**/use-addressable-host-id",
+        "**/use-addressable-host-id.*",
       ],
-      importNames: ["useReactiveActiveHostId"],
+      importNames: ["useAddressableHostId"],
       message: ACTIVE_HOST_READ_MESSAGE,
     },
     {

@@ -24,7 +24,7 @@ import {
   toHostRpcError,
 } from "@traycer-clients/shared/host-transport/host-messenger";
 import { useHostMutation } from "@/hooks/host/use-host-query";
-import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
+import { useAddressableHostId } from "@/hooks/host/use-addressable-host-id";
 import { useTabHostClient } from "@/hooks/host/use-tab-host-client";
 import { useEpicSessionHostClient } from "@/hooks/epic/use-epic-session-host-client";
 import type { HostRpcRegistry } from "@traycer/protocol/host/index";
@@ -101,7 +101,7 @@ export function useEpicCreateChat(): UseMutationResult<
   CreateChatMutationContext
 > {
   const client = useHostClient();
-  const activeHostId = useReactiveActiveHostId();
+  const activeHostId = useAddressableHostId();
   const queryClient = useQueryClient();
   return useHostMutation<
     HostRpcRegistry,

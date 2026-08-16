@@ -79,8 +79,8 @@ vi.mock("@/lib/epic-selectors", () => ({
   useEpicArtifact: () => testState.activeArtifact,
 }));
 
-vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
-  useReactiveActiveHostId: () => HOST_ID,
+vi.mock("@/hooks/host/use-addressable-host-id", () => ({
+  useAddressableHostId: () => HOST_ID,
 }));
 
 const EPIC_ID = "epic-sidebar-test";

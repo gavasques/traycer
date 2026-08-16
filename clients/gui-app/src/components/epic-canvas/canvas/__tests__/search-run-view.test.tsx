@@ -93,8 +93,8 @@ const state = vi.hoisted<MockState>(() => ({
 }));
 
 vi.mock("@/lib/host", () => ({ useHostClient: () => null }));
-vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
-  useReactiveActiveHostId: () => "default-host",
+vi.mock("@/hooks/host/use-addressable-host-id", () => ({
+  useAddressableHostId: () => "default-host",
 }));
 vi.mock("@/hooks/workspace/use-workspace-search-text-query", () => ({
   useWorkspaceSearchText: (args: UseWorkspaceSearchTextArgs) => {

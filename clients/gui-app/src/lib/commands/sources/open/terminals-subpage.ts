@@ -13,7 +13,7 @@ import { toast } from "sonner";
 import type { WorktreeBindingSelectorRowV12 } from "@traycer/protocol/host";
 import type { HostClient } from "@traycer-clients/shared/host-client/host-client";
 import { buildTerminalTileRef } from "@/components/epic-canvas/sidebar/new-terminal-tile-ref";
-import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
+import { useAddressableHostId } from "@/hooks/host/use-addressable-host-id";
 import { useHostClientForHostId } from "@/hooks/host/use-host-client-for-host-id";
 import { useHostDirectoryList } from "@/hooks/host/use-host-directory-list-query";
 import { useRefreshHostDirectoryOnOpen } from "@/hooks/host/use-refresh-host-directory-on-open";
@@ -312,7 +312,7 @@ function makeHostWorkspaceSubpage(
 function useNewTerminalWorkspaceItems(
   ctx: CommandContext,
 ): ReadonlyArray<CommandItem> {
-  const activeHostId = useReactiveActiveHostId();
+  const activeHostId = useAddressableHostId();
   const hostClient = useHostClient();
   const bindings = useWorktreeListBindingsForEpic({
     epicId: ctx.activeEpicId ?? "",
@@ -393,7 +393,7 @@ const NEW_TERMINAL_WORKSPACE_SUBPAGE: CommandSubpage = {
 export function useTerminalsOpenerItems(
   ctx: CommandContext,
 ): ReadonlyArray<CommandItem> {
-  const defaultHostId = useReactiveActiveHostId() ?? UNKNOWN_HOST_PLACEHOLDER;
+  const defaultHostId = useAddressableHostId() ?? UNKNOWN_HOST_PLACEHOLDER;
   const hostClient = useHostClient();
   const scope = { kind: "epic" as const, epicId: ctx.activeEpicId ?? "" };
   const terminals = useTerminalList(scope, hostClient);

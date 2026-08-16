@@ -94,8 +94,8 @@ vi.mock("@/lib/host", async (importActual) => {
   };
 });
 
-vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
-  useReactiveActiveHostId: () => activeHostIdRef.value,
+vi.mock("@/hooks/host/use-addressable-host-id", () => ({
+  useAddressableHostId: () => activeHostIdRef.value,
 }));
 
 vi.mock("@/hooks/host/use-host-directory-entry", async (importOriginal) => {

@@ -163,8 +163,8 @@ vi.mock("@/lib/epic-selectors", () => ({
   useEpicTitle: () => "",
 }));
 
-vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
-  useReactiveActiveHostId: () => testState.activeHostId,
+vi.mock("@/hooks/host/use-addressable-host-id", () => ({
+  useAddressableHostId: () => testState.activeHostId,
 }));
 
 vi.mock("@/lib/epic-auto-open", () => ({

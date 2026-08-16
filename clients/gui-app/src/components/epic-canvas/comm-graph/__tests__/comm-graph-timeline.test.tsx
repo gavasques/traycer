@@ -52,8 +52,8 @@ vi.mock("@/providers/use-resolved-theme", () => ({
   }),
 }));
 
-vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
-  useReactiveActiveHostId: () => "host-a",
+vi.mock("@/hooks/host/use-addressable-host-id", () => ({
+  useAddressableHostId: () => "host-a",
 }));
 
 // The Epic session resolves its host through the selection authority's derived

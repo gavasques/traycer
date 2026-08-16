@@ -31,7 +31,7 @@ import { openProjectedSidebarNodeInTabWhenAvailable } from "@/components/epic-ca
 import { useEpicNestedFocusNavigation } from "@/hooks/epic/use-epic-nested-focus-navigation";
 import { useEpicExportArtifacts } from "@/hooks/epic/use-epic-export-artifacts-mutation";
 import { cn } from "@/lib/utils";
-import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
+import { useAddressableHostId } from "@/hooks/host/use-addressable-host-id";
 import { ArtifactPanelSearchShell } from "@/components/epic-canvas/sidebar/epic-sidebar-artifact-search";
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
 import { Button } from "@/components/ui/button";
@@ -761,7 +761,7 @@ const ArtifactNode = memo(function ArtifactNode(props: ArtifactNodeProps) {
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const deletePending = deleteArtifact.isPending;
 
-  const activeHostId = useReactiveActiveHostId() ?? "unknown-host";
+  const activeHostId = useAddressableHostId() ?? "unknown-host";
 
   const openProjectedChildInTab = useCallback(
     (
@@ -1553,7 +1553,7 @@ function ArtifactRowButton(props: ArtifactRowButtonProps) {
     isSelected,
     onToggleSelection,
   } = props;
-  const activeHostId = useReactiveActiveHostId();
+  const activeHostId = useAddressableHostId();
   const dragData = useMemo<EpicCanvasSidebarNodeDragData | null>(
     () =>
       activeHostId === null

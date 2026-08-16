@@ -11,7 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import type { ChatRecordRemovalReason } from "@traycer/protocol/host/epic/chat-records";
 import type { HostUnavailability } from "@traycer-clients/shared/host-client/remote-fetcher";
-import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
+import { useAddressableHostId } from "@/hooks/host/use-addressable-host-id";
 import { useHostReachability } from "@/hooks/agent/use-host-reachability";
 import { UNKNOWN_HOST_PLACEHOLDER } from "@/lib/host/constants";
 import { makePublishedChatTileRef } from "@/stores/epics/canvas/tile-schema/published-chat-tile";
@@ -834,7 +834,7 @@ function ActiveTabBody(props: ActiveTabBodyProps) {
   // host; cross-host CHAT refs are exempt from its record gate (see
   // `computeIsRemoteDeleted`). This is canvas machinery at epic-view
   // altitude, not a chat tab - the tab-scoped host rule doesn't apply here.
-  const activeHostIdForRecordGate = useReactiveActiveHostId();
+  const activeHostIdForRecordGate = useAddressableHostId();
   const chatRetraction = useChatTabRetraction(activeTab);
   const isRetractedAsRevoked = chatRetraction === "revoked";
   const {

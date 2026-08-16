@@ -70,8 +70,8 @@ vi.mock("@/hooks/epic/use-epic-search-artifacts-query", () => ({
   },
 }));
 vi.mock("@/lib/host", () => ({ useHostClient: () => ({}) }));
-vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
-  useReactiveActiveHostId: () => harness.hostId,
+vi.mock("@/hooks/host/use-addressable-host-id", () => ({
+  useAddressableHostId: () => harness.hostId,
 }));
 vi.mock("@/providers/use-open-epic-handle", () => ({
   useOpenEpicHandle: () => ({ store: { getState: () => ({}) } }),

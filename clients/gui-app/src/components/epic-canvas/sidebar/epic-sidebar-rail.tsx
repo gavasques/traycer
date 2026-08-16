@@ -57,7 +57,7 @@ import {
   type LeftPanelMetadataDefinition,
 } from "@/components/epic-canvas/sidebar/left-panel-registry";
 import { useEpicArtifact } from "@/lib/epic-selectors";
-import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
+import { useAddressableHostId } from "@/hooks/host/use-addressable-host-id";
 import {
   selectPrScopeHasItems,
   usePrPresenceStore,
@@ -173,7 +173,7 @@ function EpicLeftPanelRailContent(props: EpicLeftPanelRailContentProps) {
   const collapsed = useMainPanelCollapsed(tabId);
   const panelGroups = useLeftPanelGroups();
   const commentsPanelRevealed = useCommentsPanelRevealed(tabId);
-  const hostId = useReactiveActiveHostId();
+  const hostId = useAddressableHostId();
   const hasPullRequests = usePrPresenceStore(
     selectPrScopeHasItems(hostId, epicId),
   );

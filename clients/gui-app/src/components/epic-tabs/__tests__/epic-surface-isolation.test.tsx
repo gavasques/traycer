@@ -55,7 +55,7 @@ const activeHostClient = vi.hoisted(() => {
     request: () => Promise.resolve({}),
     resolveHostById: (hostId: string) =>
       hostId === activeHostEntry.hostId ? activeHostEntry : null,
-    // Redesign P4.2's introduced symbol: `useReactiveActiveHostId` resolves the
+    // Redesign P4.2's introduced symbol: `useAddressableHostId` resolves the
     // effective host through an id-pinned requester now that the active slot is
     // gone, so a hand-rolled client that does not answer this throws on the
     // first render that reaches the hook - here, transitively, via the sidebar

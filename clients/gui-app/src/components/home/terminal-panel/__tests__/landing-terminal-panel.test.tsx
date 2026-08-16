@@ -38,7 +38,7 @@ type TerminalListFixture = {
 };
 
 const mocks = vi.hoisted(() => ({
-  // React reactive host (useReactiveActiveHostId) vs client host (getActiveHostId).
+  // React reactive host (useAddressableHostId) vs client host (getActiveHostId).
   // Kept in lockstep for ordinary tests; the host-switch race test diverges them.
   activeHostId: null as string | null,
   clientActiveHostId: null as string | null,
@@ -105,8 +105,8 @@ vi.mock("@tanstack/react-query", async (importOriginal) => {
     useQueryClient: () => mocks.queryClient,
   };
 });
-vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
-  useReactiveActiveHostId: () => mocks.activeHostId,
+vi.mock("@/hooks/host/use-addressable-host-id", () => ({
+  useAddressableHostId: () => mocks.activeHostId,
 }));
 // Partial, not whole-module: the registry also owns `acquireHostConnection`
 // and the equality helpers, and replacing the module wholesale would strand

@@ -60,7 +60,7 @@ vi.mock("@/lib/host/stream-runtime-context", () => ({
 }));
 
 // Per G8 the provider binds to the LOCAL host, so these two hooks replace
-// `useReactiveActiveHostId` + `useWsStreamClient`. No stream client: in cloud
+// `useAddressableHostId` + `useWsStreamClient`. No stream client: in cloud
 // mode the provider opens no local stream anyway, and the two consumption
 // triggers are deliberately independent of the relay.
 vi.mock("@/hooks/host/use-reactive-local-host-entry", () => ({

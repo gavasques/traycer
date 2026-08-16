@@ -228,8 +228,8 @@ vi.mock("@/lib/composer/landing-image-gc", () => ({
   scheduleLandingImageReconcile: () => undefined,
 }));
 
-vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
-  useReactiveActiveHostId: () => "host-home",
+vi.mock("@/hooks/host/use-addressable-host-id", () => ({
+  useAddressableHostId: () => "host-home",
 }));
 
 // Every host-scoped surface resolves its client through this hook now

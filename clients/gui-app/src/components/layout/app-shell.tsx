@@ -14,7 +14,7 @@ import { LandingTerminalHost } from "@/components/home/terminal-panel/landing-te
 import { OpenFolderDialog } from "@/components/open-folder-dialog";
 import { RemoteFolderPickerDialog } from "@/components/remote-folder-picker-dialog";
 import { useChatForkEventQuery } from "@/hooks/chats/use-chat-fork-queries";
-import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
+import { useAddressableHostId } from "@/hooks/host/use-addressable-host-id";
 import { PrimaryFocusCoordinatorProvider } from "@/lib/focus/primary-focus-coordinator-provider";
 
 interface AppShellProps {
@@ -28,7 +28,7 @@ interface AppShellProps {
  */
 export function AppShell(props: AppShellProps) {
   const { children } = props;
-  const activeHostId = useReactiveActiveHostId();
+  const activeHostId = useAddressableHostId();
   // Observed, never rendered. A publication fork resolves itself now - the
   // banner and the dialog that used to read this query are gone - but the
   // per-chat `pendingFork` indicator is derived from an open fork episode and

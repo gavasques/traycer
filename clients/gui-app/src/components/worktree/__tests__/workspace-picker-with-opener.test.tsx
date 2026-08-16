@@ -20,8 +20,8 @@ vi.mock("@/providers/use-runner-host", () => ({
   useRunnerHost: () => ({ hasLocalHost: editorState.hasLocalHost }),
 }));
 
-vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
-  useReactiveActiveHostId: () => editorState.activeHostId,
+vi.mock("@/hooks/host/use-addressable-host-id", () => ({
+  useAddressableHostId: () => editorState.activeHostId,
 }));
 
 // `OpenInEditorButton` (rendered inside this picker) resolves against the

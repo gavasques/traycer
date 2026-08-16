@@ -95,7 +95,7 @@ vi.mock("@/lib/host/stream-runtime-context", () => ({
 }));
 
 // Per the G8 decision the provider binds to the LOCAL host, not the app-wide
-// active one, so these two hooks replace `useReactiveActiveHostId` +
+// active one, so these two hooks replace `useAddressableHostId` +
 // `useWsStreamClient` as the harness's steering wheel. The `hostState.id` /
 // `streamState.client` pair keeps its old meaning: `id === null` means "no
 // local host", and assigning a NEW `streamState.client` object is what the

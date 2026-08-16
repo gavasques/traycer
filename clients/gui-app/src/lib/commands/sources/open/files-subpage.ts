@@ -21,7 +21,7 @@ import type { WorktreeBindingSelectorRow } from "@traycer/protocol/host";
 import type { WorkspaceSearchSource } from "@traycer/protocol/host/workspace/unary-schemas";
 import { getBasename } from "@/lib/path/cross-platform-path";
 import { useHostClient } from "@/lib/host";
-import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
+import { useAddressableHostId } from "@/hooks/host/use-addressable-host-id";
 import { UNKNOWN_HOST_PLACEHOLDER } from "@/lib/host/constants";
 import { useDebouncedValue } from "@/hooks/ui/use-debounced-value";
 import {
@@ -262,7 +262,7 @@ function useArtifactsStepItems(
   ctx: CommandContext,
 ): ReadonlyArray<CommandItem> {
   const client = useHostClient();
-  const defaultHostId = useReactiveActiveHostId() ?? UNKNOWN_HOST_PLACEHOLDER;
+  const defaultHostId = useAddressableHostId() ?? UNKNOWN_HOST_PLACEHOLDER;
   const query = usePaletteLiveQuery();
   const debouncedQuery = useDebouncedValue(query, FILES_SEARCH_DEBOUNCE_MS);
   const epicId = ctx.activeEpicId ?? "";

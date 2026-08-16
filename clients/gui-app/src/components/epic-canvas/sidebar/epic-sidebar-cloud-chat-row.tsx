@@ -7,7 +7,7 @@ import { EPIC_NODE_ICONS } from "@/lib/artifacts/node-display";
 import { UNKNOWN_HOST_PLACEHOLDER } from "@/lib/host/constants";
 import { useCompactRelativeTime } from "@/lib/relative-time";
 import { useHostReachability } from "@/hooks/agent/use-host-reachability";
-import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
+import { useAddressableHostId } from "@/hooks/host/use-addressable-host-id";
 import {
   useEpicCanvasStore,
   useIsActiveEpicArtifact,
@@ -72,7 +72,7 @@ export function EpicSidebarCloudChatRow(
   // merits: this only names which host will SERVE the cloud read, the read is a
   // byte pipe any reachable host can answer, and the tile the ref opens binds
   // its own tab's host for life regardless. The OWNING host below is metadata.
-  const readingHostId = useReactiveActiveHostId() ?? UNKNOWN_HOST_PLACEHOLDER;
+  const readingHostId = useAddressableHostId() ?? UNKNOWN_HOST_PLACEHOLDER;
   // The SAME tint rule a local chat row's idle glyph resolves (settings-driven
   // per-type color, muted only when the user turns icon colors off). A
   // hardcoded muted class here made the icon column encode row ORIGIN - local

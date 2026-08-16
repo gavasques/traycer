@@ -105,8 +105,8 @@ vi.mock("@/components/settings/host-scope/use-host-options", async () => {
 
 // `NewTerminalPickerBody` also reads this directly (the folderless-launch
 // target's host id), independent of `useHostOptions`.
-vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
-  useReactiveActiveHostId: () => "host-1",
+vi.mock("@/hooks/host/use-addressable-host-id", () => ({
+  useAddressableHostId: () => "host-1",
 }));
 
 // The surface pin (`useSurfaceHostPin` -> `useEffectiveHostId`, redesign

@@ -56,8 +56,8 @@ vi.mock("@/hooks/host/use-host-directory-list-query", () => ({
 // What the app-wide active host resolves to. The tab is bound elsewhere, so
 // anything reading this instead of the tab's binding lands on the wrong host -
 // which is exactly the failure this suite reproduces.
-vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
-  useReactiveActiveHostId: () => DEFAULT_HOST.hostId,
+vi.mock("@/hooks/host/use-addressable-host-id", () => ({
+  useAddressableHostId: () => DEFAULT_HOST.hostId,
 }));
 vi.mock("@/providers/use-runner-host", () => ({
   useRunnerHost: () => ({ authnBaseUrl: "https://authn.test" }),

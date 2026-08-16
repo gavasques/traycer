@@ -16,7 +16,7 @@ import { useMemo } from "react";
 import { v4 as uuidv4 } from "uuid";
 import { useHostDirectoryList } from "@/hooks/host/use-host-directory-list-query";
 import { displayTitle } from "@/lib/display-title";
-import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
+import { useAddressableHostId } from "@/hooks/host/use-addressable-host-id";
 import { UNKNOWN_HOST_PLACEHOLDER } from "@/lib/host/constants";
 import { useNewConversationModalStore } from "@/stores/epics/new-conversation-modal-store";
 import { useNewConversationModalOpenStore } from "@/stores/epics/new-conversation-modal-open-store";
@@ -29,7 +29,7 @@ import type { OpenerInterfaceItems } from "@/lib/commands/sources/open/agents-su
 import type { CommandContext } from "@/lib/commands/types";
 
 export function useChatsOpenerItems(ctx: CommandContext): OpenerInterfaceItems {
-  const activeHostId = useReactiveActiveHostId();
+  const activeHostId = useAddressableHostId();
   const defaultHostId = activeHostId ?? UNKNOWN_HOST_PLACEHOLDER;
   const projection = useActiveEpicProjection(ctx.activeEpicId);
   const directoryList = useHostDirectoryList();

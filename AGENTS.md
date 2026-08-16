@@ -55,7 +55,7 @@ See `protocol/README.md`.
 
 1. `hostId` is canonical; "device" is UI copy — no parallel `deviceId` field.
 2. Tabs bind a `hostId` for life (`<TabHostProvider>` → `useTabHostId()`). Never
-   use `useReactiveActiveHostId()` inside a tab. Cross-host = **clone-not-migrate**.
+   use `useAddressableHostId()` inside a tab. Cross-host = **clone-not-migrate**.
    Reachability checked at tab-open only.
 
 **Shared code** — transport/auth in `clients/shared/`; wire contract in

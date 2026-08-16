@@ -78,8 +78,8 @@ vi.mock("@/components/diff/diff-edit-provider-loader", () => ({
   preloadDiffEditProvider: () => preloadState.preload(),
 }));
 
-vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
-  useReactiveActiveHostId: () => "host-A",
+vi.mock("@/hooks/host/use-addressable-host-id", () => ({
+  useAddressableHostId: () => "host-A",
 }));
 
 vi.mock("@/hooks/agent/use-host-reachability", () => ({

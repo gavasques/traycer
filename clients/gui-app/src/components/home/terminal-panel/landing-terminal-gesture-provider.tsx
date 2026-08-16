@@ -2,7 +2,7 @@ import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import type { TerminalScope } from "@traycer/protocol/host/terminal/unary-schemas";
 import { useHostClient, useHostDirectory } from "@/lib/host";
 import { buildTransientHostClient } from "@/hooks/host/use-host-client-for";
-import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
+import { useAddressableHostId } from "@/hooks/host/use-addressable-host-id";
 import { useTerminalListFor } from "@/hooks/terminal/use-terminal-list-for-query";
 import { useHomeWorkspaceSource } from "@/components/home/host-workspace-selector/use-home-workspace-source";
 import type { WorktreeStagingKey } from "@/stores/worktree/worktree-intent-staging-store";
@@ -37,7 +37,7 @@ export function LandingTerminalGestureProvider(props: {
   readonly children: ReactNode;
 }): ReactNode {
   const { draftId } = props;
-  const activeHostId = useReactiveActiveHostId();
+  const activeHostId = useAddressableHostId();
   const defaultClient = useHostClient();
   const hostDirectory = useHostDirectory();
   const probe = useTerminalListFor(defaultClient, INDEPENDENT_SCOPE);

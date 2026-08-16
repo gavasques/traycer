@@ -57,7 +57,7 @@ import {
   TERMINAL_TILE_DND_TYPE,
   type EpicCanvasTerminalTileDragData,
 } from "@/components/epic-canvas/dnd/dnd";
-import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
+import { useAddressableHostId } from "@/hooks/host/use-addressable-host-id";
 import { UNKNOWN_HOST_PLACEHOLDER } from "@/lib/host/constants";
 import { useTerminalKill } from "@/hooks/terminal/use-terminal-kill-mutation";
 import { useTerminalList } from "@/hooks/terminal/use-terminal-list-query";
@@ -128,7 +128,7 @@ function TerminalsPanelBodyLive(props: {
   const prepareSetActiveTileTabFocusTarget = useEpicCanvasStore(
     (s) => s.prepareSetActiveTileTabFocusTarget,
   );
-  const activeHostId = useReactiveActiveHostId() ?? UNKNOWN_HOST_PLACEHOLDER;
+  const activeHostId = useAddressableHostId() ?? UNKNOWN_HOST_PLACEHOLDER;
 
   const openExisting = useCallback(
     (session: CanonicalTerminalSessionInfo) => {

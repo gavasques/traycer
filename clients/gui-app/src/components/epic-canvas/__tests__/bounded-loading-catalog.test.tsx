@@ -103,8 +103,8 @@ vi.mock("@/lib/host/stream-runtime-context", () => ({
   useStreamMethodSchemaVersion: () => null,
 }));
 
-vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
-  useReactiveActiveHostId: () => "host-test",
+vi.mock("@/hooks/host/use-addressable-host-id", () => ({
+  useAddressableHostId: () => "host-test",
 }));
 
 vi.mock("@/hooks/host/use-effective-host-id", () => ({

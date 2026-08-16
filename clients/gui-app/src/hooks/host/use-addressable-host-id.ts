@@ -21,7 +21,7 @@ import { useReactiveHostReadiness } from "@/hooks/host/use-reactive-host-readine
  * host" want this one; consumers narrating the selection want that one. The
  * name is bind-era vocabulary and is retired by P4.3's convergence sweep.
  */
-export function useReactiveActiveHostId(): string | null {
+export function useAddressableHostId(): string | null {
   const binding = useHostBinding();
   const effectiveHostId = useEffectiveHostId();
   // Null-tolerant on purpose, and that is the one way this differs from

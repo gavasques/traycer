@@ -95,8 +95,8 @@ vi.mock("@/lib/notifications/notification-feed-mode", () => ({
   useNotificationFeedMode: () => feedMode.value,
 }));
 
-vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
-  useReactiveActiveHostId: () => mockLocalHostEntry.hostId,
+vi.mock("@/hooks/host/use-addressable-host-id", () => ({
+  useAddressableHostId: () => mockLocalHostEntry.hostId,
 }));
 
 // The fixture used to say "which host" by binding one into the client's slot.

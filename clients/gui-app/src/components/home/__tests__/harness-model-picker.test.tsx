@@ -281,11 +281,11 @@ vi.mock("@/hooks/host/use-host-client-for-host-id", () => ({
 }));
 
 // The capability gate resolves the "Create new profile" row's target host
-// via `useReactiveActiveHostId()` / `useHostDirectoryList()` - stub both to a
+// via `useAddressableHostId()` / `useHostDirectoryList()` - stub both to a
 // single local host so the row is enabled by default (mirrors
 // `providers-settings-panel.test.tsx`'s equivalent stubs).
-vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
-  useReactiveActiveHostId: () => "local",
+vi.mock("@/hooks/host/use-addressable-host-id", () => ({
+  useAddressableHostId: () => "local",
 }));
 
 vi.mock("@/hooks/host/use-host-directory-list-query", () => ({

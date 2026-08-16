@@ -102,8 +102,8 @@ vi.mock("@/hooks/host/use-host-client-for-host-id", () => ({
     hostId === null ? (hostBindingMock.current?.hostClient ?? null) : hostId,
 }));
 
-vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
-  useReactiveActiveHostId: () => "local",
+vi.mock("@/hooks/host/use-addressable-host-id", () => ({
+  useAddressableHostId: () => "local",
 }));
 
 vi.mock("@/hooks/host/use-host-directory-list-query", () => ({

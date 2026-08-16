@@ -37,8 +37,8 @@ vi.mock("@/providers/use-runner-host", () => ({
   }),
 }));
 
-vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
-  useReactiveActiveHostId: () => editorState.activeHostId,
+vi.mock("@/hooks/host/use-addressable-host-id", () => ({
+  useAddressableHostId: () => editorState.activeHostId,
 }));
 
 // `OpenInEditorButton` resolves against the EFFECTIVE host (redesign P1.2),

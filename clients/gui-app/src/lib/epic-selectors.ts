@@ -54,7 +54,7 @@ import {
 } from "@/lib/agent-activity";
 import { useEpicAgentActivity } from "@/stores/agent-activity-store";
 import { useEpicStore } from "@/hooks/use-epic-store";
-import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
+import { useAddressableHostId } from "@/hooks/host/use-addressable-host-id";
 import { UNKNOWN_HOST_PLACEHOLDER } from "@/lib/host/constants";
 import { useTerminalDisplayTitle } from "@/hooks/terminal/use-terminal-display-title";
 import { useAgentRolesEnabled } from "@/hooks/runner/use-runner-feature-settings-query";
@@ -469,7 +469,7 @@ export function useEpicArtifactRecords(): ReadonlyArray<EpicTreeRecord> {
   // host hosting the open-epic projection, so it is the correct
   // binding source for those rows. Tui-agent rows override with their
   // projected hostId.
-  const fallbackHostId = useReactiveActiveHostId() ?? UNKNOWN_HOST_PLACEHOLDER;
+  const fallbackHostId = useAddressableHostId() ?? UNKNOWN_HOST_PLACEHOLDER;
   return useStore(
     handle.store,
     useShallow((s): ReadonlyArray<EpicTreeRecord> => {

@@ -45,7 +45,7 @@ import { useMaybeOpenEpicHandle } from "@/providers/use-open-epic-handle";
  */
 export function useEpicSyncChatRecords(epicId: string): void {
   // The app-wide active host, matching the epic session itself: the session is
-  // acquired for `useReactiveActiveHostId()` and rebuilt when it changes, so
+  // acquired for `useAddressableHostId()` and rebuilt when it changes, so
   // asking any other host for this epic's records would answer about a registry
   // the session is not projecting.
   const client = useHostClient();

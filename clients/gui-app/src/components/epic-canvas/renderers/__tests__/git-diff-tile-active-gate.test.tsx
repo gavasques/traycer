@@ -19,8 +19,8 @@ import { DEFAULT_DIFF_VIEWER_PREFERENCES } from "@/lib/diff/diff-viewer-preferen
 import { useSettingsStore } from "@/stores/settings/settings-store";
 import { __resetSubscriptionsForTesting } from "@/hooks/git/use-git-list-changed-files-subscription";
 
-vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
-  useReactiveActiveHostId: () => "host-A",
+vi.mock("@/hooks/host/use-addressable-host-id", () => ({
+  useAddressableHostId: () => "host-A",
 }));
 
 vi.mock("@/hooks/agent/use-host-reachability", () => ({

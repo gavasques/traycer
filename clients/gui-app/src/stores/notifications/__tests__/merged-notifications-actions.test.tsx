@@ -81,8 +81,8 @@ vi.mock("@/lib/notifications/notification-feed-mode", () => ({
   useNotificationFeedMode: () => notificationFeedMode.value,
 }));
 
-vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
-  useReactiveActiveHostId: () =>
+vi.mock("@/hooks/host/use-addressable-host-id", () => ({
+  useAddressableHostId: () =>
     hostBindingState.current?.hostClient.getActiveHostId() ?? null,
 }));
 

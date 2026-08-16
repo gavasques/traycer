@@ -89,8 +89,8 @@ const pinTestState = vi.hoisted(
   }),
 );
 
-vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
-  useReactiveActiveHostId: () => pinTestState.activeHostId,
+vi.mock("@/hooks/host/use-addressable-host-id", () => ({
+  useAddressableHostId: () => pinTestState.activeHostId,
 }));
 
 // The surface pin (`useSurfaceHostPin` -> `useEffectiveHostId`, redesign

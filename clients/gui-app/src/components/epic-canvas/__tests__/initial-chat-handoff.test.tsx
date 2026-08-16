@@ -117,8 +117,8 @@ vi.mock("@/lib/host/stream-runtime-context", () => ({
   useWsStreamClient: () => null,
 }));
 
-vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
-  useReactiveActiveHostId: () => HOST_ID,
+vi.mock("@/hooks/host/use-addressable-host-id", () => ({
+  useAddressableHostId: () => HOST_ID,
 }));
 
 // The Epic session resolves its host through the selection authority's derived

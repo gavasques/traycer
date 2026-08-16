@@ -75,7 +75,7 @@ interface TestState {
    * fixture on the live render path.
    */
   readonly unreachableHostIds: Set<string>;
-  /** Value the `useReactiveActiveHostId` mock returns; null matches the
+  /** Value the `useAddressableHostId` mock returns; null matches the
    * provider-less default the older fixtures render under. */
   activeHostId: string | null;
   /** Per-chat `fatalClose.code` the `useExistingChatSessionFatalClose` mock
@@ -210,8 +210,8 @@ vi.mock("@/hooks/agent/use-host-reachability", () => ({
   }),
 }));
 
-vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
-  useReactiveActiveHostId: () => testState.activeHostId,
+vi.mock("@/hooks/host/use-addressable-host-id", () => ({
+  useAddressableHostId: () => testState.activeHostId,
 }));
 
 // ticket 36's same-host cloud-known exemption reads these two - stubbed at

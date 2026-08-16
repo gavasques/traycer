@@ -12,7 +12,7 @@ import {
   useEpicPermissionRole,
   useEpicSnapshotLoaded,
 } from "@/lib/epic-selectors";
-import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
+import { useAddressableHostId } from "@/hooks/host/use-addressable-host-id";
 import { useEpicNestedFocusNavigation } from "@/hooks/epic/use-epic-nested-focus-navigation";
 import { UNKNOWN_HOST_PLACEHOLDER } from "@/lib/host/constants";
 import { useAuthStore } from "@/stores/auth/auth-store";
@@ -50,7 +50,7 @@ const CHAT_PROJECTION_DEADLINE_MS = 60_000;
  * and manages the pending-create mark.
  */
 export function useInitialChatHandoff(epicId: string, tabId: string): void {
-  const activeHostId = useReactiveActiveHostId();
+  const activeHostId = useAddressableHostId();
   const userId = useAuthStore((state) => state.profile?.userId ?? null);
   const scope = useMemo<InitialChatHandoffScope>(
     () => ({ hostId: activeHostId, userId, epicId }),

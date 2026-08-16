@@ -28,8 +28,8 @@ vi.mock("@/lib/host", () => ({
   // Spine and app-wide client are separate exports since redesign P2.1.
   useHostRuntimeClient: () => FAKE_CLIENT,
 }));
-vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
-  useReactiveActiveHostId: () => "host-test",
+vi.mock("@/hooks/host/use-addressable-host-id", () => ({
+  useAddressableHostId: () => "host-test",
 }));
 vi.mock("@/hooks/host/use-host-client-for", () => ({
   useHostClientFor: () => FAKE_CLIENT,

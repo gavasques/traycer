@@ -38,7 +38,7 @@ import type {
   SearchArtifactsResponse,
 } from "@traycer/protocol/host/epic/unary-schemas";
 import { useHostClient } from "@/lib/host";
-import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
+import { useAddressableHostId } from "@/hooks/host/use-addressable-host-id";
 import { useOpenEpicHandle } from "@/providers/use-open-epic-handle";
 import { useEpicTileNavigation } from "@/hooks/epic/use-epic-tile-navigation";
 import { epicNodeRefForNodeId } from "@/lib/epic-selectors";
@@ -212,7 +212,7 @@ interface ArtifactSearchBoxProps {
 export function ArtifactSearchBox(props: ArtifactSearchBoxProps) {
   const { epicId, tabId, searchQuery, debouncedQuery } = props;
   const client = useHostClient();
-  const activeHostId = useReactiveActiveHostId();
+  const activeHostId = useAddressableHostId();
   const filter = useArtifactFilter(epicId);
   const inputRef = useRef<HTMLInputElement>(null);
   const headerSlot = usePanelHeaderSearchSlot(tabId, ARTIFACTS_PANEL_ID);

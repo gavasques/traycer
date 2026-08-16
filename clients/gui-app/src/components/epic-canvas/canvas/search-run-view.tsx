@@ -28,7 +28,7 @@ import { usePaletteLiveQuery } from "@/lib/commands/palette-query-context";
 import { useHostClient } from "@/lib/host";
 import type { HostRpcRegistry } from "@/lib/host";
 import { UNKNOWN_HOST_PLACEHOLDER } from "@/lib/host/constants";
-import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
+import { useAddressableHostId } from "@/hooks/host/use-addressable-host-id";
 import { useWorkspaceSearchText } from "@/hooks/workspace/use-workspace-search-text-query";
 import {
   highlightSegmentsFromByteRanges,
@@ -167,7 +167,7 @@ function SearchRun({
   readonly ctx: CommandContext;
 }) {
   const client = useHostClient();
-  const defaultHostId = useReactiveActiveHostId() ?? UNKNOWN_HOST_PLACEHOLDER;
+  const defaultHostId = useAddressableHostId() ?? UNKNOWN_HOST_PLACEHOLDER;
   const resolveArtifact = useArtifactPathResolver(ctx.activeEpicId);
   const query = usePaletteLiveQuery();
   const trimmed = query.trim();

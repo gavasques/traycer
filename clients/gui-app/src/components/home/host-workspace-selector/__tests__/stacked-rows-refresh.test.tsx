@@ -123,8 +123,8 @@ vi.mock("@/lib/host", () => ({
   useHostRuntimeClient: () => hostClient,
 }));
 
-vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
-  useReactiveActiveHostId: () => mocks.activeHostId.current,
+vi.mock("@/hooks/host/use-addressable-host-id", () => ({
+  useAddressableHostId: () => mocks.activeHostId.current,
 }));
 
 // P1.2: the picker's non-fixed arm resolves `pin ?? effective` and takes its

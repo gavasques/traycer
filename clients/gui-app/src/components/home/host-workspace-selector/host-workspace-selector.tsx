@@ -36,7 +36,7 @@ import { useHostBinding, type HostRpcRegistry } from "@/lib/host";
 import { useComposerSurfaceHostPin } from "@/hooks/host/use-composer-surface-host-pin";
 import { useRefreshHostDirectoryOnOpen } from "@/hooks/host/use-refresh-host-directory-on-open";
 import { useRemoteHostsPlanRestricted } from "@/hooks/host/use-remote-hosts-plan-gate";
-import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
+import { useAddressableHostId } from "@/hooks/host/use-addressable-host-id";
 import { useEffectiveHostId } from "@/hooks/host/use-effective-host-id";
 import { useHostClientFor } from "@/hooks/host/use-host-client-for";
 import { useHostDirectoryList } from "@/hooks/host/use-host-directory-list-query";
@@ -244,7 +244,7 @@ interface HostWorkspaceSelectorProps {
 
 export function HostWorkspaceSelector(props: HostWorkspaceSelectorProps) {
   const directoryList = useHostDirectoryList();
-  const activeHostId = useReactiveActiveHostId();
+  const activeHostId = useAddressableHostId();
   const directoryEntries = directoryList.data ?? [];
   const activeEntry =
     directoryEntries.find((entry) => entry.hostId === activeHostId) ?? null;

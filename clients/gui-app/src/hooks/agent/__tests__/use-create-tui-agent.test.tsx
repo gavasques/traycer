@@ -23,7 +23,7 @@ interface FakeHostClient {
   /**
    * Production resolves the app-wide host through the spine's id-pinned
    * requester (redesign P4.2), and this fixture reaches that path
-   * transitively - `useReactiveActiveHostId` calls it on whatever client the
+   * transitively - `useAddressableHostId` calls it on whatever client the
    * binding hands over. A stub missing it takes the subject down at first
    * render rather than failing an assertion. One host here means the
    * requester IS the client.
@@ -31,7 +31,7 @@ interface FakeHostClient {
   readonly createRequesterForHostId: (hostId: string | null) => FakeHostClient;
   /**
    * Read alongside the host id by `useReactiveHostReadiness`, which is what
-   * `useReactiveActiveHostId` projects through since P4.2. Adding only the
+   * `useAddressableHostId` projects through since P4.2. Adding only the
    * requester exposed this one: the two symbols are one shape, and a stub of
    * a typed surface has to carry the whole shape production calls.
    */

@@ -90,7 +90,7 @@ function skipInstalledRecord(): Promise<HostInstalledRecord | null> {
 export function useHostOptions(): HostOptions {
   const binding = useHostBinding();
   const runnerHost = useRunnerHost();
-  // The SELECTION, not addressability. `useReactiveActiveHostId()` answers
+  // The SELECTION, not addressability. `useAddressableHostId()` answers
   // "is the derived host addressable yet" and goes `null` while its directory
   // row is still resolving; every picker here is narrating which host the
   // authority chose, so the tag and the sort must not blink off for the length

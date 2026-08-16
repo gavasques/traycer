@@ -13,7 +13,7 @@ import {
   useEpicTab,
 } from "@/stores/epics/canvas/store";
 import { isTileRefRecordLive } from "@/stores/epics/canvas/canvas-selectors";
-import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
+import { useAddressableHostId } from "@/hooks/host/use-addressable-host-id";
 import { useHostClient } from "@/lib/host";
 import {
   cloudChatListAuthorizesRecordSweep,
@@ -425,7 +425,7 @@ export function useEpicRouteSynchronization(
   // `isTileRefRecordLive`); everything else is judged against this host's
   // projection, which is also correct across a host switch (the records
   // swap with the host, and so does the policing identity).
-  const activeHostId = useReactiveActiveHostId();
+  const activeHostId = useAddressableHostId();
   const chatRecordListAuthoritative = useEpicChatRecordListAuthoritative();
 
   // Close any open tab whose underlying record was removed (sidebar delete,

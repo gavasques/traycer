@@ -7,7 +7,7 @@ import { AnimatePresence, m, useReducedMotion } from "motion/react";
 import type { RoleClaim } from "@traycer/protocol/persistence/epic/role-claims";
 import type { CloudChatSummary } from "@traycer/protocol/host/epic/cloud-chat";
 import { v4 as uuidv4 } from "uuid";
-import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
+import { useAddressableHostId } from "@/hooks/host/use-addressable-host-id";
 import { useHostReachability } from "@/hooks/agent/use-host-reachability";
 import { UNKNOWN_HOST_PLACEHOLDER } from "@/lib/host/constants";
 import { makePublishedChatTileRef } from "@/stores/epics/canvas/tile-schema/published-chat-tile";
@@ -1401,7 +1401,7 @@ const ChatNode = memo(function ChatNode(props: ChatNodeProps) {
     [archiveSupported, isArchived, archivePending, toggleArchive],
   );
 
-  const activeHostId = useReactiveActiveHostId() ?? "unknown-host";
+  const activeHostId = useAddressableHostId() ?? "unknown-host";
   // The tab must bind to the chat's OWNER host, not whichever host happens to
   // be active: a connected peer host's chat reaches this tree through the
   // shared projection, and binding it to the active host would open a tab
@@ -2618,7 +2618,7 @@ function ChatRowButton(props: ChatRowButtonProps) {
   const resourceOwnerKind = resourceOwnerKindForNode(artifactType);
   const roleClaims = useEpicAgentRoleClaims(nodeId);
   const ownerHostId = useEpicNodeHostId(nodeId);
-  const activeHostId = useReactiveActiveHostId();
+  const activeHostId = useAddressableHostId();
   const sourceHostId = ownerHostId ?? activeHostId;
   // Same lock the cloud rows carry, driven by the same signal: a CHAT row
   // whose owner host is unreachable is readonly here (its click opens the

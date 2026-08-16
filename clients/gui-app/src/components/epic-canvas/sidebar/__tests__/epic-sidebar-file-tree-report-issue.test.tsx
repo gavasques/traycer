@@ -99,8 +99,8 @@ vi.mock("@/components/ui/sidebar", () => ({
   ),
 }));
 
-vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
-  useReactiveActiveHostId: () => "host-1",
+vi.mock("@/hooks/host/use-addressable-host-id", () => ({
+  useAddressableHostId: () => "host-1",
 }));
 
 // The surface pin (`useSurfaceHostPin` -> `useEffectiveHostId`, redesign

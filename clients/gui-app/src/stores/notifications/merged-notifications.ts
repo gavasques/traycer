@@ -10,7 +10,7 @@ import {
 } from "@/lib/analytics";
 import { useHostMutation } from "@/hooks/host/use-host-query";
 import { useHostDirectoryEntry } from "@/hooks/host/use-host-directory-entry";
-import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
+import { useAddressableHostId } from "@/hooks/host/use-addressable-host-id";
 import { useEffectiveHostId } from "@/hooks/host/use-effective-host-id";
 import { notificationsMutationKeys } from "@/lib/query-keys";
 import { toastFromHostError } from "@/lib/host-error-toast";
@@ -224,7 +224,7 @@ export function mergedUnreadCount(input: {
  * from without recomputing their own source subscriptions. */
 function useMergedNotificationRows(): ReadonlyArray<MergedNotificationRow> {
   const feedMode = useNotificationFeedMode();
-  const activeHostId = useReactiveActiveHostId();
+  const activeHostId = useAddressableHostId();
   const hostIds = useHostNotificationIds();
   const appLocalIds = useAppLocalNotificationIds();
   const globalIds = useNotificationEntryIds();
@@ -443,7 +443,7 @@ export function useMergedNotificationRow(
   feedId: string,
 ): MergedNotificationRow | null {
   const feedMode = useNotificationFeedMode();
-  const activeHostId = useReactiveActiveHostId();
+  const activeHostId = useAddressableHostId();
   const parsed = parseFeedId(feedId);
   const hostEntry = useHostNotificationById(
     parsed?.source === "host" ? parsed.sourceId : "",
@@ -567,7 +567,7 @@ export interface NotificationCenterHostState {
 
 /** Active-host subtitle/partial-state selector for the center header. */
 export function useNotificationCenterHostState(): NotificationCenterHostState {
-  const activeHostId = useReactiveActiveHostId();
+  const activeHostId = useAddressableHostId();
   const hostEntry = useHostDirectoryEntry(activeHostId ?? "");
   const feedMode = useNotificationFeedMode();
   const localSummary = useHostNotificationsStore(selectHostNotificationSummary);
@@ -1077,7 +1077,7 @@ export function useMergedNotificationsActions(): MergedNotificationsActions {
         // firing the host mutation then only yields an unbound-rejection error toast
         // while the rendered rows cannot change. Gate BOTH on the same
         // authoritative active-host signal (read fresh at click time, the same
-        // value `useReactiveActiveHostId` projects), NOT `client !== null`. The
+        // value `useAddressableHostId` projects), NOT `client !== null`. The
         // local global/app-local mark-all above always run. Marking read never
         // resolves the underlying question or permission request.
         if (client !== null && client.getActiveHostId() !== null) {

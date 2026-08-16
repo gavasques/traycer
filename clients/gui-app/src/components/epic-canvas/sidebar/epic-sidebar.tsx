@@ -49,7 +49,7 @@ import {
 } from "@/hooks/host/use-surface-host-pin";
 import { PinnedSurfaceDeadState } from "@/components/host/pinned-surface-dead-state";
 import { isBrowsable } from "@/lib/worktree/worktree-row-browsable";
-import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
+import { useAddressableHostId } from "@/hooks/host/use-addressable-host-id";
 import { requestArtifactEditorFocus } from "@/lib/artifacts/pending-editor-focus";
 import { openProjectedSidebarNodeInTabWhenAvailable } from "@/components/epic-canvas/sidebar/open-projected-sidebar-node";
 import { type EpicNodeRef } from "@/stores/epics/canvas/types";
@@ -508,7 +508,7 @@ export function EpicLeftPanelHost(props: EpicLeftPanelHostProps) {
   const activeArtifact = useEpicArtifact(activeArtifactId);
   const hasActiveCommentableArtifact =
     activeArtifact !== null && "kind" in activeArtifact;
-  const hostId = useReactiveActiveHostId();
+  const hostId = useAddressableHostId();
   const hasPullRequests = usePrPresenceStore(
     selectPrScopeHasItems(hostId, epicId),
   );
@@ -560,7 +560,7 @@ export function EpicLeftPanelLoadingHost(props: EpicLeftPanelHostProps) {
   const activePanelId = useActiveLeftPanelId(tabId);
   const panelGroups = useLeftPanelGroups();
   const commentsPanelRevealed = useCommentsPanelRevealed(tabId);
-  const hostId = useReactiveActiveHostId();
+  const hostId = useAddressableHostId();
   // The persisted PR baseline is readable before the epic's Y.doc resolves, so
   // the loading rail already shows the same set of panels the live one will -
   // no icon appears or disappears as the epic finishes opening.
@@ -1617,7 +1617,7 @@ function TreePanelActions(props: TreePanelActionsProps) {
   const canEdit = isEditableRole(permissionRole);
   const canMutate = canEdit && !isDisconnected;
   const epicHandle = useOpenEpicHandle();
-  const activeHostId = useReactiveActiveHostId() ?? UNKNOWN_HOST_PLACEHOLDER;
+  const activeHostId = useAddressableHostId() ?? UNKNOWN_HOST_PLACEHOLDER;
   const navigateNested = useEpicNestedFocusNavigation();
   const prepareOpenTileInTabFocusTarget = useEpicCanvasStore(
     (s) => s.prepareOpenTileInTabFocusTarget,

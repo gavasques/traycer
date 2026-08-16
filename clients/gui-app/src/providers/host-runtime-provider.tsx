@@ -44,6 +44,8 @@ import {
 } from "@/lib/host/selection-authority-bridge";
 import { createSessionRetirementSweep } from "@/lib/host/session-retirement";
 import { appLogger } from "@/lib/logger";
+import { useSelectionAuthorityStore } from "@/stores/host/selection-authority-store";
+import { authQueryKeys } from "@/lib/query-keys";
 import {
   runnerHostQueryScopeId,
   runnerQueryKeys,
@@ -208,6 +210,15 @@ export function createHostRuntime<Registry extends VersionedRpcRegistry>(
         remoteFetcher,
         localHostIdSeeder: () =>
           queryClient.fetchQuery(localHostIdQueryOptions(runnerHost)),
+        // F22: one liveness timer for the window. The directory's poll is it;
+        // the registered-hosts observers refetch off this invalidation
+        // through their own credential-fenced path instead of running a
+        // second 60s interval against the same endpoint.
+        onRegistryPollTick: () => {
+          void queryClient.invalidateQueries({
+            queryKey: authQueryKeys.registeredHostsAll(),
+          });
+        },
       });
 
       let runtime: HostRuntime<Registry> | null = null;
@@ -329,6 +340,29 @@ export function createHostRuntime<Registry extends VersionedRpcRegistry>(
         authorityRegistry,
         schedulingPolicy,
         requestCoordinator,
+        // The window's connection-registry wiring (connection-registry §1).
+        // Both halves are READ PORTS: the registry keeps no copy of a row or
+        // a lease, so there is still exactly one directory and exactly one
+        // lease vocabulary in the app. What it adds is the per-host verdict -
+        // "did THIS host's row move" - which neither source answers, and
+        // which is what replaces the active slot's change event for
+        // consumers pinned by host id (P4.2).
+        connectionRegistry: {
+          directory: {
+            findById: (hostId) => directory.findById(hostId),
+            onDirectoryChanged: (listener) => directory.onChange(listener),
+          },
+          leases: {
+            leaseFor: (hostId) =>
+              useSelectionAuthorityStore
+                .getState()
+                .leases.find((lease) => lease.hostId === hostId) ?? null,
+            onLeasesChanged: (listener) => {
+              const unsubscribe = useSelectionAuthorityStore.subscribe(listener);
+              return { dispose: unsubscribe };
+            },
+          },
+        },
       });
 
       const activeRuntime = runtime;

@@ -257,6 +257,7 @@ function buildComposition(): Composition {
     runnerHost,
     remoteFetcher: null,
     localHostIdSeeder: () => Promise.resolve(null),
+    onRegistryPollTick: null,
   });
   let requestSeq = 0;
   const runtime = new HostRuntime<HostRpcRegistry>({
@@ -277,6 +278,7 @@ function buildComposition(): Composition {
     schedulingPolicy: hostRpcSchedulingPolicy,
     authorityRegistry: null,
     requestCoordinator: null,
+    connectionRegistry: null,
   });
   const composition = { auth, directory, runtime, runnerHost };
   built.push(composition);

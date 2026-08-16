@@ -1,5 +1,8 @@
 import { useCallback, useMemo, useSyncExternalStore } from "react";
-import { hasReadyRemoteSession } from "@traycer-clients/shared/host-transport/remote/index";
+import {
+  hasReadyRemoteSession,
+  subscribeRemoteSessionReadiness,
+} from "@traycer-clients/shared/host-transport/remote/index";
 import {
   hostUnavailability,
   type HostUnavailability,
@@ -294,27 +297,21 @@ export function resolvedHostLabel(reachability: HostReachability): string | null
 }
 
 /**
- * How often the ready-session evidence is re-read. Session readiness settles
- * within seconds of a dial (`isConfirmedTransportRefusal`'s contract), so a
- * one-second bound keeps the dead surface honest without meaningful cost -
- * the poll is a scan of the small in-memory session cache, and a tick whose
- * value is unchanged re-renders nothing (`useSyncExternalStore` compares
- * snapshots).
- */
-const REMOTE_SESSION_READINESS_POLL_MS = 1_000;
-
-/**
  * Reactive view of `hasReadyRemoteSession(hostId)`.
  *
- * The session cache is a pull-only module map - nothing pushes an event when
- * a session becomes ready or dies - and a readiness flip changes NO directory
- * value (a fuse-recovery dial succeeding leaves the registry row `offline`
- * for up to the lease TTL). Reading it inside the directory-keyed memo above
- * therefore froze the answer: a surface stayed "unreachable" while a working
- * session was open, and could stay "reachable" after the session died, until
- * some unrelated directory emit happened by. With no store to subscribe to,
- * the subscription is a bounded poll; `useSyncExternalStore` turns it into a
- * proper snapshot the memo can key on.
+ * A readiness flip changes NO directory value (a fuse-recovery dial
+ * succeeding leaves the registry row `offline` for up to the lease TTL), so
+ * reading it inside the directory-keyed memo above froze the answer: a
+ * surface stayed "unreachable" while a working session was open, and could
+ * stay "reachable" after the session died, until some unrelated directory
+ * emit happened by.
+ *
+ * The subscription used to be a 1s poll, because the session cache was a
+ * pull-only module map with nothing to subscribe to. It pushes now
+ * (redesign P4.1): `subscribeRemoteSessionReadiness` fires on ready
+ * boundaries, closes, supersession and linger expiry - every transition that
+ * can change this answer - so the timer is gone and the answer is if
+ * anything fresher, since a ready boundary no longer waits out a tick.
  *
  * Exported for every surface whose render reads session readiness: any
  * component that calls `hasReadyRemoteSession` (directly or through a
@@ -322,12 +319,10 @@ const REMOTE_SESSION_READINESS_POLL_MS = 1_000;
  * same frozen-answer bug this hook was written for.
  */
 export function useRemoteSessionPollReadiness(hostId: string): boolean {
-  const subscribe = useCallback((onStoreChange: () => void) => {
-    const timer = setInterval(onStoreChange, REMOTE_SESSION_READINESS_POLL_MS);
-    return () => {
-      clearInterval(timer);
-    };
-  }, []);
+  const subscribe = useCallback(
+    (onStoreChange: () => void) => subscribeRemoteSessionReadiness(onStoreChange),
+    [],
+  );
   const getSnapshot = useCallback(
     () => hasReadyRemoteSession(hostId),
     [hostId],

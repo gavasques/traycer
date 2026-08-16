@@ -253,15 +253,25 @@ export class HostClient<Registry extends VersionedRpcRegistry> {
    * handed a row that existed; this one was handed an intent that may not have
    * landed.
    *
-   * Unresolved is not a dead end, and how it un-sticks is worth naming for
-   * P4.2. The requester re-reads the row on every access, so one that ARRIVES
-   * late is picked up with nothing to re-resolve - but a React consumer still
-   * has to be told to look again, and the only thing telling it today is
-   * `bind()`'s change event (`useReactiveHostReadiness` subscribes to it).
-   * Deleting the slot must therefore leave a "this host's row changed" signal
-   * behind, or a window pointed at a host that was still booting stays
-   * disabled after it finishes. That signal belongs to the registry P4.1
-   * builds, not to a revived slot.
+   * Unresolved is not a dead end, and how it un-sticks is SETTLED (P4.1).
+   * The requester re-reads the row on every access, so one that ARRIVES late
+   * is picked up with nothing to re-resolve - but a React consumer still has
+   * to be told to look again. That signal used to be `bind()`'s change event,
+   * which is the active slot; it is now
+   * `host-connection-registry.ts`'s `subscribeHostRowChanged` (per host) /
+   * `subscribeAnyHostRowChanged` (for consumers that resolve their own id at
+   * read time, which is every reactive projection over a pinned requester -
+   * they cannot name the host at subscribe time, because the row not existing
+   * yet is the thing they are waiting on).
+   *
+   * FOR P4.2: the three reactive projections
+   * (`useReactiveHostReadiness`, `useReactiveOwnerIdentityKey`, and
+   * `stream-runtime.tsx`'s `useReactiveHostTransportKey`) each subscribe to
+   * BOTH arms today. Deleting `bind()` and the slot is therefore a deletion,
+   * not a migration: remove the `client.onChange` arm from those three and
+   * the registry arm already carries them. The probe that proves this rather
+   * than asserting it neuters `bind()`'s two `emitChange` calls and re-runs
+   * the row-arrival regression - CAUGHT before P4.1, SURVIVE after.
    */
   createRequesterForHostId(hostId: string | null): HostClient<Registry> {
     const resolveEntry = (): HostDirectoryEntry | null =>

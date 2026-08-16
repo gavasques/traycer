@@ -55,6 +55,18 @@ export interface HostDirectoryServiceOptions {
    */
   readonly remoteFetcher: RemoteHostFetcher | null;
   /**
+   * Fired on each poll tick so the app's other registry readers can refresh
+   * off this ONE timer (redesign P4.1 / F22). `null` for shells and tests
+   * with no query cache to invalidate.
+   *
+   * Required rather than optional for the same reason `connectionRegistry`
+   * is on `HostRuntimeOptions`: a construction site that forgets it produces
+   * a window whose Settings liveness silently stops refreshing, which is not
+   * a failure anything reports. A required field makes forgetting a compile
+   * error.
+   */
+  readonly onRegistryPollTick: (() => void) | null;
+  /**
    * Identity of the auth context a refresh is being made ON BEHALF OF, read at
    * the moment it is needed. `null` disables identity scoping — correct only
    * for tests with a single implicit account.
@@ -126,6 +138,7 @@ export type HostDirectoryListener = (
 export class HostDirectoryService implements IHostDirectoryService {
   private readonly runnerHost: IRunnerHost;
   private readonly remoteFetcher: RemoteHostFetcher;
+  private readonly onRegistryPollTick: (() => void) | null;
   private readonly authContextId: () => string | null;
   private readonly credentialGeneration: () => number;
   private readonly localHostIdSeeder: () => Promise<string | null>;
@@ -250,6 +263,7 @@ export class HostDirectoryService implements IHostDirectoryService {
 
   constructor(options: HostDirectoryServiceOptions) {
     this.runnerHost = options.runnerHost;
+    this.onRegistryPollTick = options.onRegistryPollTick;
     this.remoteFetcher =
       options.remoteFetcher === null ? fetchRemoteHosts : options.remoteFetcher;
     this.localHostIdSeeder =
@@ -584,6 +598,26 @@ export class HostDirectoryService implements IHostDirectoryService {
         return;
       }
       void this.refresh();
+      // THE APP'S ONE LIVENESS TIMER (redesign P4.1 / F22). This tick used to
+      // have a twin: a second 60s `refetchInterval` on the registered-hosts
+      // query, against the same `GET /api/v3/hosts`, which this file's own
+      // comment already called out as not the goal. The twin is gone and the
+      // TanStack observers ride this tick instead.
+      //
+      // INVALIDATE rather than seed, and the distinction is load-bearing.
+      // This poll's fetcher returns already-projected `HostDirectoryEntry`
+      // rows, not the raw `HostListResponse` the Settings surfaces read their
+      // registry metadata from - and that query reaches the registry through
+      // `AuthService.fetchRegisteredHosts(era)`, whose issue-time credential
+      // fence exists precisely to refuse a fetch whose bearer belongs to a
+      // different era. Handing it data fetched on this path would route
+      // around that fence. Invalidating instead lets it refetch through its
+      // own, still fenced, and costs nothing when no such surface is mounted:
+      // an invalidation with no ACTIVE observer marks stale and issues no
+      // request.
+      if (this.onRegistryPollTick !== null) {
+        this.onRegistryPollTick();
+      }
     }, HOST_DIRECTORY_REFRESH_POLL_MS);
   }
 

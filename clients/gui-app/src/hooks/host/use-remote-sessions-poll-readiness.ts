@@ -1,14 +1,8 @@
 import { useCallback, useMemo, useSyncExternalStore } from "react";
-import { hasReadyRemoteSession } from "@traycer-clients/shared/host-transport/remote/index";
-
-/**
- * How often the ready-session evidence is re-read. Matches the per-host
- * `useRemoteSessionPollReadiness` bound and exists for the same reason:
- * session readiness settles within seconds of a dial, the cache is a small
- * in-memory map with no change events, and an unchanged snapshot re-renders
- * nothing.
- */
-const REMOTE_SESSIONS_READINESS_POLL_MS = 1_000;
+import {
+  hasReadyRemoteSession,
+  subscribeRemoteSessionReadiness,
+} from "@traycer-clients/shared/host-transport/remote/index";
 
 /**
  * Reactive MULTI-host view of `hasReadyRemoteSession` - the fleet-shaped
@@ -31,12 +25,15 @@ export function useRemoteSessionsPollReadiness(
   hostIds: ReadonlyArray<string>,
 ): (hostId: string) => boolean {
   const idsKey = hostIds.join("\n");
-  const subscribe = useCallback((onStoreChange: () => void) => {
-    const timer = setInterval(onStoreChange, REMOTE_SESSIONS_READINESS_POLL_MS);
-    return () => {
-      clearInterval(timer);
-    };
-  }, []);
+  // PUSH, not poll (redesign P4.1): the session cache reports its own
+  // transitions now, so this no longer runs a 1s timer for the life of the
+  // window to notice a value that changes a handful of times a session. The
+  // stamp below is unchanged, so a wake that moved no listed host still
+  // re-renders nothing.
+  const subscribe = useCallback(
+    (onStoreChange: () => void) => subscribeRemoteSessionReadiness(onStoreChange),
+    [],
+  );
   const getSnapshot = useCallback(
     () =>
       idsKey

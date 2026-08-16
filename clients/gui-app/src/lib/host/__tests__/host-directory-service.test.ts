@@ -76,9 +76,17 @@ const directories: HostDirectoryService[] = [];
 let restoreDocumentHidden: (() => void) | null = null;
 
 function makeDirectory(
-  options: HostDirectoryServiceOptions,
+  options: Omit<HostDirectoryServiceOptions, "onRegistryPollTick"> &
+    Partial<Pick<HostDirectoryServiceOptions, "onRegistryPollTick">>,
 ): HostDirectoryService {
-  const directory = new HostDirectoryService(options);
+  // Defaulted here rather than at every call site: these cases are about the
+  // directory's own behavior, and the poll-tick callback is the F22 wiring
+  // that belongs to whoever composes the service. A case that cares passes
+  // its own.
+  const directory = new HostDirectoryService({
+    onRegistryPollTick: null,
+    ...options,
+  });
   directories.push(directory);
   return directory;
 }

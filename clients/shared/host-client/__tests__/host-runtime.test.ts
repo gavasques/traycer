@@ -225,6 +225,8 @@ function buildRuntime(options: {
     invalidator,
     schedulingPolicy,
     requestCoordinator: null,
+    // No registry in this harness: these cases drive `bind()` in isolation.
+    connectionRegistry: null,
   });
   return { runtime, provider, directory, invalidator, runnerHost };
 }

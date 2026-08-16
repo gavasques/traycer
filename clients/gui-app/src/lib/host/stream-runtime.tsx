@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import type { HostClient } from "@traycer-clients/shared/host-client/host-client";
+import { subscribeAnyHostRowChanged } from "@traycer-clients/shared/host-client/host-connection-registry";
 import type { IHostStreamClient } from "@traycer-clients/shared/host-transport/host-stream-client";
 import type { VersionedRpcRegistry } from "@traycer/protocol/framework/index";
 import type { HostStreamRpcRegistry } from "@traycer/protocol/host/registry";
@@ -334,15 +335,25 @@ function useReconnectStreamOnEndpointChange(
   }, [client, transportKey]);
 }
 
+/**
+ * Both arms, same rationale as `useReactiveHostReadiness` (redesign P4.1): a
+ * transport move is a ROW change, so the registry reports it whether or not
+ * anything re-binds, and the slot arm dies with P4.2.
+ */
 function useReactiveHostTransportKey<Registry extends VersionedRpcRegistry>(
   client: HostClient<Registry> | null,
 ): string | null {
   const subscribe = useCallback(
     (callback: () => void) => {
+      const unsubscribeRegistry = subscribeAnyHostRowChanged(callback);
       if (client === null) {
-        return () => undefined;
+        return unsubscribeRegistry;
       }
-      return client.onChange(callback);
+      const unsubscribe = client.onChange(callback);
+      return () => {
+        unsubscribe();
+        unsubscribeRegistry();
+      };
     },
     [client],
   );

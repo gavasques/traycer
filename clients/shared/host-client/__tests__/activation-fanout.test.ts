@@ -219,6 +219,9 @@ function buildFanOutFixture(): FanOutFixture {
     // The REAL coordinator: `abortHostTransition` is what used to kill a
     // pinned surface's in-flight work, so a fake here would test nothing.
     requestCoordinator: null,
+    // These cases are about the activation seam itself; the registry's own
+    // behavior is pinned next door in `host-connection-registry.test.ts`.
+    connectionRegistry: null,
   });
   runtime.start();
   return { runtime, directory, invalidator, messenger, pending };

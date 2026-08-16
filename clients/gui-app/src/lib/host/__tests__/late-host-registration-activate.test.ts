@@ -98,6 +98,7 @@ function buildWorld() {
         entries: registry.current.map(directoryEntry),
       }),
     localHostIdSeeder: () => Promise.resolve(null),
+    onRegistryPollTick: null,
     authContextId: () => IDENTITY_KEY,
     credentialGeneration: () => 1,
   });

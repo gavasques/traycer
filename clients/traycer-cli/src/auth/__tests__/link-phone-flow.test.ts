@@ -281,6 +281,76 @@ describe("runLinkPhoneFlow", () => {
     expect(statusMock.mock.calls.at(-1)?.[2]).toBe("KLMNP-QRSTV");
   });
 
+  it("keeps rotating through a status outage so no dead code stays on screen", async () => {
+    // Status is down but mint is not: the code must still be replaced on
+    // schedule rather than sitting on screen past its TTL.
+    statusMock.mockResolvedValue({ kind: "network-error" });
+    mintMock
+      .mockResolvedValueOnce(mintedCode("ABCDE-FGHJK"))
+      .mockResolvedValue(mintedCode("KLMNP-QRSTV"));
+    const ctx = interactiveCtx();
+
+    const settled = Promise.allSettled([
+      runLinkPhoneFlow(ctx, { showQr: true }),
+    ]);
+    await vi.advanceTimersByTimeAsync(REMINT_MS + POLL_MS);
+    statusMock.mockResolvedValue(CLAIMED);
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    await settled;
+
+    expect(printed(ctx)).toContain("KLMNP-QRSTV");
+  });
+
+  it("exits unreachable rather than watching a dead code when the service is down", async () => {
+    statusMock.mockResolvedValue({ kind: "network-error" });
+    mintMock
+      .mockResolvedValueOnce(mintedCode("ABCDE-FGHJK"))
+      .mockResolvedValue({ kind: "network-error" });
+
+    const settled = Promise.allSettled([
+      runLinkPhoneFlow(interactiveCtx(), { showQr: true }),
+    ]);
+    await vi.advanceTimersByTimeAsync(REMINT_MS + POLL_MS);
+    const [result] = await settled;
+
+    expect(result.status).toBe("rejected");
+    const error = result.status === "rejected" ? result.reason : null;
+    expect(error).toBeInstanceOf(CliError);
+    expect(error instanceof CliError ? error.exitCode : 0).toBe(2);
+    expect(error instanceof CliError ? error.message : "").toContain(
+      "Could not reach the authn service",
+    );
+  });
+
+  it("keeps the displayed code when rotation is refused by a claim that just landed", async () => {
+    // The claim arrives between a poll and the rotation moment, so the server
+    // refuses to mint over it. That is the flow succeeding, not failing: the
+    // original code must stay watched and reach the prompt.
+    mintMock
+      .mockResolvedValueOnce(mintedCode("ABCDE-FGHJK"))
+      .mockResolvedValue({ kind: "claim-pending" });
+    answer.current = "y";
+    const ctx = interactiveCtx();
+
+    const settled = Promise.allSettled([
+      runLinkPhoneFlow(ctx, { showQr: true }),
+    ]);
+    await vi.advanceTimersByTimeAsync(REMINT_MS + POLL_MS);
+    statusMock.mockResolvedValue(CLAIMED);
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    const [result] = await settled;
+
+    expect(respondMock).toHaveBeenCalledWith(
+      expect.any(String),
+      "bearer-1",
+      "ABCDE-FGHJK",
+      true,
+    );
+    expect(result.status === "fulfilled" ? result.value : null).toMatchObject({
+      decision: "approved",
+    });
+  });
+
   it("refuses to run where no human can answer", async () => {
     const ctx = makeCtx({ json: true, quiet: false, nonInteractive: false });
 

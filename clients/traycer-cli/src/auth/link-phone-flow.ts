@@ -254,12 +254,20 @@ async function watchUntilClaimed(
 }> {
   const { authnBaseUrl } = config;
 
-  const mintAndPrint = async (): Promise<WatchedCode> => {
+  // `claim-pending` is returned rather than fatal: at ROTATION time it means a
+  // phone claimed the code on screen since the last poll and the server refuses
+  // to rotate over a live claim - which is success, not failure. The first mint
+  // has no such code to fall back on, so the caller below still treats it as
+  // terminal there.
+  const mintAndPrint = async (): Promise<WatchedCode | "claim-pending"> => {
     const outcome = await mintLinkLoginCodeViaHttp(
       authnBaseUrl,
       bearerToken,
       null,
     );
+    if (outcome.kind === "claim-pending") {
+      return "claim-pending";
+    }
     if (outcome.kind !== "ok") {
       mintFailure(outcome);
     }
@@ -270,7 +278,11 @@ async function watchUntilClaimed(
     };
   };
 
-  let watched = await mintAndPrint();
+  const first = await mintAndPrint();
+  if (first === "claim-pending") {
+    mintFailure({ kind: "claim-pending" });
+  }
+  let watched: WatchedCode = first;
   let stopCountdown = quiet
     ? () => {}
     : startExpiryCountdown(watched.minted.expires_at);
@@ -278,6 +290,27 @@ async function watchUntilClaimed(
   try {
     for (;;) {
       await sleep(LINK_PHONE_POLL_INTERVAL_MS);
+
+      // Rotation runs BEFORE the status call, so a status outage cannot park a
+      // dead QR on screen: an unreachable service fails the mint instead and
+      // exits, while a status-only outage still reprints a live code. Leaving
+      // it after the call meant a `network-error` skipped it entirely.
+      if (Date.now() >= watched.rotateAtMs) {
+        stopCountdown();
+        const next = await mintAndPrint();
+        // Refused because the displayed code was claimed between the last poll
+        // and now. Keep it on screen; the poll just below surfaces the claim.
+        watched =
+          next === "claim-pending"
+            ? {
+                minted: watched.minted,
+                rotateAtMs: Date.now() + LINK_PHONE_POLL_INTERVAL_MS,
+              }
+            : next;
+        stopCountdown = quiet
+          ? () => {}
+          : startExpiryCountdown(watched.minted.expires_at);
+      }
 
       const status = await linkLoginStatusViaHttp(
         authnBaseUrl,
@@ -309,8 +342,8 @@ async function watchUntilClaimed(
         });
       }
       if (status.kind === "network-error") {
-        // Transient: keep watching. The rotation check below still bounds how
-        // long a dead code can stay on screen.
+        // Transient: keep watching. The rotation check at the top of the loop
+        // bounds how long an unclaimable code can stay on screen.
         continue;
       }
 
@@ -326,14 +359,6 @@ async function watchUntilClaimed(
           details: null,
           exitCode: 1,
         });
-      }
-
-      if (Date.now() >= watched.rotateAtMs) {
-        stopCountdown();
-        watched = await mintAndPrint();
-        stopCountdown = quiet
-          ? () => {}
-          : startExpiryCountdown(watched.minted.expires_at);
       }
     }
   } finally {

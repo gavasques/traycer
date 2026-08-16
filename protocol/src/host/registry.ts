@@ -576,13 +576,12 @@ import {
   providersEnsurePackRequestSchema,
   providersEnsurePackResponseSchema,
   // The canonical `providersListRequestSchema` / `providersListResponseSchema`
-  // are imported for the HEAD line (v8.0) alone. Every line below it names its
+  // are imported for the HEAD line (v7.0) alone. Every line below it names its
   // own hand-frozen shape, so the only contract that can move when the live
   // shape grows is the one that is supposed to.
   providersListRequestSchema,
   providersListResponseSchema,
   providersListRequestSchemaBeforeV70,
-  providersListRequestSchemaV70,
   providersListResponseSchemaV10,
   providersListResponseSchemaV20,
   providersListResponseSchemaV30,
@@ -597,7 +596,6 @@ import {
   providersAwaitModelProviderAuthResponseSchema,
   providersCancelModelProviderAuthRequestSchema,
   providersCancelModelProviderAuthResponseSchema,
-  providersListResponseSchemaV70,
   downgradeProviderCliStateToV10,
   downgradeProviderCliStateListToV20,
   downgradeProviderCliStateListToV30,
@@ -605,7 +603,6 @@ import {
   downgradeProviderCliStateListToV40,
   downgradeProviderCliStateListToV50,
   downgradeProviderCliStateListToV60,
-  downgradeProviderCliStateListToV70,
   providersInstallPackVersionRequestSchema,
   providersInstallPackVersionResponseSchema,
   providersRemovePackVersionRequestSchema,
@@ -650,8 +647,7 @@ import {
   providersSetTerminalAgentArgsResponseSchemaV20,
   type DowngradableToV10ProviderState,
   type ProviderCliState,
-  type ProviderManagedInstallState,
-  type ProviderManagedInstallStateV70,
+
   type ProviderCliStateV10,
   type ProviderMutationCliStateV20,
   type ProviderLoginCapability,
@@ -1315,49 +1311,6 @@ function upgradeLoginCapabilityFromV40(
     ? null
     : { ...loginCapability, terminalLogin: null };
 }
-// Lifts a frozen v7.0-shaped `managedInstallState` onto the live union, which
-// v8.0 grew with a `version` on every arm but `absent`.
-//
-// Written as an exhaustive switch rather than a spread-with-default
-// (`{ ...state, version: null }`) on purpose. A spread would compile, and it
-// would ALSO silently attach a `version` key to the `absent` arm - the one arm
-// that deliberately has none - producing a value no consumer expects and that
-// the live schema would strip on any re-parse, making the discrepancy visible
-// only intermittently. The switch makes the arm-by-arm decision explicit and
-// makes a future fifth arm a compile error here instead of a silent
-// pass-through.
-//
-// `version: null` is the honest fill for the three arms that do take one: a
-// v7.0 host predates per-version tracking entirely, so it is not that the
-// version is unknown-but-existing, it is that the concept was not on that
-// wire. Same "old host never had this feature" projection as `profiles: []`
-// on the v3->v4 hop.
-function upgradeManagedInstallStateFromV70(
-  state: ProviderManagedInstallStateV70 | null,
-): ProviderManagedInstallState | null {
-  if (state === null) return null;
-  switch (state.status) {
-    case "absent":
-      return { status: "absent" };
-    case "downloading":
-      return {
-        status: "downloading",
-        percent: state.percent,
-        version: null,
-      };
-    case "installed":
-      return { status: "installed", version: null };
-    case "error":
-      return {
-        status: "error",
-        reason: state.reason,
-        message: state.message,
-        retryAtMs: state.retryAtMs,
-        version: null,
-      };
-  }
-}
-
 function downgradeProviderRequestForV10<T>(
   schema: {
     safeParse: (
@@ -1591,247 +1544,42 @@ export const providersListV60 = defineRpcContract({
   responseSchema: providersListResponseSchemaV60,
 });
 
+// v7.0 is the head line, and it carries the per-pack managed-version manager:
+// `packId`, `managedVersions`, `managedVersionsUnavailable`, `nextRunBinary`,
+// and a `version` on `managedInstallState`'s non-`absent` arms. Those fields
+// opened a v8.0 while v7.0 was still unreleased; both lines were tree-only, so
+// the release collapsed them back into one rather than negotiating a major that
+// no peer had ever seen. The v8.0 line's schemas, bridges and tests are what
+// this line now is - only its number changed.
+//
+// This line points at the CANONICAL schemas, which is what "head" means here:
+// exactly one line tracks live at any time, and an UNRELEASED line widens in
+// place instead of minting a new major for every field (see
+// `providersSetEnabledRequestSchemaV21`). The defect the v4.0/v5.0/v6.0 freezes
+// fixed was never "a line points at live", it was "a line that has STOPPED
+// being the head still points at live".
+//
+// So the rule to carry forward is unchanged: FREEZE LINE N WHEN LINE N+1 OPENS,
+// or before N ships, whichever comes first. The pre-ship half of that is
+// mechanized - `__tests__/__fixtures__/frozen-catalog-lines.ts` pins this
+// line's ENTIRE serialized shape, so any growth of the live schemas (or of any
+// sub-schema they reach) fails `frozen-catalog-lines.test.ts` in a plain
+// `bun run test`, with no tags to resolve. When it fails, do not regenerate to
+// green: hand-freeze this line (`providersListRequestSchemaV80` /
+// `providersListResponseSchemaV80` + `providerCliStateBaseShapeV80` + a
+// `providerIdSchemaV80`), open v8.0 against the live shape, and only then let
+// the new field land.
+//
+// The `providersList*SchemaV70` exports are NOT that freeze. They are the
+// pre-image this line had before the version-manager fields arrived; no peer
+// ever negotiated it, so no contract binds them any more. They survive as the
+// shared "v7-era" shape that the provider compat suites and
+// `rate-limit/schemas.ts` still parse through.
 export const providersListV70 = defineRpcContract({
   method: "providers.list",
   schemaVersion: { major: 7, minor: 0 } as const,
-  // Frozen on BOTH sides, and - unlike every line above it - frozen while it is
-  // still the head line rather than after a tag caught the drift. v4.0/v5.0/v6.0
-  // were each re-pointed at a hand-frozen shape only once a release proved that
-  // fields had already ridden them (`native` on the requests, the provider-pack-
-  // registry fields on the responses). Pointing v7.0 at the canonical schemas
-  // was that same arrangement, one line later, with the next batch of fields
-  // already designed; these pins land first so growing the live shape cannot
-  // reach this contract.
-  //
-  // A field belonging to the next line goes on the live
-  // `providerCliStateBaseShape` and opens v8.0 with a v8->v7 strip bridge - it
-  // does NOT go in `providersList*SchemaV70`.
-  requestSchema: providersListRequestSchemaV70,
-  responseSchema: providersListResponseSchemaV70,
-});
-
-// v8.0 adds the per-pack managed-version manager: `packId`, `managedVersions`,
-// `nextRunBinary`, and a `version` on `managedInstallState`'s non-`absent`
-// arms. A genuine major rather than a minor - v7.0's response is frozen and
-// models none of them, so growing it would be the exact breaking change
-// `assertSchemaCompatibility` exists to reject.
-//
-// This line points at the CANONICAL schemas, and that is correct rather than a
-// relapse into what the v7.0 freeze just undid. Exactly one line - the head -
-// tracks live at any time; that is what "head" means, and this repo's own
-// convention is that an UNRELEASED line widens in place instead of minting a
-// new one for every field (see `providersSetEnabledRequestSchemaV21`). The
-// defect the freeze fixed was never "a line points at live", it was "a line
-// that has STOPPED being the head still points at live". So the rule to carry
-// forward is: FREEZE LINE N WHEN LINE N+1 OPENS, or before N ships, whichever
-// comes first. v7.0 was frozen the moment this line opened, which is why it
-// cost nothing; v5.0 and v6.0 were frozen after a tag caught them, which is
-// why those cost a compat scramble.
-//
-// Concretely, whoever opens v9.0: hand-freeze this line first
-// (`providersListRequestSchemaV80` / `providersListResponseSchemaV80` +
-// `providerCliStateBaseShapeV80` + a `providerIdSchemaV80`), register it in
-// `__tests__/__fixtures__/frozen-catalog-lines.ts`, and only then grow the
-// live shape.
-export const providersListV80 = defineRpcContract({
-  method: "providers.list",
-  schemaVersion: { major: 8, minor: 0 } as const,
-  // Unchanged from v7.0 - v8.0 adds no request field. Pointed at the canonical
-  // request rather than reusing `providersListRequestSchemaV70`, so that a
-  // future request field lands on the head line and not on the frozen one.
   requestSchema: providersListRequestSchema,
   responseSchema: providersListResponseSchema,
-});
-
-export const providersListUpgradeV7ToV8 = defineUpgradePath<
-  typeof providersListV70,
-  typeof providersListV80
->({
-  from: { major: 7, minor: 0 },
-  to: { major: 8, minor: 0 },
-  // The request shape is identical, so the request upgrade is identity - the
-  // first `providers.list` major since v2->v3 for which that is true.
-  //
-  // The response fills the four v8.0 fields with "this host never had the
-  // feature", the same honest projection every upgrade in this file applies:
-  // a v7.0 host predates the version manager, so it has no pack identity to
-  // report (`packId: null`), no version list (`managedVersions: null`), and no
-  // next-run simulation (`nextRunBinary: null`).
-  //
-  // `managedInstallState` needs a REAL transform rather than a pass-through,
-  // and it is the one place this bridge can silently go wrong. A v7.0 state's
-  // arms carry no `version`, but the live arms require the key (nullable, not
-  // optional), so a pass-through produces an object the live schema rejects -
-  // and `upgradeResponseToVersion` chains these callbacks BY CAST with no
-  // re-parse, so the breakage would not surface here. It would surface as a
-  // failed decode much later, on whatever consumer first parsed the result.
-  upgradeRequest: (request) => request,
-  upgradeResponse: (response) => ({
-    providers: response.providers.map((provider) => ({
-      ...provider,
-      packId: null,
-      managedVersions: null,
-      nextRunBinary: null,
-      managedInstallState: upgradeManagedInstallStateFromV70(
-        provider.managedInstallState ?? null,
-      ),
-      // The frozen v7.0 capability descriptor predates `modelProviders`; the
-      // live shape requires the key, so the same honest fill applies.
-      nativeCapabilities: {
-        ...provider.nativeCapabilities,
-        modelProviders: null,
-      },
-    })),
-    native: response.native,
-  }),
-});
-
-export const providersListDowngradeV8ToV7 = defineDowngradePath<
-  typeof providersListV80,
-  typeof providersListV70
->({
-  from: { major: 8, minor: 0 },
-  to: { major: 7, minor: 0 },
-  // The request is identical on both lines, so this is a straight pass-through
-  // - not a re-parse. Every OTHER downgrade in this method re-parses the
-  // request through `providersListRequestSchemaBeforeV70` because it has a
-  // field (`native`) to strip; there is nothing to strip here.
-  downgradeRequest: (request) => ({ ok: true, value: request }),
-  // Drops the four v8.0 fields and no providers - v8.0 adds no provider ids.
-  // The strip is done by reparsing through the frozen v7.0 schema, which keeps
-  // only the keys it models; see `downgradeProviderCliStateListToV70`.
-  downgradeResponse: (response) => ({
-    ok: true,
-    value: providersListResponseSchemaV70.parse({
-      providers: downgradeProviderCliStateListToV70(response.providers),
-      native: response.native,
-    }),
-  }),
-});
-
-// v8.0 -> the pre-v7.0 lines. Each mirrors its v7.0 counterpart exactly,
-// including the request re-parse that keeps `native` off a peer whose schema
-// does not model it. They are separate paths rather than a chain because
-// `downgradePathsFromLatest` is keyed by target major and the framework
-// applies ONE hop, not a sequence.
-export const providersListDowngradeV8ToV6 = defineDowngradePath<
-  typeof providersListV80,
-  typeof providersListV60
->({
-  from: { major: 8, minor: 0 },
-  to: { major: 6, minor: 0 },
-  downgradeRequest: (request) => ({
-    ok: true,
-    value: providersListRequestSchemaBeforeV70.parse({
-      forceAuthRefresh: request.forceAuthRefresh,
-    }),
-  }),
-  downgradeResponse: (response) => ({
-    ok: true,
-    value: providersListResponseSchemaV60.parse({
-      providers: downgradeProviderCliStateListToV60(response.providers),
-    }),
-  }),
-});
-
-export const providersListDowngradeV8ToV5 = defineDowngradePath<
-  typeof providersListV80,
-  typeof providersListV50
->({
-  from: { major: 8, minor: 0 },
-  to: { major: 5, minor: 0 },
-  downgradeRequest: (request) => ({
-    ok: true,
-    value: providersListRequestSchemaBeforeV70.parse({
-      forceAuthRefresh: request.forceAuthRefresh,
-    }),
-  }),
-  downgradeResponse: (response) => ({
-    ok: true,
-    value: providersListResponseSchemaV50.parse({
-      providers: downgradeProviderCliStateListToV50(response.providers),
-    }),
-  }),
-});
-
-export const providersListDowngradeV8ToV4 = defineDowngradePath<
-  typeof providersListV80,
-  typeof providersListV40
->({
-  from: { major: 8, minor: 0 },
-  to: { major: 4, minor: 0 },
-  downgradeRequest: (request) => ({
-    ok: true,
-    value: providersListRequestSchemaBeforeV70.parse({
-      forceAuthRefresh: request.forceAuthRefresh,
-    }),
-  }),
-  downgradeResponse: (response) => ({
-    ok: true,
-    value: providersListResponseSchemaV40.parse({
-      providers: downgradeProviderCliStateListToV40(response.providers),
-    }),
-  }),
-});
-
-export const providersListDowngradeV8ToV3 = defineDowngradePath<
-  typeof providersListV80,
-  typeof providersListV30
->({
-  from: { major: 8, minor: 0 },
-  to: { major: 3, minor: 0 },
-  downgradeRequest: (request) => ({
-    ok: true,
-    value: providersListRequestSchemaBeforeV70.parse({
-      forceAuthRefresh: request.forceAuthRefresh,
-    }),
-  }),
-  downgradeResponse: (response) => ({
-    ok: true,
-    value: providersListResponseSchemaV30.parse({
-      providers: downgradeProviderCliStateListToV30(response.providers),
-    }),
-  }),
-});
-
-export const providersListDowngradeV8ToV2 = defineDowngradePath<
-  typeof providersListV80,
-  typeof providersListV20
->({
-  from: { major: 8, minor: 0 },
-  to: { major: 2, minor: 0 },
-  downgradeRequest: (request) => ({
-    ok: true,
-    value: providersListRequestSchemaBeforeV70.parse({
-      forceAuthRefresh: request.forceAuthRefresh,
-    }),
-  }),
-  downgradeResponse: (response) => ({
-    ok: true,
-    value: providersListResponseSchemaV20.parse({
-      providers: downgradeProviderCliStateListToV20(response.providers),
-    }),
-  }),
-});
-
-export const providersListDowngradeV8ToV1 = defineDowngradePath<
-  typeof providersListV80,
-  typeof providersListV10
->({
-  from: { major: 8, minor: 0 },
-  to: { major: 1, minor: 0 },
-  downgradeRequest: (request) => ({
-    ok: true,
-    value: providersListRequestSchemaBeforeV70.parse({
-      forceAuthRefresh: request.forceAuthRefresh,
-    }),
-  }),
-  downgradeResponse: (response) => ({
-    ok: true,
-    value: providersListResponseSchemaV10.parse({
-      providers: downgradeProviderStateListForV10(response.providers),
-    }),
-  }),
 });
 
 export const providersListUpgradeV5ToV6 = defineUpgradePath<
@@ -1865,10 +1613,15 @@ export const providersListUpgradeV6ToV7 = defineUpgradePath<
   // The fill's home for the registry fields, `native`, and per-provider
   // `nativeCapabilities` alike, moved up one line for the same reason the
   // registry fields moved from v3->v4 to v5->v6 before: this is now the first
-  // bridge whose TARGET schema (`providersListResponseSchemaV70`) actually
-  // models them. That target is a FROZEN schema as of the v7.0 freeze, so this
-  // is where the fill stops moving - the next line's bridge (v7->v8) will not
-  // inherit it, because v7.0 now models these fields permanently.
+  // bridge whose TARGET schema actually models them. It is also the LAST hop,
+  // so the fill stops moving here.
+  //
+  // It absorbed a second fill when v8.0 collapsed into v7.0. That hop's job -
+  // the version-manager fields and `modelProviders` - is now the second half of
+  // `upgradeResponse` below, applied AFTER the v7-era projection rather than
+  // instead of it, so the composition a v6 -> v7 -> v8 chain used to perform
+  // survives verbatim in one hop. Deleting a version is never just deleting its
+  // contract: whatever its bridge did has to land on the surviving hop.
   //
   // A v6.0 host either predates the registry and the native surface or never
   // reported them on this line, so "no managed packs / served no native
@@ -1888,10 +1641,32 @@ export const providersListUpgradeV6ToV7 = defineUpgradePath<
   // native query"). This fill used to sit on the v3.0 -> v4.0 hop, back when
   // v4.0/v5.0/v6.0 were still pinned to the live request schema.
   upgradeRequest: (request) => ({ ...request, native: null }),
-  // The target is the FROZEN v7.0 shape, so the capability fill lands there
-  // (`upgradeProviderCliStateListToV70`) rather than on the live one. A bridge
-  // aims at a LINE, never at "latest" - the two agree today, and the day they
-  // stop, a hop pointed at the live shape starts labelling it "v7.0".
+  // Two passes, in order, and the order is load-bearing.
+  //
+  // `upgradeProviderCliStateListToV70` first: it re-parses each row through the
+  // v7-era shape, which is what normalizes a v6.0 row (dropping what v6.0 alone
+  // carried, applying the `.catch()` defaults) before anything is added on top.
+  // Running the version-manager fill first and this second would strip the very
+  // keys the fill just added, because that re-parse keeps only what its own
+  // schema models.
+  //
+  // Then the fields v8.0 introduced, filled with "this host never had the
+  // feature" - the same honest projection every upgrade in this file applies. A
+  // v6.0 host predates the version manager, so it has no pack identity to
+  // report (`packId: null`), no version list (`managedVersions: null`) and no
+  // next-run simulation (`nextRunBinary: null`).
+  //
+  // `managedInstallState` is filled `null` rather than lifted arm by arm, and
+  // that is a REDUCTION the collapse earned rather than a shortcut. While v8.0
+  // existed, its bridge's source was a v7.0 peer whose state could carry a
+  // populated (version-less) arm, so it had to map each arm onto the live one -
+  // the live arms require `version` (nullable, not optional) and
+  // `upgradeResponseToVersion` chains these callbacks BY CAST with no re-parse,
+  // so a pass-through would surface as a failed decode on some later consumer
+  // rather than here. With v8.0 collapsed away, v6.0 is the only source this
+  // hop ever has, and `PROVIDER_LIVE_FIELDS_PRE_REGISTRY` nulls the slot
+  // unconditionally (it spreads AFTER the row), so no arm can reach this point.
+  // The unconditional `null` is what that mapping already evaluated to.
   upgradeResponse: (response) => ({
     providers: upgradeProviderCliStateListToV70(
       response.providers.map((provider) => ({
@@ -1901,7 +1676,19 @@ export const providersListUpgradeV6ToV7 = defineUpgradePath<
           provider.loginCapability,
         ),
       })),
-    ),
+    ).map((provider) => ({
+      ...provider,
+      packId: null,
+      managedVersions: null,
+      nextRunBinary: null,
+      managedInstallState: null,
+      // The v7-era capability descriptor predates `modelProviders`; the live
+      // shape requires the key, so the same honest fill applies.
+      nativeCapabilities: {
+        ...provider.nativeCapabilities,
+        modelProviders: null,
+      },
+    })),
     native: null,
   }),
 });
@@ -6942,6 +6729,10 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
           upgradeFromPreviousVersion: providersListUpgradeV6ToV7,
         },
       },
+      // Every older major needs its own entry: `downgradePathsFromLatest` is
+      // keyed by TARGET major and the framework applies exactly one hop, so a
+      // missing key is not a slower path, it is an unbridgeable peer.
+      // `two-sided-release-invariant.test.ts` is what catches an omission.
       downgradePathsFromLatest: {
         1: providersListDowngradeV7ToV1,
         2: providersListDowngradeV7ToV2,
@@ -6949,28 +6740,6 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
         4: providersListDowngradeV7ToV4,
         5: providersListDowngradeV7ToV5,
         6: providersListDowngradeV7ToV6,
-      },
-    },
-    8: {
-      latestMinor: 0,
-      versions: {
-        0: {
-          contract: providersListV80,
-          upgradeFromPreviousVersion: providersListUpgradeV7ToV8,
-        },
-      },
-      // Every older major needs its own entry: `downgradePathsFromLatest` is
-      // keyed by TARGET major and the framework applies exactly one hop, so a
-      // missing key is not a slower path, it is an unbridgeable peer.
-      // `two-sided-release-invariant.test.ts` is what catches an omission.
-      downgradePathsFromLatest: {
-        1: providersListDowngradeV8ToV1,
-        2: providersListDowngradeV8ToV2,
-        3: providersListDowngradeV8ToV3,
-        4: providersListDowngradeV8ToV4,
-        5: providersListDowngradeV8ToV5,
-        6: providersListDowngradeV8ToV6,
-        7: providersListDowngradeV8ToV7,
       },
     },
   },

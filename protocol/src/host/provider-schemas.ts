@@ -36,7 +36,6 @@ import {
   nativeListResultSchemaV70,
   nativeMutationResultSchema,
   nativeMutationSchema,
-  projectNativeCapabilitiesToV70,
   providerNativeCapabilitiesSchema,
   providerNativeCapabilitiesSchemaV70,
   type ModelProviderAuthAction,
@@ -3284,45 +3283,6 @@ export function downgradeProviderCliStateListToV60(
 ): ProviderCliStateV60[] {
   return states.flatMap((state) => {
     const parsed = providerCliStateSchemaV60.safeParse(state);
-    return parsed.success ? [parsed.data] : [];
-  });
-}
-
-/**
- * Strip the v8.0 managed-version fields (`packId`, `managedVersions`,
- * `nextRunBinary`, and the `version` that v8.0 added to `managedInstallState`'s
- * arms) for a v7.0 peer. Same filter-by-reparse shape as every bridge above,
- * with one difference worth naming: this is the FIRST of these bridges that
- * strips only FIELDS and drops no providers, because v8.0 adds no provider ids
- * - so an empty result here means something is wrong, where in the older
- * bridges it is routine.
- *
- * The strip is a property of `providerCliStateSchemaV70` being a hand-frozen
- * shape rather than of anything written here: a plain (non-strict) `z.object`
- * keeps only what it models, and the frozen v7.0 shape models none of the
- * four. That is exactly why the freeze had to land before these fields did -
- * had v7.0 still pointed at the live schema, this function would be an
- * identity that silently published all four to v7.0 peers.
- */
-export function downgradeProviderCliStateListToV70(
-  states: readonly unknown[],
-): ProviderCliStateV70[] {
-  return states.flatMap((state) => {
-    // A live-shaped row carries a capability descriptor the frozen v7.0
-    // schema cannot reparse - `supportedTabs` may hold members the frozen
-    // enum rejects WHOLE, and the state's `.catch()` would then serve the
-    // empty default, wiping MCP/Plugins/Skills for the peer. Project the
-    // descriptor first; rows that are not live-shaped parse as-is.
-    const live = providerCliStateSchema.safeParse(state);
-    const candidate = live.success
-      ? {
-          ...live.data,
-          nativeCapabilities: projectNativeCapabilitiesToV70(
-            live.data.nativeCapabilities,
-          ),
-        }
-      : state;
-    const parsed = providerCliStateSchemaV70.safeParse(candidate);
     return parsed.success ? [parsed.data] : [];
   });
 }

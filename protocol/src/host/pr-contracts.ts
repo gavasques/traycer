@@ -9,10 +9,7 @@
  * these methods simply doesn't advertise them). The unaries must each
  * declare `degrade` and stay out of the floor - see their notes.
  */
-import {
-  defineRpcContract,
-  defineUpgradePath,
-} from "@traycer/protocol/framework/index";
+import { defineRpcContract } from "@traycer/protocol/framework/index";
 import { defineStreamRpcContract } from "@traycer/protocol/framework/versioned-stream-rpc";
 import {
   prSubscribeListForEpicOpenRequestSchema,
@@ -23,9 +20,7 @@ import {
   prGetLocalDiffRequestSchema,
   prGetLocalDiffResponseSchema,
   prGetLocalDiffSummaryRequestSchema,
-  prGetLocalDiffSummaryResponseSchema,
   prGetLocalDiffSummaryResponseV11Schema,
-  prGetLocalFileDiffRequestSchema,
   prGetLocalFileDiffRequestV11Schema,
   prGetLocalFileDiffResponseSchema,
 } from "./pr-schemas";
@@ -130,4 +125,3 @@ export const prGetLocalFileDiffV10 = defineRpcContract({
   requestSchema: prGetLocalFileDiffRequestV11Schema,
   responseSchema: prGetLocalFileDiffResponseSchema,
 });
-

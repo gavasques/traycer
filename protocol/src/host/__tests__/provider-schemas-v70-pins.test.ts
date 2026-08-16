@@ -22,20 +22,28 @@ import {
 } from "@traycer/protocol/host/provider-schemas";
 
 /**
- * Pins the `providers.list@7.0` freeze (the v7.0 line's wire shapes were
- * hand-copied off the live schemas instead of aliased to them - see the
- * freeze comment on `providerCliStateBaseShapeV70` in `provider-schemas.ts`).
- * Before this freeze, `providersListV70` in `registry.ts` pointed at the
- * live/canonical `providersListRequestSchema` / `providersListResponseSchema`,
- * so the next field added to the canonical shape would silently ride the
- * already-negotiable v7.0 contract - exactly the defect that made v5.0
- * (`omp`) and v6.0 (the provider-pack-registry fields) require a RETROACTIVE
- * freeze after a release tag caught the leak. v7.0 is frozen before it ships,
- * so the next batch of fields (`packId`, `managedVersions`, `nextRunBinary`, a
- * `version` on `managedInstallState`) must open v8.0 instead.
+ * Pins the `providersList*SchemaV70` family - the v7-era wire shapes, hand-
+ * copied off the live schemas instead of aliased to them (see the freeze
+ * comment on `providerCliStateBaseShapeV70` in `provider-schemas.ts`).
  *
- * A freeze with no test is not a freeze: every test below fails if the source
- * regresses to pointing v7.0 at a live schema/enum/union again.
+ * These shapes BACK NO CONTRACT any more, and that is worth stating plainly
+ * because the file reads as if they do. They were frozen when the version-
+ * manager fields opened a v8.0 above an unreleased v7.0, so that growing the
+ * live shape could not reach the v7.0 contract. The release collapsed those
+ * two tree-only majors back into one: v7.0 is the head again and points at the
+ * canonical schemas, and the pre-image these exports capture was negotiated by
+ * no peer, ever.
+ *
+ * What still makes them worth pinning is that the provider compat suites and
+ * `rate-limit/schemas.ts` parse through them as the shared "v7-era" shape, and
+ * several of them (`providerCliStateBaseShapeV70`) still reference live sub-
+ * schemas. A pin is what stops live growth from silently redefining what those
+ * callers assert.
+ *
+ * The PRE-SHIP freeze this file used to provide for v7.0 now lives in
+ * `__tests__/__fixtures__/frozen-catalog-lines.ts`, which dumps the live shape
+ * deeply under the `providers.list@7.0` key: any growth of the head line goes
+ * red there and forces v8.0 to be opened for real.
  */
 
 function providerState(providerId: string) {
@@ -150,9 +158,9 @@ describe("providers.list@7.0 key-set pin (literal, not derived)", () => {
   });
 });
 
-// ── 2. v7.0 is decoupled from the canonical schema ──────────────────────────
+// ── 2. the v7-era pins are distinct objects from the canonical schema ───────
 
-describe("v7.0 schemas are distinct objects from the canonical live schemas", () => {
+describe("the v7-era schemas are distinct objects from the canonical live ones", () => {
   it("providersListRequestSchemaV70 / ResponseSchemaV70 are not the canonical exports", () => {
     expect(providersListRequestSchemaV70).not.toBe(providersListRequestSchema);
     expect(providersListResponseSchemaV70).not.toBe(
@@ -160,12 +168,19 @@ describe("v7.0 schemas are distinct objects from the canonical live schemas", ()
     );
   });
 
-  it("the registered v7.0 RPC contract names the frozen schemas, not the canonical ones", () => {
+  it("the registered v7.0 RPC contract names the canonical schemas, being the head", () => {
+    // The inverse of what this test asserted while a v8.0 sat above v7.0.
+    // Collapsing that unreleased major made v7.0 the head again, and the head
+    // is the one line that tracks live - so the v7-era pins below back no
+    // contract at all. Stated as an assertion rather than left implicit,
+    // because "a line that has STOPPED being the head still points at live" is
+    // the actual defect the freeze rule exists to catch, and telling the two
+    // apart is the whole judgement.
     const contract = hostRpcRegistry["providers.list"][7].versions[0].contract;
-    expect(contract.requestSchema).toBe(providersListRequestSchemaV70);
-    expect(contract.responseSchema).toBe(providersListResponseSchemaV70);
-    expect(contract.requestSchema).not.toBe(providersListRequestSchema);
-    expect(contract.responseSchema).not.toBe(providersListResponseSchema);
+    expect(contract.requestSchema).toBe(providersListRequestSchema);
+    expect(contract.responseSchema).toBe(providersListResponseSchema);
+    expect(contract.requestSchema).not.toBe(providersListRequestSchemaV70);
+    expect(contract.responseSchema).not.toBe(providersListResponseSchemaV70);
   });
 
   it("providerIdSchemaV70 includes huggingface, the sole v7.0-only provider id", () => {
@@ -174,9 +189,9 @@ describe("v7.0 schemas are distinct objects from the canonical live schemas", ()
 
   // The LIVE side had no guard. `EXPECTED_PROVIDER_ID_V70_OPTIONS` pins the
   // frozen enum, so a stray id joining THAT is caught - but a 20th id joining
-  // the live enum failed nothing, and `downgradeProviderCliStateListToV70`
-  // simply drops the row: the provider disappears from a v7.0 peer's list with
-  // no signal anywhere.
+  // the live enum failed nothing, and the v7-era reparse simply drops the row,
+  // so a provider disappears from anything reading through this shape with no
+  // signal anywhere.
   //
   // Dropping may well be the right answer for a provider a v7.0 client cannot
   // represent. The point is that it must be a DECISION. Adding a harness now
@@ -417,7 +432,7 @@ describe("downgrade bridges v7.0 -> v6.0..v1.0 still work through the real regis
         hostRpcRegistry["providers.list"],
         7,
         target,
-        providersListResponseSchemaV70.parse({
+        providersListResponseSchema.parse({
           providers: [state],
           native: null,
         }),
@@ -454,7 +469,7 @@ describe("downgrade bridges v7.0 -> v6.0..v1.0 still work through the real regis
         hostRpcRegistry["providers.list"],
         7,
         target,
-        providersListResponseSchemaV70.parse({
+        providersListResponseSchema.parse({
           providers: [huggingfaceState],
           native: null,
         }),

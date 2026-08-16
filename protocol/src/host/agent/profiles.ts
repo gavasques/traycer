@@ -32,7 +32,6 @@ import {
   providerRateLimitsSchemaV40,
   providerRateLimitsSchemaV50,
   providerRateLimitsSchemaV60,
-  providerRateLimitsSchemaV70,
 } from "@traycer/protocol/host/rate-limit/schemas";
 import {
   agentFacingHarnessIdSchema,

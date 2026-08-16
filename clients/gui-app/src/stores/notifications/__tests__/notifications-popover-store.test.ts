@@ -38,13 +38,18 @@ describe("notifications popover store filter persistence", () => {
     const raw = window.localStorage.getItem(PERSIST_KEY);
     expect(raw).not.toBeNull();
     const parsed: unknown = JSON.parse(raw ?? "");
-    expect(parsed).toMatchObject({
-      state: {
-        unreadOnly: true,
-        categories: expect.arrayContaining(["task", "system"]),
-      },
-    });
-    expect(parsed).not.toMatchObject({ state: { open: expect.anything() } });
+    if (parsed === null || typeof parsed !== "object" || !("state" in parsed)) {
+      throw new Error("persisted record is malformed");
+    }
+    const persistedState: unknown = parsed.state;
+    if (persistedState === null || typeof persistedState !== "object") {
+      throw new Error("persisted state is malformed");
+    }
+    const stateRecord: Record<string, unknown> = { ...persistedState };
+    expect(stateRecord.unreadOnly).toBe(true);
+    expect(stateRecord.categories).toEqual(["task", "system"]);
+    // Open-cycle state must not ride the persisted record.
+    expect(stateRecord.open).toBeUndefined();
   });
 
   it("rehydrates the filters and drops unknown category names", async () => {

@@ -794,18 +794,34 @@ describe("DesktopHostFleetSource", () => {
       hosts: [],
     });
 
-    // ANTI-VACUITY ANCHOR. The negative assertions above are only meaningful
-    // if the enrollment read actually had time to complete inside `flushIo`;
-    // a read still in flight would satisfy them for the wrong reason. So
-    // drive one more local-host change - no race this time - and require the
-    // legitimate generation-1 re-read to land. If the read pipeline were
-    // slower than this test's flush, THIS assertion fails loudly instead of
-    // the ones above passing silently.
+    // ANTI-VACUITY ANCHOR, in two halves. The negative assertions above are
+    // only meaningful if the enrollment read actually had time to complete
+    // inside `flushIo`; a read still in flight would satisfy them for the
+    // wrong reason. But a signed-out read publishes NOTHING (eligibility, not
+    // just staleness, gates it - a durable local id must not repopulate a
+    // fleet `refresh` has declared empty), so "nothing was published" cannot
+    // by itself prove the pipeline ran.
+    //
+    // Half 1: SIGN IN, then drive a local-host change. The read must land and
+    // publish the id - this is what proves the pipeline completes inside the
+    // flush window, so the silence above was a decision and not a delay.
+    authSession.set(signedInSnapshot("user-b", "token-b"));
     host.emitChange();
     await flushIo();
     expect(fleet.snapshot()).toMatchObject({
       identityGeneration: 1,
       localHostId: "local-a",
+    });
+
+    // Half 2: SIGN OUT again and drive another change. The id is RETRACTED,
+    // not retained - the same rule `refresh`'s signed-out branch applies.
+    authSession.set({ status: "signed-out", token: null, profile: null });
+    host.emitChange();
+    await flushIo();
+    expect(fleet.snapshot()).toMatchObject({
+      identityGeneration: 1,
+      localHostId: null,
+      hosts: [],
     });
 
     fleet.dispose();

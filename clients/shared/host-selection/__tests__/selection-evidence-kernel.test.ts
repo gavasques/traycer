@@ -421,6 +421,177 @@ describe("SelectionEvidenceKernel - C2: only the latest attach attempt may publi
   });
 });
 
+function attachSnapshot(input: {
+  readonly revision: number;
+  readonly preferredHostId: string | null;
+  readonly targetHostId: string | null;
+  readonly effectiveHostId: string | null;
+  readonly leases: readonly HostLeaseSnapshot[];
+}): SelectionAttachResult {
+  return {
+    ok: true,
+    incarnationId: `inc-${input.revision}`,
+    snapshot: {
+      contractVersion: 1,
+      revision: input.revision,
+      preferredHostId: input.preferredHostId,
+      targetHostId: input.targetHostId,
+      effectiveHostId: input.effectiveHostId,
+      leases: input.leases,
+    },
+  };
+}
+
+describe("SelectionEvidenceKernel - closure round: per-slice snapshot merge", () => {
+  it("a lease-only replay before the pending attach resolves still gets the snapshot's selection tuple", async () => {
+    const client = new FakeAuthorityClient();
+    let resolveAttach: (result: SelectionAttachResult) => void = () => undefined;
+    client.attachImpl = () =>
+      new Promise<SelectionAttachResult>((resolve) => {
+        resolveAttach = resolve;
+      });
+    const kernel = new SelectionEvidenceKernel({ client, now: () => 0, log: silentAuthorityLog });
+
+    const startPromise = kernel.start();
+
+    // Exactly the real order: the client replays buffered events before its
+    // attach promise settles. Only leasesChanged is replayed here - the
+    // selection slice has nothing newer than the snapshot that is about to
+    // land.
+    const replayedLeases: readonly HostLeaseSnapshot[] = [
+      { hostId: "L1", status: "ready", dead: null },
+    ];
+    client.emitLeases({ revision: 6, change: replayedLeases });
+
+    resolveAttach(
+      attachSnapshot({
+        revision: 5,
+        preferredHostId: "H",
+        targetHostId: "H",
+        effectiveHostId: "H",
+        leases: [{ hostId: "L0", status: "connecting", dead: null }],
+      }),
+    );
+    await startPromise;
+
+    expect(kernel.snapshot()).toEqual({
+      attached: true,
+      preferredHostId: "H",
+      targetHostId: "H",
+      effectiveHostId: "H",
+      leases: replayedLeases,
+    });
+  });
+
+  it("a selection-only replay before the pending attach resolves still gets the snapshot's leases", async () => {
+    const client = new FakeAuthorityClient();
+    let resolveAttach: (result: SelectionAttachResult) => void = () => undefined;
+    client.attachImpl = () =>
+      new Promise<SelectionAttachResult>((resolve) => {
+        resolveAttach = resolve;
+      });
+    const kernel = new SelectionEvidenceKernel({ client, now: () => 0, log: silentAuthorityLog });
+
+    const startPromise = kernel.start();
+
+    // Mirror of the lease-only case: only selectionChanged is replayed, so
+    // the leases slice has nothing newer than the snapshot about to land.
+    client.emitSelection({
+      revision: 6,
+      change: {
+        preferredHostId: null,
+        targetHostId: "S-host",
+        effectiveHostId: "S-host",
+        previousEffectiveHostId: null,
+        cause: "failover",
+      },
+    });
+
+    const snapshotLeases: readonly HostLeaseSnapshot[] = [
+      { hostId: "H0", status: "ready", dead: null },
+    ];
+    resolveAttach(
+      attachSnapshot({
+        revision: 5,
+        preferredHostId: null,
+        targetHostId: null,
+        effectiveHostId: null,
+        leases: snapshotLeases,
+      }),
+    );
+    await startPromise;
+
+    expect(kernel.snapshot()).toEqual({
+      attached: true,
+      preferredHostId: null,
+      targetHostId: "S-host",
+      effectiveHostId: "S-host",
+      leases: snapshotLeases,
+    });
+  });
+
+  it("a re-attach's higher-revision snapshot replaces BOTH slices - no field of the outgoing identity survives", async () => {
+    const client = new FakeAuthorityClient();
+    const resolvers: Array<(result: SelectionAttachResult) => void> = [];
+    client.attachImpl = () =>
+      new Promise<SelectionAttachResult>((resolve) => {
+        resolvers.push(resolve);
+      });
+    const kernel = new SelectionEvidenceKernel({ client, now: () => 0, log: silentAuthorityLog });
+
+    const startPromise = kernel.start();
+    expect(resolvers.length).toBe(1);
+    const leasesA: readonly HostLeaseSnapshot[] = [
+      { hostId: "A-host", status: "ready", dead: null },
+    ];
+    resolvers[0](
+      attachSnapshot({
+        revision: 5,
+        preferredHostId: "A-host",
+        targetHostId: "A-host",
+        effectiveHostId: "A-host",
+        leases: leasesA,
+      }),
+    );
+    await startPromise;
+    expect(kernel.snapshot()).toEqual({
+      attached: true,
+      preferredHostId: "A-host",
+      targetHostId: "A-host",
+      effectiveHostId: "A-host",
+      leases: leasesA,
+    });
+
+    // The identity transition: the client rotates to a fresh generation and
+    // the kernel re-attaches with a strictly higher-revision snapshot
+    // carrying account B's state.
+    client.emitReattach({ revision: 10 });
+    expect(resolvers.length).toBe(2);
+    const leasesB: readonly HostLeaseSnapshot[] = [
+      { hostId: "B-host", status: "connecting", dead: null },
+    ];
+    resolvers[1](
+      attachSnapshot({
+        revision: 20,
+        preferredHostId: "B-host",
+        targetHostId: "B-host",
+        effectiveHostId: "B-host",
+        leases: leasesB,
+      }),
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(kernel.snapshot()).toEqual({
+      attached: true,
+      preferredHostId: "B-host",
+      targetHostId: "B-host",
+      effectiveHostId: "B-host",
+      leases: leasesB,
+    });
+  });
+});
+
 describe("SelectionEvidenceKernel - C3: nothing publishes after dispose", () => {
   it("an attach that resolves ok:true after dispose triggers no onChange notification and leaves the snapshot detached", async () => {
     const client = new FakeAuthorityClient();

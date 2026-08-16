@@ -49,6 +49,7 @@ import {
   type LiveSessionAnnouncement,
   type SelectionAttachResult,
   type SelectionAuthorityClient,
+  type SelectionAuthoritySnapshot,
   type SelectionChange,
   type SelectionIncompatibility,
   type SelectionSubscription,
@@ -111,17 +112,22 @@ export class SelectionEvidenceKernel {
 
   private current: SelectionKernelSnapshot = DETACHED_SNAPSHOT;
   /**
-   * The highest authority revision this kernel has APPLIED.
+   * The highest authority revision applied PER SLICE.
    *
-   * The client installs its snapshot and replays the events above it before
-   * the attach promise settles, so the continuation below runs LAST and would
-   * otherwise write snapshot R over already-applied state at R+1 - the newer
-   * leases replaced by the ones the snapshot was captured with. Ordering by
-   * revision makes the late write a no-op instead, which is the same
-   * observable guarantee as holding the replay back, without adding a
-   * hand-shake to the client surface.
+   * Two counters, not one, because the events are PARTIAL: `selectionChanged`
+   * carries the selection tuple and `leasesChanged` carries the leases, each
+   * merged against whatever the other slice already held. The client replays
+   * buffered events before the attach promise settles, so the snapshot
+   * arrives LAST and at a LOWER revision than what was replayed - and a
+   * single high-water mark then discarded the WHOLE snapshot, including the
+   * slice the replay never carried. A lone `leasesChanged` at R+1 replayed
+   * onto the detached state left the selection null forever even though the
+   * snapshot at R knew the target; the mirror case left the leases empty (or,
+   * on a re-attach, showed the outgoing identity's). Per-slice revisions let
+   * the snapshot fill in exactly the slices nothing newer has superseded.
    */
-  private appliedRevision = -1;
+  private appliedSelectionRevision = -1;
+  private appliedLeasesRevision = -1;
   /**
    * Which attach attempt is current. A rotation (identity transition) starts a
    * new one while the previous claim may still be in flight; only the latest
@@ -399,23 +405,20 @@ export class SelectionEvidenceKernel {
           this.options.log.warn("[selection-kernel] attach refused", {
             kind: result.kind,
           });
-          this.appliedRevision = -1;
+          this.appliedSelectionRevision = -1;
+          this.appliedLeasesRevision = -1;
           this.publish(DETACHED_SNAPSHOT);
           return result;
         }
-        this.publishAt(result.snapshot.revision, {
-          attached: true,
-          preferredHostId: result.snapshot.preferredHostId,
-          targetHostId: result.snapshot.targetHostId,
-          effectiveHostId: result.snapshot.effectiveHostId,
-          leases: result.snapshot.leases,
-        });
+        this.installSnapshot(result.snapshot);
         return result;
       });
   }
 
   private applySelection(revision: number, change: SelectionChange): void {
-    this.publishAt(revision, {
+    if (revision <= this.appliedSelectionRevision) return;
+    this.appliedSelectionRevision = revision;
+    this.publish({
       attached: true,
       preferredHostId: change.preferredHostId,
       targetHostId: change.targetHostId,
@@ -428,24 +431,36 @@ export class SelectionEvidenceKernel {
     revision: number,
     leases: readonly HostLeaseSnapshot[],
   ): void {
-    this.publishAt(revision, { ...this.current, leases });
+    if (revision <= this.appliedLeasesRevision) return;
+    this.appliedLeasesRevision = revision;
+    this.publish({ ...this.current, leases });
   }
 
   /**
-   * Applies state carried at `revision`, ignoring anything the kernel has
-   * already moved past. `attached` is not revision-ordered - it is a fact
-   * about THIS kernel's claim, not about authority state - so a stale
-   * snapshot still marks the kernel attached without rolling its leases back.
+   * Merges the accepted attach snapshot into every slice nothing newer has
+   * already superseded, then publishes ONCE. A slice already carrying a
+   * higher revision keeps its value; a slice still below the snapshot takes
+   * the snapshot's. `attached` latches either way - it is a fact about this
+   * kernel's claim, not about authority state.
    */
-  private publishAt(revision: number, snapshot: SelectionKernelSnapshot): void {
-    if (revision < this.appliedRevision) {
-      if (snapshot.attached && !this.current.attached) {
-        this.publish({ ...this.current, attached: true });
-      }
-      return;
-    }
-    this.appliedRevision = revision;
-    this.publish(snapshot);
+  private installSnapshot(snapshot: SelectionAuthoritySnapshot): void {
+    const selectionIsFresher = this.appliedSelectionRevision < snapshot.revision;
+    const leasesAreFresher = this.appliedLeasesRevision < snapshot.revision;
+    if (selectionIsFresher) this.appliedSelectionRevision = snapshot.revision;
+    if (leasesAreFresher) this.appliedLeasesRevision = snapshot.revision;
+    this.publish({
+      attached: true,
+      preferredHostId: selectionIsFresher
+        ? snapshot.preferredHostId
+        : this.current.preferredHostId,
+      targetHostId: selectionIsFresher
+        ? snapshot.targetHostId
+        : this.current.targetHostId,
+      effectiveHostId: selectionIsFresher
+        ? snapshot.effectiveHostId
+        : this.current.effectiveHostId,
+      leases: leasesAreFresher ? snapshot.leases : this.current.leases,
+    });
   }
 
   private publish(snapshot: SelectionKernelSnapshot): void {

@@ -256,7 +256,17 @@ export class DesktopHostFleetSource implements HostFleetSource {
   private async refreshLocalIdentity(): Promise<void> {
     if (this.disposed) return;
     const generation = this.options.identity.current().generation;
-    const localHostId = await this.readLocalHostId();
+    // ELIGIBILITY is captured with the generation, not just the generation.
+    // The generation capture closes the RACE; it does not carry the rule.
+    // After a sign-out has fully committed there is no race left, and a
+    // later local-host change would still publish this machine's durable id
+    // under the CURRENT (signed-out) generation - which the engine accepts,
+    // repopulating a fleet that `refresh` has just declared empty. One
+    // predicate for one rule: the same bearer check `refresh` uses for its
+    // signed-out branch decides here too, so the two can never disagree
+    // about what a signed-out fleet contains.
+    const eligible = this.options.authSession.get().token !== null;
+    const localHostId = eligible ? await this.readLocalHostId() : null;
     if (this.disposed) return;
     if (generation !== this.options.identity.current().generation) {
       this.options.log.debug("[selection-fleet] stale local identity read", {

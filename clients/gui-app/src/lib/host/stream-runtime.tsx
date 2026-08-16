@@ -44,11 +44,13 @@ export interface HostStreamProviderProps {
  *
  * The client is keyed on host IDENTITY (`remoteAwareOwnerIdentity`: hostId +
  * signed-in user, plus - for a remote host - its public key and relay attach
- * URL), NOT on the endpoint URL. A host restart keeps the same identity -
- * `HostClient.bind` takes its `sameHostId` path and only swaps the endpoint -
- * so the live `endpoint()` provider re-dials the new address on the SAME
- * client instead of the client being rebuilt-and-closed (which churns every
- * consumer and can strand an in-flight subscribe). The client is rebuilt only
+ * URL), NOT on the endpoint URL. A host restart keeps the same identity: the
+ * directory row's endpoint fields move while its id does not, so the live
+ * `endpoint()` provider re-dials the new address on the SAME client instead of
+ * the client being rebuilt-and-closed (which churns every consumer and can
+ * strand an in-flight subscribe). This used to be spelled as `HostClient.bind`
+ * taking its `sameHostId` path; P4.2 deleted both, and the identity key is now
+ * the only thing deciding rebuild-vs-re-dial. The client is rebuilt only
  * on a genuine identity change (host swap / sign-out / user switch / a
  * same-host remote public-key rotation, R-1); a same-identity endpoint move
  * drives an immediate re-dial nudge, not a rebuild.

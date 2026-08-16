@@ -21,7 +21,6 @@ import {
   hostSelectionReadAllowlist,
   hostSelectionReadImportRestrictions,
   selectByIdRestrictions,
-  selectByIdWriteAllowlist,
   selectionAuthorityRestrictions,
   selectionAuthorityWriteAllowlist,
   selectionKernelImportRestrictions,
@@ -65,7 +64,8 @@ const importRestrictionDimensions = {
   posthog: [
     {
       group: ["posthog-js", "posthog-js/*"],
-      message: "Import PostHog only through the typed adapter in @/lib/analytics.",
+      message:
+        "Import PostHog only through the typed adapter in @/lib/analytics.",
     },
   ],
   readPath: hostSelectionReadImportRestrictions.patterns,
@@ -370,23 +370,6 @@ export default tseslint.config(
     },
   },
   {
-    // D12 write path, lower half: only the authority→directory bridge may
-    // call selectById. Every other production file keeps the ban via
-    // generalCustomSyntaxRestrictions.
-    files: selectByIdWriteAllowlist,
-    rules: {
-      "no-restricted-syntax": [
-        "error",
-        ...traycerTypeSafetyRestrictions,
-        noFullStoreSubscription,
-        ...generalCustomSyntaxRestrictions.filter(
-          (restriction) => !selectByIdRestrictions.includes(restriction),
-        ),
-        ...nestedFocusBoundaryRestrictions([]),
-      ],
-    },
-  },
-  {
     // D12 write path, upper half: only Settings ▸ Activate and the bridge's
     // composition root may reach the preferred-write API.
     files: selectionAuthorityWriteAllowlist,
@@ -396,7 +379,8 @@ export default tseslint.config(
         ...traycerTypeSafetyRestrictions,
         noFullStoreSubscription,
         ...generalCustomSyntaxRestrictions.filter(
-          (restriction) => !selectionAuthorityRestrictions.includes(restriction),
+          (restriction) =>
+            !selectionAuthorityRestrictions.includes(restriction),
         ),
         ...nestedFocusBoundaryRestrictions([]),
       ],

@@ -75,7 +75,6 @@ vi.mock("@/lib/host", () => ({
   useHostBinding: () => bindingState.current,
 }));
 
-
 vi.mock("@/lib/host-error-toast", () => ({
   toastFromHostError: vi.fn(),
 }));
@@ -136,15 +135,13 @@ function bindStubClient(): void {
   };
   bindingState.current = {
     hostClient,
-    directory: createTestDirectory([], () => undefined),
+    directory: createTestDirectory([]),
   };
 }
 
 function createTestDirectory(
   entries: readonly HostDirectoryEntry[],
-  onSelect: (hostId: string) => void,
 ): IHostDirectoryService {
-  let selected: HostDirectoryEntry | null = null;
   return {
     list: () => Promise.resolve(entries),
     findById: (hostId) =>
@@ -152,15 +149,6 @@ function createTestDirectory(
     refresh: () => Promise.resolve(entries),
     refreshForEra: () => Promise.resolve(entries),
     invalidateInFlightRefresh: () => undefined,
-    getSelected: () => selected,
-    selectById: (hostId) => {
-      selected =
-        hostId === null
-          ? null
-          : (entries.find((entry) => entry.hostId === hostId) ?? null);
-      if (selected !== null) onSelect(selected.hostId);
-    },
-    onSelectionChange: () => ({ dispose: () => undefined }),
   };
 }
 
@@ -817,9 +805,7 @@ describe("useNotificationActivation origin-host guard (P0-1)", () => {
     );
     bindingState.current = {
       hostClient: client,
-      directory: createTestDirectory([hostA, hostB], (hostId) => {
-        setEffectiveHost(hostId);
-      }),
+      directory: createTestDirectory([hostA, hostB]),
     };
     useEpicCanvasStore.setState({
       tabsById: {},
@@ -842,7 +828,9 @@ describe("useNotificationActivation origin-host guard (P0-1)", () => {
       wrapper: createWrapper(),
     });
 
-    expect(useSelectionAuthorityStore.getState().effectiveHostId).toBe(hostA.hostId);
+    expect(useSelectionAuthorityStore.getState().effectiveHostId).toBe(
+      hostA.hostId,
+    );
 
     act(() => {
       hook.result.current.activate({
@@ -853,7 +841,9 @@ describe("useNotificationActivation origin-host guard (P0-1)", () => {
       });
     });
 
-    expect(useSelectionAuthorityStore.getState().effectiveHostId).toBe(hostB.hostId);
+    expect(useSelectionAuthorityStore.getState().effectiveHostId).toBe(
+      hostB.hostId,
+    );
     expect(navigateSpy).toHaveBeenCalledTimes(1);
     expect(onResult).toHaveBeenCalledTimes(1);
     expect(onResult).toHaveBeenCalledWith("failure");
@@ -880,7 +870,9 @@ describe("useNotificationActivation origin-host guard (P0-1)", () => {
       });
     });
 
-    expect(useSelectionAuthorityStore.getState().effectiveHostId).toBe(hostA.hostId);
+    expect(useSelectionAuthorityStore.getState().effectiveHostId).toBe(
+      hostA.hostId,
+    );
     expect(navigateSpy).toHaveBeenCalledTimes(1);
     expect(onResult).toHaveBeenCalledTimes(1);
     expect(onResult).toHaveBeenCalledWith("success");
@@ -934,7 +926,9 @@ describe("useNotificationActivation origin-host guard (P0-1)", () => {
       });
     });
 
-    expect(useSelectionAuthorityStore.getState().effectiveHostId).toBe(hostA.hostId);
+    expect(useSelectionAuthorityStore.getState().effectiveHostId).toBe(
+      hostA.hostId,
+    );
     expect(navigateSpy).toHaveBeenCalledTimes(1);
     const search = navigateSpy.mock.calls.at(0)?.at(0)?.search;
     if (search === undefined) {

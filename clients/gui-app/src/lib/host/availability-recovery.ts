@@ -3,15 +3,17 @@ import { appLogger } from "@/lib/logger";
 /**
  * Bridges stream-transport recovery evidence onto the query layer.
  *
- * `HostClient.notifyAvailabilityRecovered()` is the designed escape hatch for
- * host-scoped queries stranded in a permanent error state (every automatic
- * TanStack recovery route is deliberately disabled for host RPCs - transport
- * retries already ran, no polling, no focus/reconnect refetch). This module
- * gives it its production callers: the app-wide `WsStreamClient` heartbeats
- * against the ACTIVE host, and every durable per-tab transport heartbeats its
- * BOUND host, so their availability evidence (a session re-opening after a
- * drop, or a pong landing after a stall-length gap) is exactly the "endpoint
- * recovered" signal the method's contract asks for. Without this, a host
+ * `HostClient.notifyHostAvailabilityRecovered(hostId)` is the designed escape
+ * hatch for host-scoped queries stranded in a permanent error state (every
+ * automatic TanStack recovery route is deliberately disabled for host RPCs -
+ * transport retries already ran, no polling, no focus/reconnect refetch). This
+ * module gives it its production callers: the app-wide stream heartbeats the
+ * effective host and every durable per-tab transport heartbeats the host its
+ * tab is pinned to, so their availability evidence (a session re-opening after
+ * a drop, or a pong landing after a stall-length gap) is exactly the "endpoint
+ * recovered" signal the method's contract asks for. Every report NAMES its
+ * host: P4.2 deleted the no-argument sibling that read the active slot, so
+ * there is no privileged host to recover on any more. Without this, a host
  * event-loop stall that outlives the unary dial+retry budget leaves panels
  * (terminals, git-diff, file-tree) errored forever with no path back.
  */

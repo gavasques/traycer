@@ -43,6 +43,7 @@ import {
   type SelectionAuthorityBridge,
 } from "@/lib/host/selection-authority-bridge";
 import { createSessionRetirementSweep } from "@/lib/host/session-retirement";
+import { buildRuntimeChangeScopeHandler } from "@/lib/host/runtime-change-scope";
 import { appLogger } from "@/lib/logger";
 import { useSelectionAuthorityStore } from "@/stores/host/selection-authority-store";
 import { authQueryKeys } from "@/lib/query-keys";
@@ -223,9 +224,10 @@ export function createHostRuntime<Registry extends VersionedRpcRegistry>(
 
       let runtime: HostRuntime<Registry> | null = null;
       // Mounted with the runtime and torn down with it (below), so the
-      // window's kernel and its `HostClient` binding can never outlive each
-      // other. See `mountSelectionAuthorityBridge` for why it is the app's
-      // only sanctioned `selectById` caller.
+      // window's kernel and the client it reports through can never outlive
+      // each other. It no longer writes a selection anywhere: with the active
+      // slot deleted (P4.2) the derivation lands in the authority store and is
+      // resolved from there, so this bridge publishes rather than binds.
       let selectionBridge: SelectionAuthorityBridge | null = null;
 
       // THE window's evidence kernel (redesign P1.3), ACQUIRED rather than
@@ -352,7 +354,8 @@ export function createHostRuntime<Registry extends VersionedRpcRegistry>(
                 .getState()
                 .leases.find((lease) => lease.hostId === hostId) ?? null,
             onLeasesChanged: (listener) => {
-              const unsubscribe = useSelectionAuthorityStore.subscribe(listener);
+              const unsubscribe =
+                useSelectionAuthorityStore.subscribe(listener);
               return { dispose: unsubscribe };
             },
           },
@@ -376,11 +379,16 @@ export function createHostRuntime<Registry extends VersionedRpcRegistry>(
         currentContext: () => requestContextProvider.current(),
         retire: retireAllRemoteSessions,
       });
+      // SCOPED BY REASON, and it was not before - see
+      // `buildRuntimeChangeScopeHandler` for which reasons and why. The filter
+      // lives there rather than inline here so that it is a thing a test can
+      // hold: this provider's startup path has no integration coverage, so an
+      // inline closure would be unobservable (redesign P4.2).
       const runtimeTransportUnsubscribe = activeRuntime.hostClient.onChange(
-        () => {
-          runtimeMessenger?.reset();
-          sweepRetiredContextSessions();
-        },
+        buildRuntimeChangeScopeHandler({
+          resetMessenger: () => runtimeMessenger?.reset(),
+          sweepRetiredSessions: sweepRetiredContextSessions,
+        }),
       );
       void (async () => {
         let phase = "auth.start";
@@ -406,20 +414,20 @@ export function createHostRuntime<Registry extends VersionedRpcRegistry>(
           }
           phase = "runtime.start";
           activeRuntime.start();
-          // AFTER `runtime.start()`: the runtime's `onSelectionChange`
-          // subscription must exist before the first derivation lands, or the
-          // window's opening bind would be swallowed.
+          // AFTER `runtime.start()`: the runtime installs the connection
+          // registry source there, and the registry is what tells a pinned
+          // consumer its row arrived. Mounting the bridge first would publish
+          // the opening derivation into a window whose consumers have no way
+          // to hear the row that follows it.
           phase = "selection-bridge.mount";
           selectionBridge = mountSelectionAuthorityBridge({
             client: runnerHost.selectionAuthority,
             kernel: selectionKernel,
-            directory,
             hostLabels: {
               // Falls back to the id rather than to a placeholder: a move the
               // directory has not caught up with yet is exactly when the user
               // most needs to know WHICH host, and an id is at least true.
-              labelFor: (hostId) =>
-                directory.findById(hostId)?.label ?? hostId,
+              labelFor: (hostId) => directory.findById(hostId)?.label ?? hostId,
             },
           });
           const nextBinding = {

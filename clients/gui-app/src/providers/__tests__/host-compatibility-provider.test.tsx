@@ -37,7 +37,6 @@ import {
   type MessengerFactory,
 } from "@/lib/host";
 import { hostStatusProbeQueryKey } from "@/lib/host/compatibility-state";
-import { getHostBindingSnapshot } from "@/lib/host/runtime";
 import { EpicTabExistenceReconciler } from "@/providers/epic-tab-existence-reconciler";
 import { HarnessCatalogPrefetcher } from "@/providers/harness-catalog-prefetcher";
 import { RunnerHostProvider } from "@/providers/runner-host-provider";
@@ -490,6 +489,10 @@ describe("HostCompatibilityProvider startup consumers", () => {
     resetNegotiatedManifests();
     vi.restoreAllMocks();
     restoreFetch();
+    // The one test in this file that seeds the selection authority store
+    // directly (simulating an in-app host switch, redesign P4.2) - reset it
+    // so a later test's runtime does not attach onto leftover module state.
+    useSelectionAuthorityStore.getState().reset();
   });
 
   it("holds startup host RPC consumers until host.status succeeds", async () => {
@@ -768,8 +771,13 @@ describe("HostCompatibilityProvider startup consumers", () => {
             })}
             invalidator={null}
             requestId={null}
+            // B must be a real directory row from the start: `findHostById`
+            // (what `createRequesterForHostId` resolves through, redesign
+            // P4.2) is wired straight to `directory.findById`, so a switch to
+            // an id the directory has never listed resolves to an unbound
+            // requester rather than "B".
             remoteFetcher={() =>
-              Promise.resolve({ kind: "hosts", entries: [] })
+              Promise.resolve({ kind: "hosts", entries: [hostB] })
             }
             fallback={<div data-testid="runtime-fallback">runtime loading</div>}
           >
@@ -784,8 +792,6 @@ describe("HostCompatibilityProvider startup consumers", () => {
     await waitFor(() => {
       expect(getCompatibilityStatusText()).toBe("compatible");
     });
-    const hostClient = getHostBindingSnapshot()?.hostClient ?? null;
-    if (hostClient === null) throw new Error("expected a bound host client");
     // A's probe entry is in the session-lived cache under its host-scoped key.
     expect(
       queryClient.getQueryData(hostStatusProbeQueryKey(hostA.hostId)),
@@ -803,22 +809,43 @@ describe("HostCompatibilityProvider startup consumers", () => {
         .gcTime,
     ).toBe(Infinity);
 
+    // Switch to B: post-slot, an in-app host switch is the app-wide POINTER
+    // moving (redesign P4.2 deleted `HostClient.bind` and the active slot it
+    // mutated), so it is simulated the same way the real selection-authority
+    // bridge would land it - by writing a fresh kernel snapshot into the
+    // store `useHostClient()` derives from.
     act(() => {
-      hostClient.bind(hostB);
+      useSelectionAuthorityStore.getState().applyKernelSnapshot({
+        attached: true,
+        preferredHostId: hostB.hostId,
+        targetHostId: hostB.hostId,
+        effectiveHostId: hostB.hostId,
+        leases: [],
+        selectionRevision: 1,
+      });
     });
     // B is a different key - leave it in whatever state its first probe
     // settles. The pin is that A's entry survives the re-key, not that B
     // itself is healthy.
-    await waitFor(() => {
-      expect(hostClient.getActiveHostId()).toBe(hostB.hostId);
-    });
+    expect(useSelectionAuthorityStore.getState().effectiveHostId).toBe(
+      hostB.hostId,
+    );
 
     // Switch back to A: the held verdict must be served in the same render
     // path - no intermediate "checking".
     act(() => {
-      hostClient.bind(hostA);
+      useSelectionAuthorityStore.getState().applyKernelSnapshot({
+        attached: true,
+        preferredHostId: hostA.hostId,
+        targetHostId: hostA.hostId,
+        effectiveHostId: hostA.hostId,
+        leases: [],
+        selectionRevision: 2,
+      });
     });
-    expect(hostClient.getActiveHostId()).toBe(hostA.hostId);
+    expect(useSelectionAuthorityStore.getState().effectiveHostId).toBe(
+      hostA.hostId,
+    );
     expect(getCompatibilityStatusText()).toBe("compatible");
     expect(getCompatibilityDetailText()).toBe("live");
     queryClient.clear();

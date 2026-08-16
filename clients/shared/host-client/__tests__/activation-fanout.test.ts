@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import type { AuthenticatedUser } from "@traycer/protocol/auth";
-import type { Disposable } from "../../platform/uri-callback";
 import {
   defineRpcContract,
   defineVersionedRpcRegistry,
@@ -28,19 +27,21 @@ import type { RpcSchedulingPolicy } from "../rpc-scheduling-policy";
 /**
  * THE ACTIVATION FAN-OUT SEAM (redesign D17 / P2.1).
  *
- * Everything an activation touches meets here: the directory publishes a new
- * effective host, `HostRuntime` forwards it to `HostClient`, and the client
- * decides what that costs every OTHER consumer - the ones pinned to a
+ * Everything an activation used to touch met here: the directory published a
+ * new effective host, `HostRuntime` forwarded it to `HostClient`, and the
+ * client decided what that cost every OTHER consumer - the ones pinned to a
  * different host, and the ones already talking to the incoming one.
  *
  * The answer these cases pin is "nothing". A host becoming effective is a
  * statement about attention, not about lifecycle: no in-flight request is
  * aborted, no query scope is swept, and a host that stops being effective
- * keeps serving the surfaces pinned to it. The suites next door cover
- * `bind()` in isolation; this file is deliberately assembled out of the real
- * runtime, the real request coordinator and the real binding-authority
- * registry, because the abort that used to reach a pinned consumer travelled
- * through all three and was invisible to any one of them alone.
+ * keeps serving the surfaces pinned to it. P4.2 made that structural rather
+ * than behavioural - there is no longer a forwarding step or a slot to move,
+ * so the property holds by construction; see the note above `describe` for
+ * what that costs this file. It stays assembled out of the real runtime, real
+ * request coordinator and real binding-authority registry, because the abort
+ * that used to reach a pinned consumer travelled through all three and was
+ * invisible to any one of them alone.
  */
 
 const pingV10 = defineRpcContract({
@@ -106,16 +107,13 @@ class RecordingInvalidator implements IHostQueryInvalidator {
 }
 
 /**
- * The narrowest directory that can publish an effective host. `selectById` is
- * the pure setter production has since P1.2, so a test drives an activation
- * exactly the way the selection-authority bridge does.
+ * The narrowest directory these cases need. Its selection half was removed in
+ * P4.2 along with the runtime subscription that read it - a fake that still
+ * offered `selectById` / `onSelectionChange` would let a case drive a stimulus
+ * nothing receives, which is the one failure this suite must not have.
  */
 class FanOutDirectory implements IHostDirectoryService {
   entries: HostDirectoryEntry[] = [HOST_A, HOST_B];
-  selected: HostDirectoryEntry | null = null;
-  private readonly handlers = new Set<
-    (entry: HostDirectoryEntry | null) => void
-  >();
 
   async list(): Promise<readonly HostDirectoryEntry[]> {
     return this.entries;
@@ -135,28 +133,6 @@ class FanOutDirectory implements IHostDirectoryService {
 
   invalidateInFlightRefresh(): void {
     return;
-  }
-
-  getSelected(): HostDirectoryEntry | null {
-    return this.selected;
-  }
-
-  selectById(hostId: string | null): void {
-    this.selected = hostId === null ? null : this.findById(hostId);
-    for (const handler of this.handlers) {
-      handler(this.selected);
-    }
-  }
-
-  onSelectionChange(
-    handler: (entry: HostDirectoryEntry | null) => void,
-  ): Disposable {
-    this.handlers.add(handler);
-    return {
-      dispose: () => {
-        this.handlers.delete(handler);
-      },
-    };
   }
 }
 
@@ -183,7 +159,6 @@ function buildFanOutFixture(): FanOutFixture {
   });
 
   const directory = new FanOutDirectory();
-  directory.selected = HOST_A;
   const invalidator = new RecordingInvalidator();
   const pending: Deferred[] = [];
   const messenger = new MockHostMessenger<typeof registry>({
@@ -227,42 +202,57 @@ function buildFanOutFixture(): FanOutFixture {
   return { runtime, directory, invalidator, messenger, pending };
 }
 
+/**
+ * HOW AN ACTIVATION IS MODELLED HERE, after P4.2.
+ *
+ * It is not modelled, and that is the finding rather than an omission. These
+ * cases were written in P2 against `directory.selectById(...)`, which the
+ * runtime subscribed to in order to move the active slot. P4.2 deleted both
+ * the subscription and the slot, so that call now reaches nothing in this
+ * package: "the effective host moved" is a fact the gui-app selection
+ * authority publishes to its store, and no shared-layer object observes it.
+ *
+ * Driving these cases with a stimulus that can no longer reach the subject
+ * would leave them green and meaningless. What survives at THIS layer - and
+ * what the fan-out property actually rests on - is that requesters are
+ * independent and pinned: whatever the window decides is effective, a
+ * requester built for A addresses A, alone, for as long as it is held. Each
+ * case below therefore expresses the move as production now does, by
+ * resolving a requester for the incoming host, and says so where it matters.
+ */
 describe("activation fan-out", () => {
-  it("leaves a pinned surface's in-flight request untouched when the effective host moves off its host", async () => {
-    const { runtime, directory, pending } = buildFanOutFixture();
+  it("leaves a pinned surface's in-flight request untouched when another host becomes effective", async () => {
+    const { runtime, pending } = buildFanOutFixture();
     const pinnedToA = runtime.hostClient.createRequester(HOST_A);
 
     const inFlight = pinnedToA.request("host.ping", {});
     expect(pending).toHaveLength(1);
 
-    directory.selectById(HOST_B.hostId);
-    expect(runtime.hostClient.getActiveHostId()).toBe(HOST_B.hostId);
+    // The window re-points: a window-global consumer now resolves B. Nothing
+    // about that touches the pin, which is the whole point of the
+    // substitution - under the slot this same move mutated the one object the
+    // in-flight request was riding.
+    expect(
+      runtime.hostClient
+        .createRequesterForHostId(HOST_B.hostId)
+        .getActiveHostId(),
+    ).toBe(HOST_B.hostId);
 
     pending[0]?.settle();
     await expect(inFlight).resolves.toEqual({ pong: true });
   });
 
-  it("sweeps no host's query scope when the effective host moves", () => {
-    const { directory, invalidator } = buildFanOutFixture();
-    // `start()` applied the context before any host was bound; drop that
-    // identity-transition sweep so what remains is the activation alone.
-    invalidator.invalidateCalls.length = 0;
-    invalidator.cancelCalls.length = 0;
+  // DELETED: "sweeps no host's query scope when the effective host moves".
+  // Its stimulus was `directory.selectById(...)` and its assertion was that
+  // nothing swept. With the subscription gone the stimulus reaches nothing, so
+  // the case would assert that nothing happened after nothing happened - green
+  // for the wrong reason, which is worse than absent. The surviving claim
+  // (becoming effective sweeps no scope) is now a selection-layer property and
+  // belongs where the selection layer lives, in gui-app.
 
-    directory.selectById(HOST_B.hostId);
-
-    // Not the outgoing host (surfaces pinned to it did not move), and not the
-    // incoming one either (its consumers re-key onto its host-scoped keys and
-    // fetch on demand - the sweep only ever made that louder).
-    expect(invalidator.invalidateCalls).toEqual([]);
-    expect(invalidator.cancelCalls).toEqual([]);
-  });
-
-  it("keeps serving the deselected host: a NEW request still reaches it", async () => {
-    const { runtime, directory, messenger, pending } = buildFanOutFixture();
+  it("keeps serving a host nothing is pointing at: a NEW request still reaches it", async () => {
+    const { runtime, messenger, pending } = buildFanOutFixture();
     const pinnedToA = runtime.hostClient.createRequester(HOST_A);
-
-    directory.selectById(HOST_B.hostId);
 
     const afterDeselect = pinnedToA.request("host.ping", {});
     pending[0]?.settle();
@@ -274,24 +264,23 @@ describe("activation fan-out", () => {
     );
   });
 
-  it("cancels a pinned surface's own read after deselection, not the effective host's", async () => {
-    const { runtime, directory, pending } = buildFanOutFixture();
+  it("cancels a pinned surface's own read, not whichever host is effective", async () => {
+    const { runtime, pending } = buildFanOutFixture();
     const pinnedToA = runtime.hostClient.createRequester(HOST_A);
 
     const inFlight = pinnedToA.request("host.ping", {});
     expect(pending).toHaveLength(1);
-    directory.selectById(HOST_B.hostId);
 
     // The coordinator keys cancellation on `(hostId, userId, method, params)`.
-    // Routed through the active slot this would have named B and cancelled
-    // nothing, leaving the surface unable to release its own read the moment
-    // its host stopped being effective.
+    // Routed through the active slot this would have named whatever host was
+    // bound and cancelled nothing, leaving the surface unable to release its
+    // own read the moment its host stopped being effective.
     pinnedToA.cancelActiveRead("host.ping", {});
     await expect(inFlight).rejects.toThrow();
   });
 
   it("resolves the window-global client from the effective host id, and pins what it resolved", async () => {
-    const { runtime, directory, messenger, pending } = buildFanOutFixture();
+    const { runtime, messenger, pending } = buildFanOutFixture();
 
     // What a window-global consumer holds for one paint: the effective host
     // id, resolved through the same requester mechanism a pin uses.
@@ -300,8 +289,7 @@ describe("activation fan-out", () => {
     );
     expect(whileAIsEffective.getActiveHostId()).toBe(HOST_A.hostId);
 
-    directory.selectById(HOST_B.hostId);
-
+    // The window re-points to B; the next paint resolves B (asserted below).
     // The client from the PREVIOUS paint still addresses A. A consumer that
     // re-renders gets B; one mid-chain finishes where it aimed. Under the
     // active slot both of those were the same mutable object, so a call in
@@ -329,7 +317,7 @@ describe("activation fan-out", () => {
     );
 
     // An id the directory cannot resolve reports `null` too - the same answer
-    // `selectById` produced by binding `null`, so every readiness gate keeps
+    // the slot produced when it was bound to `null`, so every gate keeps
     // reading the value it read before.
     const unresolved =
       runtime.hostClient.createRequesterForHostId("nobody-here");

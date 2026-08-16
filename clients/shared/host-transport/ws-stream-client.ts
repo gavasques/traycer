@@ -426,9 +426,9 @@ export class WsStreamClient<
    * host-event-loop-stall case, where an established stream survives the
    * 60s pong cutoff while fresh unary dials time out and strand their
    * queries in a permanent error state. Consumers use this to drive
-   * `HostClient.notifyAvailabilityRecovered()` so those stranded queries
-   * refetch; multiple sessions recovering at once each fire, so consumers
-   * should coalesce.
+   * `HostClient.notifyHostAvailabilityRecovered(hostId)` so those stranded
+   * queries refetch; multiple sessions recovering at once each fire, so
+   * consumers should coalesce.
    */
   subscribeAvailabilityRecovered(listener: () => void): () => void {
     this.availabilityRecoveredListeners.add(listener);

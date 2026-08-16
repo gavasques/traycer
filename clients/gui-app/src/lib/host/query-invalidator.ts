@@ -49,12 +49,13 @@ const ACTIVE_REFETCH_EXEMPT_METHODS: ReadonlySet<string> = new Set([
  * manual-refresh-only (`staleTime: Infinity`) and holds optimistically
  * inserted local-first epics that a cloud `listTasks` response does not carry
  * yet, so force-refetching it DROPS epics the user just created
- * (`cloud-query-keys.ts`). Until now the invariant was enforced at exactly
- * one call site (`use-workspace-folder-actions`), while the broadest sweep of
- * all - `HostClient.bind()`, which force-refetches the entire new host scope
- * on every host switch - ignored it. Applying it here covers both broad
- * `refetchActive` sweeps (bind and availability recovery); the list still
- * refreshes through its own lifecycle and its own manual refresh.
+ * (`cloud-query-keys.ts`). The invariant was once enforced at exactly one call
+ * site (`use-workspace-folder-actions`), while the broadest sweep of all -
+ * `HostClient.bind()`, which force-refetched the entire new host scope on
+ * every host switch - ignored it. That sweep is gone: P4.2 deleted the slot,
+ * and a host becoming effective now sweeps nothing at all. Enforcing it here
+ * covers the one broad `refetchActive` sweep left, availability recovery; the
+ * list still refreshes through its own lifecycle and its own manual refresh.
  */
 function isActiveRefetchExempt(query: Query): boolean {
   if (isCloudEpicTasksQueryKey(query.queryKey)) return true;

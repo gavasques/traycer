@@ -15,20 +15,16 @@ import { notifyEffectiveHostChanged } from "@/stores/host/surface-host-selection
 import { useSelectionAuthorityStore } from "@/stores/host/selection-authority-store";
 
 /**
- * The one seam through which the authority's derivation reaches the
- * directory's binding. Deliberately the narrowest possible view of
- * `HostDirectoryService` - this bridge is allowed to move the app-wide
- * selection and to do nothing else.
- */
-export interface SelectionDirectoryBinding {
-  selectById(hostId: string | null): void;
-}
-
-/**
- * Read-only host labelling for the switch toast. DELIBERATELY separate from
- * {@link SelectionDirectoryBinding} rather than widening it: that binding is
- * the app's one sanctioned write path into the selection, and its narrowness
- * is the property P0.3's lint enforces. Narration needs a name, not a writer.
+ * Read-only host labelling for the switch toast.
+ *
+ * There used to be a sibling here - `SelectionDirectoryBinding`, a one-method
+ * view carrying `selectById`, through which this bridge moved the app-wide
+ * selection into the directory's binding. It is gone with the active slot
+ * (redesign P4.2): the derivation lands in the authority store and every
+ * consumer resolves it through a pinned requester, so there is no second home
+ * for "which host is effective" and therefore no write path to keep narrow.
+ * Narration needs a name, not a writer - which is now the only kind of
+ * directory access this file has.
  */
 export interface SelectionHostLabels {
   labelFor(hostId: string): string;
@@ -51,7 +47,6 @@ export interface SelectionAuthorityBridgeOptions {
    * decorative; see there.
    */
   readonly kernel: SelectionEvidenceKernel;
-  readonly directory: SelectionDirectoryBinding;
   readonly hostLabels: SelectionHostLabels;
 }
 
@@ -60,14 +55,16 @@ export interface SelectionAuthorityBridgeOptions {
  * the host directory (selection model §1, redesign P1.2).
  *
  * ONE-WAY, and that is the whole design. The authority derives
- * `effectiveHostId`; this bridge pushes it into `HostDirectoryService`, whose
- * `selectById` is now a pure setter, and `HostRuntime`'s existing
- * `onSelectionChange → HostClient.bind` wiring rebinds unchanged. Nothing
- * pushes back: a UI gesture that wants to move the app-wide selection calls
+ * `effectiveHostId` and this bridge publishes it to the selection store,
+ * which is where every consumer reads it from. It used to push into
+ * `HostDirectoryService.selectById` as well, so that `HostRuntime`'s
+ * `onSelectionChange → HostClient.bind` wiring could move an active slot;
+ * P4.2 deleted all three, and nothing rebinds now - a consumer resolves the
+ * published id through the registry per request. Nothing pushes back either:
+ * a UI gesture that wants to move the app-wide selection calls
  * `SelectionAuthorityClient.activate(...)` and waits for the derivation to
- * come back down. This bridge is therefore the ONLY sanctioned `selectById`
- * caller in the app (P0.3's write-path lint is narrowed to this module), and
- * a second one would rebuild the five-entry-points defect the audit found.
+ * come back down. That one-way rule is what keeps a second decider from
+ * rebuilding the five-entry-points defect the audit found.
  *
  * Two subscriptions, on purpose:
  *
@@ -135,11 +132,14 @@ export function mountSelectionAuthorityBridge(
   };
 
   const apply = (snapshot: SelectionKernelSnapshot): void => {
-    // Store BEFORE the bind: the directory fans out to `HostRuntime`
-    // synchronously, and a consumer re-rendering off that bind must not read
-    // an `effectiveHostId` this window has already superseded.
+    // The store is the ONLY place the derived host lands now. This used to
+    // also push the id into the directory via `selectById`, which bound it
+    // into `HostClient`'s active slot and fanned out synchronously - the
+    // ordering comment that stood here existed to keep a consumer re-rendering
+    // off that bind from reading a superseded `effectiveHostId`. P4.2 deleted
+    // the slot, and with it the second home for "which host is effective":
+    // every consumer resolves this store's id through a pinned requester.
     useSelectionAuthorityStore.getState().applyKernelSnapshot(snapshot);
-    options.directory.selectById(snapshot.effectiveHostId);
     flushNarration(snapshot.selectionRevision);
   };
 
@@ -180,7 +180,10 @@ export function mountSelectionAuthorityBridge(
   };
 }
 
-function narrate(change: SelectionChange, hostLabels: SelectionHostLabels): void {
+function narrate(
+  change: SelectionChange,
+  hostLabels: SelectionHostLabels,
+): void {
   if (change.effectiveHostId === change.previousEffectiveHostId) {
     return;
   }

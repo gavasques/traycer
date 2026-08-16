@@ -20,10 +20,7 @@ import {
 } from "@traycer-clients/shared/host-selection/in-process-selection-authority";
 import { createFakeAuthorityClock } from "@traycer-clients/shared/host-selection/__tests__/selection-authority-harness";
 import { acquireRendererSelectionKernel } from "@/lib/host/renderer-selection-kernel";
-import {
-  mountSelectionAuthorityBridge,
-  type SelectionDirectoryBinding,
-} from "@/lib/host/selection-authority-bridge";
+import { mountSelectionAuthorityBridge } from "@/lib/host/selection-authority-bridge";
 import { transportEvidenceRelay } from "@/lib/host/transport-evidence";
 import { useSelectionAuthorityStore } from "@/stores/host/selection-authority-store";
 
@@ -92,13 +89,6 @@ function buildAuthority(): TestAuthority {
   };
 }
 
-class RecordingDirectory implements SelectionDirectoryBinding {
-  readonly calls: Array<string | null> = [];
-  selectById(hostId: string | null): void {
-    this.calls.push(hostId);
-  }
-}
-
 const HOST_LABELS = { labelFor: (hostId: string): string => hostId };
 
 /**
@@ -109,24 +99,24 @@ const HOST_LABELS = { labelFor: (hostId: string): string => hostId };
  */
 function KernelHost(props: {
   readonly client: SelectionAuthorityClient;
-  readonly directory: SelectionDirectoryBinding;
-  readonly acquire: (client: SelectionAuthorityClient) => SelectionEvidenceKernel;
+  readonly acquire: (
+    client: SelectionAuthorityClient,
+  ) => SelectionEvidenceKernel;
   readonly onKernel: (kernel: SelectionEvidenceKernel) => void;
 }): ReactNode {
-  const { client, directory, acquire, onKernel } = props;
+  const { client, acquire, onKernel } = props;
   useEffect(() => {
     const kernel = acquire(client);
     onKernel(kernel);
     const bridge = mountSelectionAuthorityBridge({
       client,
       kernel,
-      directory,
       hostLabels: HOST_LABELS,
     });
     return () => {
       bridge.dispose();
     };
-  }, [acquire, client, directory, onKernel]);
+  }, [acquire, client, onKernel]);
   return null;
 }
 
@@ -154,14 +144,12 @@ describe("renderer-scoped selection kernel under StrictMode", () => {
 
   it("survives StrictMode's setup-cleanup-setup: one kernel, still attached, still the relay's target", async () => {
     const authority = buildAuthority();
-    const directory = new RecordingDirectory();
     const kernels: SelectionEvidenceKernel[] = [];
 
     render(
       <StrictMode>
         <KernelHost
           client={authority.client}
-          directory={directory}
           acquire={acquireRendererSelectionKernel}
           onKernel={(kernel) => {
             kernels.push(kernel);
@@ -185,7 +173,6 @@ describe("renderer-scoped selection kernel under StrictMode", () => {
     const snapshot = kernel.snapshot();
     expect(snapshot.attached).toBe(true);
     expect(snapshot.effectiveHostId).toBe(LOCAL_HOST_ID);
-    expect(directory.calls.at(-1)).toBe(LOCAL_HOST_ID);
     expect(useSelectionAuthorityStore.getState().attached).toBe(true);
     expect(useSelectionAuthorityStore.getState().effectiveHostId).toBe(
       LOCAL_HOST_ID,
@@ -211,7 +198,6 @@ describe("renderer-scoped selection kernel under StrictMode", () => {
 
   it("CONTROL: constructing the kernel inside the effect - the shape this replaced - leaves the surviving setup detached", async () => {
     const authority = buildAuthority();
-    const directory = new RecordingDirectory();
     const kernels: SelectionEvidenceKernel[] = [];
     // The pre-F2 ownership, verbatim: a kernel per effect, released by the
     // effect's own cleanup. Kept as a control arm because the assertions above
@@ -233,7 +219,6 @@ describe("renderer-scoped selection kernel under StrictMode", () => {
       <StrictMode>
         <KernelHost
           client={authority.client}
-          directory={directory}
           acquire={perEffectAcquire}
           onKernel={(kernel) => {
             kernels.push(kernel);

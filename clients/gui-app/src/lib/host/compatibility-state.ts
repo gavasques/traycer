@@ -163,11 +163,20 @@ export function useHostCompatibilityProbe(): HostCompatibility {
       // the whole app behind a "checking" splash carrying local-bootstrap copy
       // ("Starting local Traycer Host…") for a host that had been running the
       // entire time. Holding the entry for the session makes A -> B -> A
-      // render from the held verdict in the same render, while `bind()`'s
-      // `refetchActive: true` sweep still re-probes in the background - so the
-      // held answer is a bridge across the switch, never a substitute for a
-      // fresh one. Safety is unchanged: a terminal INCOMPATIBLE answer is
-      // checked before held data below.
+      // render from the held verdict in the same render.
+      //
+      // WHAT BACKS THE HELD ANSWER CHANGED IN P4.2, and this is the honest
+      // statement of it. The held verdict used to be a bridge across the
+      // switch rather than a substitute for a fresh probe, because
+      // `bind()`'s `refetchActive: true` sweep force-refetched the incoming
+      // host's scope on every switch - overriding `staleTime: Infinity`, which
+      // otherwise means no background refetch at all. That sweep is gone with
+      // the active slot: a host becoming effective now sweeps nothing, so
+      // returning to A re-renders the held verdict WITHOUT a re-probe behind
+      // it. Availability recovery is the remaining forced refetch.
+      //
+      // Safety is unchanged, and it never rested on the sweep: a terminal
+      // INCOMPATIBLE answer is checked before held data below.
       gcTime: Infinity,
     },
   });
@@ -306,9 +315,7 @@ export function useHostCompatibilityAuthorityReport(
  * authority takes. `code: null` means compatible. Everything else answers
  * `null` - see the caller.
  */
-function describeCompatVerdictForAuthority(
-  compatibility: HostCompatibility,
-): {
+function describeCompatVerdictForAuthority(compatibility: HostCompatibility): {
   readonly code: string | null;
   readonly hostVersion: string | null;
   readonly minSupportedVersion: string | null;

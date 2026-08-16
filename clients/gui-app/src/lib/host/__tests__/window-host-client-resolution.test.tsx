@@ -13,15 +13,15 @@ import {
 } from "@traycer/protocol/host/index";
 
 /**
- * `useHostClient()` is the app-wide host client, and since redesign P2.1 it is
- * the SELECTION LAYER's `effectiveHostId` resolved through the same
- * pinned-requester mechanism a surface pin uses - not the runtime's client
- * with its privileged active slot (D17).
+ * `useHostClient()` is the app-wide host client: the SELECTION LAYER's
+ * `effectiveHostId` resolved through `createRequesterForHostId` (redesign
+ * P2.1, then P4.2 deleted the runtime client's privileged active slot
+ * entirely).
  *
- * The spine is substituted at the provider seam so these cases can move the
- * effective host WITHOUT moving the slot, which is the only way to tell the
- * two sources apart: in production they agree, so a test that let them move
- * together would pass whichever one the hook actually read.
+ * The spine is substituted at the provider seam so these cases can drive
+ * `effectiveHostId` directly against a real spine (real `findHostById`, real
+ * `createRequesterForHostId`) without standing up the full selection
+ * authority engine.
  */
 const spineRef = vi.hoisted<{ value: HostClient<HostRpcRegistry> | null }>(
   () => ({ value: null }),
@@ -93,10 +93,6 @@ beforeEach(() => {
     findHostById: (hostId) =>
       directory.find((entry) => entry.hostId === hostId) ?? null,
   });
-  // The SLOT is parked on the local host for every case below and never
-  // moves. Anything the hook reports about `host-b` therefore came from the
-  // selection layer, and nothing else could have supplied it.
-  spine.bind(mockLocalHostEntry);
   spine.setRequestContext(
     createRequestContextFixture({ origin: "renderer", bearerToken: "tok-1" }),
   );
@@ -111,16 +107,21 @@ afterEach(() => {
 });
 
 describe("useHostClient", () => {
-  it("addresses the effective host, not the bound slot", () => {
+  it("addresses the effective host", () => {
+    // This used to also assert a CONTROL: the runtime client's own active
+    // slot stayed parked on the local host, so an implementation that read
+    // the slot instead of the selection layer would have answered
+    // `mock-local` here. Redesign P4.2 deleted the slot - `getActiveHostId()`
+    // on an un-pinned client is now hardwired to `null` regardless of what
+    // this hook does, so there is no second source left to distinguish from.
+    // The surviving claim is that `useHostClient()` resolves the effective
+    // host.
     applyEffectiveHostId(HOST_B.hostId);
 
     const { result } = renderHook(() => useHostClient());
 
     expect(result.current.getActiveHostId()).toBe(HOST_B.hostId);
     expect(result.current.getActiveHost()).toEqual(HOST_B);
-    // The control: the slot never moved, so an implementation reading it
-    // would have answered `mock-local` here.
-    expect(getSpine().getActiveHostId()).toBe(mockLocalHostEntry.hostId);
   });
 
   it("re-points when the effective host moves, and hands back a stable client while it does not", () => {
@@ -141,13 +142,12 @@ describe("useHostClient", () => {
     expect(first.getActiveHostId()).toBe(mockLocalHostEntry.hostId);
   });
 
-  it("reports ∅ rather than falling back to whatever is bound", () => {
+  it("reports ∅ when no host is effective", () => {
     applyEffectiveHostId(null);
 
     const { result } = renderHook(() => useHostClient());
 
     expect(result.current.getActiveHostId()).toBe(null);
-    expect(getSpine().getActiveHostId()).toBe(mockLocalHostEntry.hostId);
   });
 
   it("sends a request to the effective host", async () => {

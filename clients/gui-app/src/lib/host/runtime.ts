@@ -61,9 +61,9 @@ export const HostRuntimeContext = runtime.HostRuntimeContext;
  *
  * NOT a host. It is what a host id is resolved AGAINST, which is why its only
  * callers are the resolution hooks below and in `hooks/host/`: everything
- * else wants a client for a named host and must say which one. Reading a host
- * identity off this object is reading the active slot, and the active slot is
- * being deleted (redesign D17 / P4.2).
+ * else wants a client for a named host and must say which one. It answers no
+ * host identity at all: the active slot it used to answer from is gone
+ * (redesign D17 / P4.2), so `getActiveHostId()` here is a constant `null`.
  */
 export const useHostRuntimeClient = runtime.useHostClient;
 

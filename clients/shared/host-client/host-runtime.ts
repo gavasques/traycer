@@ -40,11 +40,6 @@ export interface IHostDirectoryService {
   refreshForEra(era: AuthEra): Promise<readonly HostDirectoryEntry[]>;
   /** Drop any in-flight refresh — used when the credential rotates. */
   invalidateInFlightRefresh(): void;
-  getSelected(): HostDirectoryEntry | null;
-  selectById(hostId: string | null): void;
-  onSelectionChange(
-    handler: (entry: HostDirectoryEntry | null) => void,
-  ): Disposable;
 }
 
 export interface HostRuntimeOptions<Registry extends VersionedRpcRegistry> {
@@ -162,15 +157,18 @@ export class HostRuntime<Registry extends VersionedRpcRegistry> {
     }
     this.started = true;
 
-    // BEFORE the first bind, so a consumer that subscribes during the opening
-    // commit sees the registry already answering off the live directory rather
-    // than the empty answers an uninstalled source gives.
+    // BEFORE anything else reads it, so a consumer that subscribes during the
+    // opening commit sees the registry already answering off the live
+    // directory rather than the empty answers an uninstalled source gives.
+    // This used to be sequenced "before the first bind"; there is no bind, and
+    // the registry is now the ONLY thing that tells a pinned consumer its row
+    // arrived, which makes the ordering more load-bearing than it was, not
+    // less.
     if (this.connectionRegistry !== null) {
       installHostConnectionRegistrySource(this.connectionRegistry);
     }
 
     this.hostClient.setRequestContext(this.requestContextProvider.current());
-    this.hostClient.bind(this.directory.getSelected());
 
     this.contextUnsubscribe = this.requestContextProvider.onChange(
       (ctx, era) => {
@@ -202,12 +200,6 @@ export class HostRuntime<Registry extends VersionedRpcRegistry> {
         this.directory.invalidateInFlightRefresh();
         this.hostClient.notifyBearerRotated();
       });
-
-    this.disposables.push(
-      this.directory.onSelectionChange((entry) => {
-        this.hostClient.bind(entry);
-      }),
-    );
 
     this.disposables.push(
       this.runnerHost.onLocalHostChange(() => {

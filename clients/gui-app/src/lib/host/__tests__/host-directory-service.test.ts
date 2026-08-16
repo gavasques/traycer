@@ -16,7 +16,6 @@ import {
   HostDirectoryService,
   type HostDirectoryServiceOptions,
 } from "@/lib/host/host-directory-service";
-import { Analytics } from "@/lib/analytics";
 import { lastLocalHostIdKey } from "@/lib/persist";
 import { useSettingsHostScopeStore } from "@/stores/settings/settings-host-scope-store";
 
@@ -34,12 +33,6 @@ const localSnapshot: LocalHostSnapshot = {
   systemHostName: "hardiks-macbook",
   displayName: "hardiks-macbook",
   availability: "available",
-};
-
-const localSnapshotNewEndpoint: LocalHostSnapshot = {
-  ...localSnapshot,
-  websocketUrl: "ws://127.0.0.1:4918/rpc",
-  pid: 4243,
 };
 
 const rememberedRemoteHostEntry: HostDirectoryEntry = {
@@ -373,7 +366,6 @@ describe("HostDirectoryService", () => {
 
     expect(directory.getCardinality()).toBe("many");
     expect(directory.getDefaultEntry()).toBeNull();
-    expect(directory.getSelected()).toBeNull();
   });
 
   it("reports cardinality 'zero' when the directory has no local or remote entries", async () => {
@@ -389,31 +381,6 @@ describe("HostDirectoryService", () => {
 
     expect(directory.getCardinality()).toBe("zero");
     expect(directory.getDefaultEntry()).toBeNull();
-  });
-
-  it("emits onSelectionChange after selectById()", async () => {
-    const host = makeHost(localSnapshot);
-    const directory = makeDirectory({
-      authContextId: null,
-      credentialGeneration: null,
-      runnerHost: host,
-      localHostIdSeeder: null,
-      remoteFetcher: () =>
-        Promise.resolve({ kind: "hosts", entries: [mockRemoteHostEntry] }),
-    });
-    await directory.start();
-
-    const observed: Array<HostDirectoryEntry | null> = [];
-    directory.onSelectionChange((entry) => {
-      observed.push(entry);
-    });
-
-    directory.selectById(mockRemoteHostEntry.hostId);
-    directory.selectById(null);
-
-    expect(observed).toHaveLength(2);
-    expect(observed[0]?.hostId).toBe(mockRemoteHostEntry.hostId);
-    expect(observed[1]).toBeNull();
   });
 
   it("collapses a REJECTED fetcher into the failed outcome - refresh() resolves, prior remote entries are retained, and the next refresh recovers", async () => {
@@ -479,10 +446,6 @@ describe("HostDirectoryService", () => {
     });
 
     await expect(directory.start()).resolves.toBeUndefined();
-    // No more startup default-promotion (redesign P1.2): bind explicitly so
-    // there is something to observe surviving the rejected first refresh.
-    directory.selectById(localSnapshot.hostId);
-    expect(directory.getSelected()?.hostId).toBe(localSnapshot.hostId);
 
     // The service is fully operational afterwards: the next refresh merges
     // the remote entries as usual.
@@ -490,24 +453,6 @@ describe("HostDirectoryService", () => {
     expect(entries.map((entry) => entry.hostId)).toContain(
       rememberedRemoteHostEntry.hostId,
     );
-  });
-
-  it("clears stale selection when the selected host is no longer in the directory", async () => {
-    const host = makeHost(localSnapshot);
-    const directory = makeDirectory({
-      authContextId: null,
-      credentialGeneration: null,
-      runnerHost: host,
-      localHostIdSeeder: null,
-      remoteFetcher: null,
-    });
-    await directory.start();
-
-    directory.selectById(localSnapshot.hostId);
-    expect(directory.getSelected()?.hostId).toBe(localSnapshot.hostId);
-
-    host.setLocalHost(null);
-    expect(directory.getSelected()).toBeNull();
   });
 
   it("refreshes the local entry when the runner emits an update", async () => {
@@ -535,40 +480,6 @@ describe("HostDirectoryService", () => {
     ]);
   });
 
-  it("emits a fresh selected local entry when the same host id changes endpoint", async () => {
-    const host = makeHost(localSnapshot);
-    const directory = makeDirectory({
-      authContextId: null,
-      credentialGeneration: null,
-      runnerHost: host,
-      localHostIdSeeder: null,
-      remoteFetcher: null,
-    });
-    await directory.start();
-    // No more startup default-promotion (redesign P1.2): bind explicitly.
-    directory.selectById(localSnapshot.hostId);
-
-    const selectedBefore = directory.getSelected();
-    expect(selectedBefore?.hostId).toBe(localSnapshot.hostId);
-
-    const observed: Array<HostDirectoryEntry | null> = [];
-    directory.onSelectionChange((entry) => {
-      observed.push(entry);
-    });
-
-    host.setLocalHost(localSnapshotNewEndpoint);
-
-    expect(observed).toHaveLength(1);
-    expect(observed[0]?.hostId).toBe(localSnapshot.hostId);
-    expect(observed[0]?.websocketUrl).toBe(
-      localSnapshotNewEndpoint.websocketUrl,
-    );
-    expect(observed[0]).not.toBe(selectedBefore);
-    expect(directory.getSelected()?.websocketUrl).toBe(
-      localSnapshotNewEndpoint.websocketUrl,
-    );
-  });
-
   it("reflects the current local snapshot even when start() runs after the host already has one", async () => {
     // Mirrors the desktop-bridge timing where the preload has captured the
     // current snapshot before `gui-app` starts the directory service. The
@@ -591,31 +502,6 @@ describe("HostDirectoryService", () => {
     expect(entries).toHaveLength(1);
     expect(entries[0].hostId).toBe(localSnapshot.hostId);
     expect(directory.getLocalEntry()?.hostId).toBe(localSnapshot.hostId);
-  });
-
-  it("preserves an explicit non-null selection when the local host appears later", async () => {
-    const host = makeHost(null);
-    const directory = makeDirectory({
-      authContextId: null,
-      credentialGeneration: null,
-      runnerHost: host,
-      localHostIdSeeder: null,
-      remoteFetcher: () =>
-        Promise.resolve({ kind: "hosts", entries: [mockRemoteHostEntry] }),
-    });
-    await directory.start();
-
-    directory.selectById(mockRemoteHostEntry.hostId);
-
-    const observed: Array<HostDirectoryEntry | null> = [];
-    directory.onSelectionChange((entry) => {
-      observed.push(entry);
-    });
-
-    host.setLocalHost(localSnapshot);
-
-    expect(observed).toHaveLength(0);
-    expect(directory.getSelected()?.hostId).toBe(mockRemoteHostEntry.hostId);
   });
 
   it("resolves entries by id across local and remote", async () => {
@@ -733,39 +619,6 @@ describe("HostDirectoryService", () => {
 
     await vi.advanceTimersByTimeAsync(HOST_DIRECTORY_REFRESH_POLL_MS / 2);
     expect(fetchCalls).toBe(3);
-  });
-
-  it("does not reassign or notify onSelectionChange when a poll delivers a field-identical remote entry for the bound selection", async () => {
-    const host = makeHost(null);
-    const { fetcher } = queuedFetcher([
-      { kind: "hosts", entries: [mockRemoteHostEntry] },
-      // A fresh object literal, byte-identical to `mockRemoteHostEntry` but a
-      // different reference - exactly what a real poll fetch produces even
-      // when nothing about the host actually changed.
-      { kind: "hosts", entries: [{ ...mockRemoteHostEntry }] },
-    ]);
-    const directory = makeDirectory({
-      authContextId: null,
-      credentialGeneration: null,
-      runnerHost: host,
-      localHostIdSeeder: null,
-      remoteFetcher: fetcher,
-    });
-    await directory.start();
-    // No more startup default-promotion (redesign P1.2): bind explicitly.
-    directory.selectById(mockRemoteHostEntry.hostId);
-    expect(directory.getSelected()?.hostId).toBe(mockRemoteHostEntry.hostId);
-    const boundEntry = directory.getSelected();
-
-    const observed: Array<HostDirectoryEntry | null> = [];
-    directory.onSelectionChange((entry) => {
-      observed.push(entry);
-    });
-
-    await directory.refresh();
-
-    expect(directory.getSelected()).toBe(boundEntry);
-    expect(observed).toEqual([]);
   });
 
   it("does not notify onChange when a poll delivers a field-identical snapshot, and still notifies when one actually changes", async () => {
@@ -955,7 +808,12 @@ describe("HostDirectoryService", () => {
     ).toBe(false);
   });
 
-  it("retains the last-known remote entries and selection when a refresh fails (T20 / audit P4)", async () => {
+  it("retains the last-known remote entries when a refresh fails (T20 / audit P4)", async () => {
+    // This used to also assert the bound SELECTION survived the failed
+    // refresh (`selectById` / `getSelected()` / `onSelectionChange`). P4.2
+    // deleted selection from `HostDirectoryService` - that half of the claim
+    // has no post-slot equivalent here and is dropped; entry retention is
+    // the surviving contract.
     const host = makeHost(null);
     const { fetcher } = queuedFetcher([
       { kind: "hosts", entries: [mockRemoteHostEntry] },
@@ -969,20 +827,10 @@ describe("HostDirectoryService", () => {
       remoteFetcher: fetcher,
     });
     await directory.start();
-    // No more startup default-promotion (redesign P1.2): bind explicitly.
-    directory.selectById(mockRemoteHostEntry.hostId);
-    expect(directory.getSelected()?.hostId).toBe(mockRemoteHostEntry.hostId);
-
-    const observed: Array<HostDirectoryEntry | null> = [];
-    directory.onSelectionChange((entry) => {
-      observed.push(entry);
-    });
 
     await directory.refresh();
 
     expect(await directory.list()).toHaveLength(1);
-    expect(directory.getSelected()?.hostId).toBe(mockRemoteHostEntry.hostId);
-    expect(observed).toEqual([]);
   });
 
   it("clears remote entries when a refresh reports signed-out", async () => {
@@ -1004,42 +852,6 @@ describe("HostDirectoryService", () => {
     await directory.refresh();
 
     expect(await directory.list()).toEqual([]);
-  });
-
-  it("keeps an explicitly selected remote host bound through a failed refresh, with no onSelectionChange(null)", async () => {
-    const host = makeHost(null);
-    const secondRemote: HostDirectoryEntry = {
-      hostId: "mock-remote-2",
-      label: "Second Remote",
-      kind: "remote",
-      websocketUrl: "wss://mock-remote-2.traycer.invalid/rpc",
-      version: "0.0.0-mock",
-      transportDialability: "dialable",
-    };
-    const { fetcher } = queuedFetcher([
-      { kind: "hosts", entries: [mockRemoteHostEntry, secondRemote] },
-      { kind: "failed" },
-    ]);
-    const directory = makeDirectory({
-      authContextId: null,
-      credentialGeneration: null,
-      runnerHost: host,
-      localHostIdSeeder: null,
-      remoteFetcher: fetcher,
-    });
-    await directory.start();
-    directory.selectById(secondRemote.hostId);
-    expect(directory.getSelected()?.hostId).toBe(secondRemote.hostId);
-
-    const observed: Array<HostDirectoryEntry | null> = [];
-    directory.onSelectionChange((entry) => {
-      observed.push(entry);
-    });
-
-    await directory.refresh();
-
-    expect(directory.getSelected()?.hostId).toBe(secondRemote.hostId);
-    expect(observed).toEqual([]);
   });
 
   it("coalesces concurrent refresh() calls onto a single fetch", async () => {
@@ -1345,54 +1157,6 @@ describe("HostDirectoryService", () => {
         kind: "local",
         websocketUrl: null,
       });
-      expect(window.localStorage.getItem(LAST_LOCAL_HOST_ID_STORAGE_KEY)).toBe(
-        "re-enrolled-host-id",
-      );
-    });
-
-    /**
-     * The other holder: a LIVE selection. `adoptLocalHostId` migrates the
-     * bound selection when the previous local id it named re-enrolls under a
-     * new one - the obsolete twin stays listed until the registry catches up,
-     * so nothing else would move an already-bound selection off it.
-     *
-     * Setup binds the booting entry EXPLICITLY via `selectById` first: there
-     * is no more startup default-promotion for it to rely on (redesign
-     * P1.2).
-     */
-    it("retargets a live selection of the old id when the host re-enrolls mid-session", async () => {
-      window.localStorage.setItem(
-        LAST_LOCAL_HOST_ID_STORAGE_KEY,
-        localSnapshot.hostId,
-      );
-      const obsoleteTwin: HostDirectoryEntry = {
-        ...ownRegistryTwin,
-        hostId: localSnapshot.hostId,
-      };
-      const host = makeHost(localSnapshot);
-      const directory = makeDirectory({
-        authContextId: null,
-        credentialGeneration: null,
-        runnerHost: host,
-        localHostIdSeeder: null,
-        remoteFetcher: () =>
-          Promise.resolve({ kind: "hosts", entries: [obsoleteTwin] }),
-      });
-      await directory.start();
-      // No more startup default-promotion (redesign P1.2): bind the booting
-      // entry explicitly so there is a live selection for the re-enrollment
-      // to migrate.
-      directory.selectById(localSnapshot.hostId);
-      expect(directory.getSelected()?.hostId).toBe(localSnapshot.hostId);
-
-      host.setLocalHost({
-        ...localSnapshot,
-        hostId: "re-enrolled-host-id",
-      });
-      await flushPromises();
-
-      expect(directory.getSelected()?.hostId).toBe("re-enrolled-host-id");
-      expect(directory.getSelected()?.kind).toBe("local");
       expect(window.localStorage.getItem(LAST_LOCAL_HOST_ID_STORAGE_KEY)).toBe(
         "re-enrolled-host-id",
       );
@@ -1855,182 +1619,6 @@ describe("HostDirectoryService", () => {
         accountAHostEntry.hostId,
         accountBHostEntry.hostId,
       ]);
-    });
-  });
-
-  /**
-   * Positive coverage for what selection resolution IS now (redesign P1.2),
-   * not just what the pre-redesign machinery used to do. `selectById` is a
-   * pure setter - see the class doc comment on `HostDirectoryService` and on
-   * `selectById` itself in `host-directory-service.ts`.
-   */
-  describe("selectById is a pure setter (redesign P1.2)", () => {
-    it("does not write to localStorage", async () => {
-      const setItem = vi.spyOn(window.localStorage, "setItem");
-      const host = makeHost(localSnapshot);
-      const directory = makeDirectory({
-        authContextId: null,
-        credentialGeneration: null,
-        runnerHost: host,
-        localHostIdSeeder: null,
-        remoteFetcher: () =>
-          Promise.resolve({ kind: "hosts", entries: [mockRemoteHostEntry] }),
-      });
-      await directory.start();
-      setItem.mockClear();
-
-      directory.selectById(mockRemoteHostEntry.hostId);
-      directory.selectById(null);
-
-      expect(setItem).not.toHaveBeenCalled();
-    });
-
-    it("does not call analytics", async () => {
-      const track = vi.spyOn(Analytics.getInstance(), "track");
-      const host = makeHost(localSnapshot);
-      const directory = makeDirectory({
-        authContextId: null,
-        credentialGeneration: null,
-        runnerHost: host,
-        localHostIdSeeder: null,
-        remoteFetcher: () =>
-          Promise.resolve({ kind: "hosts", entries: [mockRemoteHostEntry] }),
-      });
-      await directory.start();
-      track.mockClear();
-
-      directory.selectById(mockRemoteHostEntry.hostId);
-      directory.selectById(null);
-
-      expect(track).not.toHaveBeenCalled();
-    });
-
-    it("binds null for an id the directory cannot resolve, without throwing and without retaining the previous binding", async () => {
-      const host = makeHost(localSnapshot);
-      const directory = makeDirectory({
-        authContextId: null,
-        credentialGeneration: null,
-        runnerHost: host,
-        localHostIdSeeder: null,
-        remoteFetcher: () =>
-          Promise.resolve({ kind: "hosts", entries: [mockRemoteHostEntry] }),
-      });
-      await directory.start();
-
-      directory.selectById(mockRemoteHostEntry.hostId);
-      expect(directory.getSelected()?.hostId).toBe(mockRemoteHostEntry.hostId);
-
-      expect(() => {
-        directory.selectById("a-host-id-nothing-published");
-      }).not.toThrow();
-
-      expect(directory.getSelected()).toBeNull();
-    });
-  });
-
-  /**
-   * `refreshSelectedEntry` (private) re-resolves the bound row by VALUE
-   * equality on every merged-directory change and unbinds when the row
-   * vanishes - it never re-homes to a different host (that is the Selection
-   * Authority's job now, not the directory's).
-   */
-  describe("refreshSelectedEntry keeps the bound row fresh (redesign P1.2)", () => {
-    it("does not re-fire onSelectionChange for a fresh but field-identical snapshot", async () => {
-      const host = makeHost(null);
-      const { fetcher } = queuedFetcher([
-        { kind: "hosts", entries: [mockRemoteHostEntry] },
-        // A fresh object literal, byte-identical to `mockRemoteHostEntry` but
-        // a different reference - what a real poll produces even when
-        // nothing about the host changed.
-        { kind: "hosts", entries: [{ ...mockRemoteHostEntry }] },
-      ]);
-      const directory = makeDirectory({
-        authContextId: null,
-        credentialGeneration: null,
-        runnerHost: host,
-        localHostIdSeeder: null,
-        remoteFetcher: fetcher,
-      });
-      await directory.start();
-      directory.selectById(mockRemoteHostEntry.hostId);
-      const bound = directory.getSelected();
-
-      const observed: Array<HostDirectoryEntry | null> = [];
-      directory.onSelectionChange((entry) => {
-        observed.push(entry);
-      });
-
-      await directory.refresh();
-
-      expect(observed).toEqual([]);
-      expect(directory.getSelected()).toBe(bound);
-    });
-
-    it("unbinds (setSelected(null)) when the bound row's id disappears from a later snapshot", async () => {
-      const host = makeHost(null);
-      const { fetcher } = queuedFetcher([
-        { kind: "hosts", entries: [mockRemoteHostEntry, secondRemoteHostEntry] },
-        { kind: "hosts", entries: [secondRemoteHostEntry] },
-      ]);
-      const directory = makeDirectory({
-        authContextId: null,
-        credentialGeneration: null,
-        runnerHost: host,
-        localHostIdSeeder: null,
-        remoteFetcher: fetcher,
-      });
-      await directory.start();
-      directory.selectById(mockRemoteHostEntry.hostId);
-      expect(directory.getSelected()?.hostId).toBe(mockRemoteHostEntry.hostId);
-
-      const observed: Array<HostDirectoryEntry | null> = [];
-      directory.onSelectionChange((entry) => {
-        observed.push(entry);
-      });
-
-      await directory.refresh();
-
-      expect(observed).toEqual([null]);
-      expect(directory.getSelected()).toBeNull();
-    });
-
-    it("binds a pointed host that arrives LATE - selectById named it before any snapshot could resolve it", async () => {
-      // The authority derives off the fleet and can name a host before this
-      // directory has a matching row - a local host still booting, a
-      // registry page that has not landed. `selectById` used to be a
-      // one-shot for exactly this: an id that missed the instant it arrived
-      // bound `null` forever, because the authority never re-emits an
-      // unchanged selection. This pins the fix - `pointedHostId` survives
-      // the miss so the NEXT snapshot can still resolve it.
-      const host = makeHost(null);
-      const { fetcher } = queuedFetcher([
-        // First snapshot: the pointed host is not here yet.
-        { kind: "hosts", entries: [secondRemoteHostEntry] },
-        // It arrives on the next poll.
-        { kind: "hosts", entries: [secondRemoteHostEntry, mockRemoteHostEntry] },
-      ]);
-      const directory = makeDirectory({
-        authContextId: null,
-        credentialGeneration: null,
-        runnerHost: host,
-        localHostIdSeeder: null,
-        remoteFetcher: fetcher,
-      });
-      await directory.start();
-
-      // Named before it can resolve: the directory has no row for it yet.
-      directory.selectById(mockRemoteHostEntry.hostId);
-      expect(directory.getSelected()).toBeNull();
-
-      const observed: Array<HostDirectoryEntry | null> = [];
-      directory.onSelectionChange((entry) => {
-        observed.push(entry);
-      });
-
-      await directory.refresh();
-
-      expect(observed).toEqual([mockRemoteHostEntry]);
-      expect(directory.getSelected()?.hostId).toBe(mockRemoteHostEntry.hostId);
     });
   });
 

@@ -525,11 +525,13 @@ function HomeWorkspaceRows(props: {
   readonly resolvedFolders: ReadonlyArray<ResolvedFolder>;
   readonly activeHostClient: HostClient<HostRpcRegistry> | null;
   /**
-   * Passed separately from the client because it is the only one of the two
-   * that MOVES on a host swap. `HostClient.bind()` rebinds in place, so the
-   * active-scope client is one object for the app's lifetime - reading its host
-   * id inside a memo keyed on the client alone would pin the first host's
-   * answer. See `rowsIntentKey`.
+   * Passed separately from the client. The original reason no longer holds:
+   * `HostClient.bind()` rebound in place, so the active-scope client was ONE
+   * object for the app's lifetime and a memo keyed on it alone would pin the
+   * first host's answer. P4.2 deleted that - the app-wide client is now a
+   * requester rebuilt when the effective host changes, so it does move. The
+   * id stays an explicit input because it is also non-null in states where
+   * the client is null. See `rowsIntentKey`.
    */
   readonly activeHostId: string | null;
   /** Display label for the selected host — used in absent-path row copy. */

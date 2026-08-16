@@ -211,9 +211,6 @@ function fakeDirectory(
     refresh: () => Promise.resolve(entries),
     refreshForEra: () => Promise.resolve(entries),
     invalidateInFlightRefresh: () => undefined,
-    getSelected: () => entries[0] ?? null,
-    selectById: () => undefined,
-    onSelectionChange: () => ({ dispose: () => undefined }),
   };
 }
 
@@ -787,15 +784,24 @@ describe("cloneChatOnHostSwitch: history-carrying fork and its retry", () => {
     expect(onCloneFailed).toHaveBeenCalledTimes(1);
   });
 
-  it("a selection that MOVES while settings resolve does not disturb the clone (redesign P1.2, D6)", async () => {
+  it("clones onto the target host regardless of app-wide selection (redesign P1.2, D6)", async () => {
     // Previously (`selectedHostIdAtStart` / the app-wide-selection guard,
     // deleted by D6): a mid-resolution move of the ACTIVE host failed the
     // clone rather than risk landing it on the moved-to host, because the
     // create mutation used to stamp the ambient active host at mutate time.
     // Now the clone always creates on the TARGET host's own client
     // (`useEpicCreateChatForHostClient`), which never reads the app-wide
-    // selection at all - so a selection move mid-flight, however it lands,
-    // is simply irrelevant to where this clone goes.
+    // selection at all.
+    //
+    // This used to also simulate a mid-flight selection MOVE (a mutable
+    // `getSelected()` override flipped while `resolveSettingsForClone`'s
+    // microtask was pending) to prove that move didn't disturb the clone.
+    // P4.2 deleted `getSelected` from `IHostDirectoryService` entirely -
+    // there is no longer any selection concept on the directory for
+    // anything to move, so that half of the claim has no post-slot
+    // equivalent and is dropped. What survives, and is still worth pinning,
+    // is the plain claim the comment above states: cloning succeeds and
+    // targets correctly off a directory that carries more than one entry.
     const createChat = vi.fn<CreateChatCommand>();
     const onCloneFailed = vi.fn();
     const targetEntry: HostDirectoryEntry = {
@@ -806,7 +812,7 @@ describe("cloneChatOnHostSwitch: history-carrying fork and its retry", () => {
       version: "0.0.0-mock",
       transportDialability: "dialable",
     };
-    const movedToEntry: HostDirectoryEntry = {
+    const otherEntry: HostDirectoryEntry = {
       hostId: "third-host",
       label: "Third",
       kind: "local",
@@ -814,22 +820,15 @@ describe("cloneChatOnHostSwitch: history-carrying fork and its retry", () => {
       version: "0.0.0-mock",
       transportDialability: "dialable",
     };
-    const selected = { current: targetEntry };
-    const movingDirectory: IHostDirectoryService = {
-      ...fakeDirectory([targetEntry, movedToEntry]),
-      getSelected: () => selected.current,
-    };
 
     cloneChatOnHostSwitch(
       baseCloneArgs({
-        directory: movingDirectory,
+        directory: fakeDirectory([targetEntry, otherEntry]),
         createChat,
         onCloneFailed,
         sourceSettings: null,
       }),
     );
-    // The move lands while `resolveSettingsForClone`'s microtask is pending.
-    selected.current = movedToEntry;
 
     await Promise.resolve();
     await Promise.resolve();

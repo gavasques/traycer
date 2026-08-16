@@ -115,14 +115,14 @@ export type HostDirectoryListener = (
  * the shared stubbed `fetchRemoteHosts` so the merged directory has a
  * stable shape regardless of remote discovery progress (D3).
  *
- * Selection is NOT decided here (redesign P1.2). The per-app selection
- * authority owns `preferredHostId` and derives `effectiveHostId`; the one
- * renderer bridge (`mountSelectionAuthorityBridge`) pushes that verdict in
- * through `selectById`, which is a pure setter, and `HostRuntime.start()`
- * reads `getSelected()` and listens to `onSelectionChange(...)` to rebind
- * `HostClient` exactly as before. What this class still owns is RESOLUTION:
- * which directory row an id currently names, and keeping the bound row fresh
- * as the merged directory changes. There is no default promotion, no
+ * Selection is not decided here, and since redesign P4.2 it is not HELD here
+ * either. The per-app selection authority owns `preferredHostId` and derives
+ * `effectiveHostId`; the renderer bridge parks that verdict in the authority
+ * store, and every consumer resolves it into a client through a pinned
+ * requester at read time. This class used to mirror that verdict - a bound
+ * row, a pointer to re-resolve it from, and a listener fan-out into
+ * `HostClient.bind()` - and all three died with the active slot. What it owns
+ * is RESOLUTION and nothing else: which directory row an id currently names. There is no default promotion, no
  * persisted restore, and no auto-failover here any more - the fields and
  * machinery for all three are deleted, not shadowed.
  *
@@ -176,41 +176,7 @@ export class HostDirectoryService implements IHostDirectoryService {
    * only before the first emit.
    */
   private lastEmittedSnapshot: readonly HostDirectoryEntry[] | null = null;
-  /**
-   * The row this window is bound to - the authority's `effectiveHostId`,
-   * resolved against the merged directory by `selectById`, and re-resolved
-   * against every later snapshot by `refreshSelectedEntry`.
-   *
-   * `null` means either "the authority has no effective host" or "it names
-   * one this directory cannot resolve". Nothing here distinguishes the two,
-   * and nothing needs to: consumers that must tell them apart read
-   * `effectiveHostId` from the authority (`useEffectiveHostId`), which is the
-   * value that carries the intent.
-   */
-  private selected: HostDirectoryEntry | null = null;
-  /**
-   * The id the authority last pointed this window at - a MIRROR of
-   * `effectiveHostId`, written only by `selectById` and never persisted.
-   *
-   * Not a revival of `explicitSelection`, and the difference is the whole
-   * point: nothing here decides anything. It answers exactly one question -
-   * "which row should `selected` be, once the directory can resolve it" - and
-   * it exists because those two events do not arrive in order. The authority
-   * derives off the FLEET (registry + local host id), while a row here comes
-   * from the shell's local snapshot and the remote fetch, so the derivation
-   * routinely names a host seconds before this directory can resolve it: a
-   * local host still booting, a remote whose registry page has not landed.
-   *
-   * Without it, `selectById` was a one-shot: an id that did not resolve at
-   * the instant it arrived bound `null`, and since the authority does not
-   * re-emit an unchanged selection, the window stayed unbound FOREVER while
-   * the row it was waiting for sat in the very next snapshot.
-   */
-  private pointedHostId: string | null = null;
   private readonly listeners = new Set<HostDirectoryListener>();
-  private readonly selectionListeners = new Set<
-    (entry: HostDirectoryEntry | null) => void
-  >();
   private localSubscription: Disposable | null = null;
   private started = false;
   private refreshIntervalId: number | null = null;
@@ -316,7 +282,6 @@ export class HostDirectoryService implements IHostDirectoryService {
         status: snapshot === null ? "missing" : "available",
         version: snapshot?.version ?? null,
       });
-      this.refreshSelectedEntry();
       this.emit();
     });
     await this.refresh();
@@ -448,36 +413,6 @@ export class HostDirectoryService implements IHostDirectoryService {
     return null;
   }
 
-  getSelected(): HostDirectoryEntry | null {
-    return this.selected;
-  }
-
-  /**
-   * Resolve the authority's `effectiveHostId` against the merged directory
-   * and bind it. A PURE SETTER (redesign P1.2): it decides nothing, persists
-   * nothing, and reports nothing.
-   *
-   * Its one sanctioned caller is `mountSelectionAuthorityBridge` - enforced
-   * by P0.3's write-path lint, not by convention. Everything it used to do
-   * besides binding has moved: the durable intent is the authority's
-   * `preferredHostId` (written only by Settings ▸ Activate, which also fires
-   * `HostSelected`), and the persisted restore is the authority's
-   * identity-scoped preferred store.
-   *
-   * An id the directory cannot resolve binds `null`. That is not a lost
-   * intent - the intent lives in the authority, which is still pointed at it
-   * and will push again when the row arrives.
-   */
-  selectById(hostId: string | null): void {
-    this.pointedHostId = hostId;
-    const entry = hostId === null ? null : this.findById(hostId);
-    appLogger.debug("[host-directory] effective host applied", {
-      hostId,
-      resolved: entry !== null,
-    });
-    this.setSelected(entry);
-  }
-
   getLocalEntry(): HostDirectoryEntry | null {
     return this.localEntry;
   }
@@ -542,17 +477,6 @@ export class HostDirectoryService implements IHostDirectoryService {
     };
   }
 
-  onSelectionChange(
-    handler: (entry: HostDirectoryEntry | null) => void,
-  ): Disposable {
-    this.selectionListeners.add(handler);
-    return {
-      dispose: () => {
-        this.selectionListeners.delete(handler);
-      },
-    };
-  }
-
   dispose(): void {
     if (this.localSubscription !== null) {
       this.localSubscription.dispose();
@@ -560,7 +484,6 @@ export class HostDirectoryService implements IHostDirectoryService {
     }
     this.stopRefreshPolling();
     this.listeners.clear();
-    this.selectionListeners.clear();
     this.started = false;
   }
 
@@ -709,7 +632,6 @@ export class HostDirectoryService implements IHostDirectoryService {
         );
         this.remoteEntries = [];
         this.lastCommitIdentity = null;
-        this.refreshSelectedEntry();
         this.emitIfSnapshotChanged();
         return this.snapshot();
       }
@@ -770,7 +692,6 @@ export class HostDirectoryService implements IHostDirectoryService {
       requestFleetRefresh(this.runnerHost);
     }
     await this.reseedLocalHostIdIfUnknown();
-    this.refreshSelectedEntry();
     // Emit only when the merged snapshot actually changed. The 60s registry
     // poll lands here on every tick; an unconditional emit made every
     // `onChange` consumer (17 query call sites) re-render/refetch app-wide
@@ -893,10 +814,14 @@ export class HostDirectoryService implements IHostDirectoryService {
    * prevent. So the holders migrate with the id: "this machine" follows the
    * machine.
    *
-   * Enumerated holders, migrated here: the Settings viewing scope, the live
-   * selection, and the pointer the authority's verdict was resolved through
-   * (`pointedHostId`) - miss that last one and the next re-resolve undoes
-   * this migration. Deliberately NOT migrated: tab bindings (bound to a
+   * Enumerated holders, migrated here: the Settings viewing scope. There
+   * used to be two more - the live selection and the pointer the authority's
+   * verdict was resolved through - and both died with the active slot
+   * (redesign P4.2). This directory no longer holds a selection to migrate;
+   * the app-wide host is the authority's `effectiveHostId`, resolved through
+   * a pinned requester at each read, so a re-enrollment is picked up by the
+   * next resolution rather than by rewriting a stored row. Deliberately NOT
+   * migrated: tab bindings (bound to a
    * hostId for life by design - cross-host is clone-not-migrate) and
    * notification origin ids (ephemeral, scoped to a delivered notification).
    * The durable INTENT is no longer one of them - it is the authority's
@@ -922,23 +847,6 @@ export class HostDirectoryService implements IHostDirectoryService {
     const settingsScope = useSettingsHostScopeStore.getState();
     if (settingsScope.scopedHostId === previous) {
       settingsScope.setScopedHostId(next);
-    }
-    // The pointer moves with it. `pointedHostId` is what every later
-    // `refreshSelectedEntry()` re-resolves from, so migrating the live
-    // selection WITHOUT it is worse than not migrating at all: the next
-    // refresh re-resolves the stale id, finds the obsolete twin still listed
-    // under it, and drags the binding straight back onto the dead machine.
-    if (this.pointedHostId === previous) {
-      this.pointedHostId = next;
-    }
-    // The LIVE selection is a holder too, and the authority's next push
-    // cannot be waited for: the obsolete twin usually remains listed until
-    // deregistration propagates, so nothing upstream has noticed yet. At seed
-    // time nothing is selected yet, so this only acts on the live
-    // re-enrollment path - where the caller just installed the new local
-    // entry, making it resolvable here.
-    if (this.selected !== null && this.selected.hostId === previous) {
-      this.setSelected(this.findById(next));
     }
     appLogger.debug("[host-directory] local host id re-enrolled", {
       previous,
@@ -972,80 +880,6 @@ export class HostDirectoryService implements IHostDirectoryService {
     }
     return entries;
   }
-
-  private setSelected(entry: HostDirectoryEntry | null): void {
-    if (this.selected === entry) {
-      return;
-    }
-    this.selected = entry;
-    appLogger.debug("[host-directory] effective host selection changed", {
-      hostId: entry?.hostId ?? null,
-      kind: entry?.kind ?? null,
-      hasWebsocketUrl: entry !== null && entry.websocketUrl !== null,
-    });
-    for (const handler of this.selectionListeners) {
-      handler(entry);
-    }
-  }
-
-  /**
-   * Re-resolve the bound row against the current merged directory.
-   *
-   * The directory's remaining selection job, and the one thing the authority
-   * cannot do for it: `remoteEntries` is rebuilt from scratch on every poll
-   * and the local snapshot republishes on every host transition, so the
-   * object `HostClient` is bound to goes stale (a new `websocketUrl`, a
-   * changed availability) without the EFFECTIVE HOST changing at all.
-   *
-   * Value equality, not identity: a refresh reallocates every entry each
-   * poll, so an identity compare would re-fire the selection listeners every
-   * ~60s with an unchanged host.
-   *
-   * A row that VANISHED unbinds. It is not a decision - the authority still
-   * holds the intent and re-derives from the fleet it is watching; this only
-   * refuses to keep serving a row the directory no longer has.
-   */
-  private refreshSelectedEntry(): void {
-    const pointedHostId = this.pointedHostId;
-    if (pointedHostId === null) {
-      return;
-    }
-    const current = this.selected;
-    const fresh = this.findById(pointedHostId);
-    if (fresh === null) {
-      if (current !== null) {
-        appLogger.debug("[host-directory] selected host left the directory", {
-          hostId: pointedHostId,
-        });
-        this.setSelected(null);
-      }
-      return;
-    }
-    if (current === null) {
-      // The row the authority named has ARRIVED. This is the late-binding
-      // case, not a re-resolve: a host that was still booting (or a registry
-      // page that had not landed) when the derivation named it.
-      appLogger.debug("[host-directory] pointed host resolved", {
-        hostId: fresh.hostId,
-        kind: fresh.kind,
-      });
-      this.setSelected(fresh);
-      return;
-    }
-    if (hostDirectoryEntriesEqual(fresh, current)) {
-      return;
-    }
-    this.selected = fresh;
-    appLogger.debug("[host-directory] effective host selection refreshed", {
-      hostId: fresh.hostId,
-      kind: fresh.kind,
-      hasWebsocketUrl: fresh.websocketUrl !== null,
-    });
-    for (const handler of this.selectionListeners) {
-      handler(fresh);
-    }
-  }
-
 
   private emit(): void {
     const snapshot = this.snapshot();

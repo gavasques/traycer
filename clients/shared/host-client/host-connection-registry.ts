@@ -34,10 +34,10 @@ import {
  *  - **The per-host "row changed" signal.** `HostClient.createRequesterForHostId`
  *    re-reads its row on every property access, so a row that ARRIVES late is
  *    picked up with nothing to re-resolve - but a React consumer still has to
- *    be told to look again. Today the only thing telling it is `bind()`'s
- *    change event, which is the active slot P4.2 deletes. The signal has to
- *    outlive the slot, and it is a fact about a HOST (its row moved), not
- *    about a privileged binding, so it belongs to the registry.
+ *    be told to look again. That telling was once `bind()`'s change event; the
+ *    active slot it spoke for is gone (P4.2), and this signal is what outlived
+ *    it. It is a fact about a HOST (its row moved), not about a privileged
+ *    binding, so it belongs to the registry.
  *  - **Lease reads**, projected from the ONE authority the engine publishes -
  *    never a second copy. The registry holds no lease state of its own; it
  *    reads through {@link HostConnectionLeaseSource} so there is exactly one

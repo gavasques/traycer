@@ -6,8 +6,11 @@ import { useHostRuntimeClient } from "@/lib/host/runtime";
 
 /**
  * Builds a stateless `HostRequester` facade that issues RPCs against `target`
- * WITHOUT `bind()`-ing it as the app-wide active host (which would reload the
- * Epic list and swap app-wide host state).
+ * without disturbing app-wide host state. This once meant "without `bind()`-ing
+ * it as the active host", which would have reloaded the Epic list and swapped
+ * app-wide state; P4.2 deleted the slot, so addressing a host is no longer
+ * capable of moving anything app-wide - which is what this facade wanted all
+ * along.
  *
  * The facade retains only `target`. Each request returns to `globalClient`,
  * which revalidates the target against the directory and captures the shared

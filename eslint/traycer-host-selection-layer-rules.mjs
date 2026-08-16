@@ -82,17 +82,20 @@ export const selectByIdRestrictions = [
 ];
 
 /**
- * Files that may call `selectById`. The method *definition* on
- * HostDirectoryService is a MethodDefinition, not a MemberExpression, so it
- * is not in this list.
+ * NO FILE MAY CALL `selectById`, and there is no allowlist any more.
+ *
+ * `selectById` died with the T2 directory mirror (P4.2 Leg 3) - the method is
+ * gone from `IHostDirectoryService` and from its implementation, and the
+ * authority bridge that was once its single sanctioned caller now publishes to
+ * the selection store instead. The write-path allowlist that named that bridge
+ * went with it: an allowlist permitting a call nobody can make is dead config
+ * wearing the costume of protection.
+ *
+ * The restrictions below are KEPT as a tripwire. Re-adding a selection write to
+ * the directory service is a redesign-level change - it means re-adding the
+ * method to the interface AND an implementation - not an allowlist edit, and it
+ * would rebuild the second-decider defect the audit found.
  */
-export const selectByIdWriteAllowlist = [
-  // The ONE authority→directory bridge. Tightened here in P1.2: Settings now
-  // writes `preferredHostId` through `activate()` (see
-  // `selectionAuthorityWriteAllowlist`) and the landing composer writes a
-  // surface pin, so neither may reach the binding directly any more.
-  "src/lib/host/selection-authority-bridge.ts",
-];
 
 const SELECTION_AUTHORITY_MESSAGE =
   "The selection authority client (`runnerHost.selectionAuthority`) is the preferred-host WRITE API. Only the Settings activate module may reach it, plus the one renderer bridge that mounts the evidence kernel. See " +
@@ -143,10 +146,6 @@ export const selectionAuthorityWriteAllowlist = [
  * Tab-content trees are deliberately absent.
  */
 export const hostSelectionReadAllowlist = [
-  // CRITICAL: P1.2 swap alias — legal re-export of useAddressableHostId.
-  // Removing this entry breaks useEffectiveHostId / useSurfaceHostPin.
-  "src/hooks/host/use-effective-host-id.ts",
-
   // Host-layer adapters + default-client wrapper hook layer.
   "src/hooks/**/*.{ts,tsx}",
   "src/lib/host/**/*.{ts,tsx}",
@@ -227,10 +226,7 @@ export const hostSelectionReadImportRestrictions = {
   // once. `importNames` keeps type-only / unrelated specifiers off the hook.
   patterns: [
     {
-      group: [
-        "**/use-addressable-host-id",
-        "**/use-addressable-host-id.*",
-      ],
+      group: ["**/use-addressable-host-id", "**/use-addressable-host-id.*"],
       importNames: ["useAddressableHostId"],
       message: ACTIVE_HOST_READ_MESSAGE,
     },
@@ -240,10 +236,7 @@ export const hostSelectionReadImportRestrictions = {
       message: ACTIVE_HOST_READ_MESSAGE,
     },
     {
-      group: [
-        "**/use-gui-harness-catalog",
-        "**/use-gui-harness-catalog.*",
-      ],
+      group: ["**/use-gui-harness-catalog", "**/use-gui-harness-catalog.*"],
       importNames: ["useDefaultHostClient"],
       message: ACTIVE_HOST_READ_MESSAGE,
     },

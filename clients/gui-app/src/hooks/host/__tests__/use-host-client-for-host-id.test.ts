@@ -9,6 +9,7 @@ import {
   hostRpcRegistry,
   type HostRpcRegistry,
 } from "@traycer/protocol/host/index";
+import { useSelectionAuthorityStore } from "@/stores/host/selection-authority-store";
 
 const globalClientRef = vi.hoisted<{
   value: HostClient<HostRpcRegistry> | null;
@@ -24,11 +25,21 @@ function getGlobalClient(): HostClient<HostRpcRegistry> {
   return globalClientRef.value;
 }
 
-/** Mirrors `lib/host/runtime.ts`'s `useHostClient`: the effective host id
- *  resolved through the spine's uniform requester. */
+/**
+ * Mirrors `lib/host/runtime.ts`'s `useHostClient` exactly: the SELECTION
+ * LAYER's effective host id, resolved through the spine's uniform requester.
+ *
+ * Reads the authority store rather than the spine's bound slot. Those agree
+ * in production, so a slot-derived mirror passed here for the wrong reason -
+ * and would keep passing after the slot is deleted (P4.2), long after the
+ * thing it claims to mirror had stopped existing. No case below reads this
+ * branch; it is kept faithful so the first one that does gets ∅ and a fixture
+ * that must NAME its effective host, rather than a quietly wrong answer.
+ */
 function getFollowingClient(): HostClient<HostRpcRegistry> {
-  const spine = getGlobalClient();
-  return spine.createRequesterForHostId(spine.getActiveHostId());
+  return getGlobalClient().createRequesterForHostId(
+    useSelectionAuthorityStore.getState().effectiveHostId,
+  );
 }
 
 vi.mock("@/lib/host", () => ({

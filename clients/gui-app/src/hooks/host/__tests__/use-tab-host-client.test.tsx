@@ -11,6 +11,7 @@ import {
   type HostRpcRegistry,
 } from "@traycer/protocol/host/index";
 import { TabHostProvider } from "@/components/epic-canvas/tab-host-provider";
+import { useSelectionAuthorityStore } from "@/stores/host/selection-authority-store";
 
 // Same harness as `use-host-client-for-host-id.test.ts`: the runtime's default
 // client is a real `HostClient` whose `findHostById` is the LIVE directory,
@@ -32,11 +33,21 @@ function getGlobalClient(): HostClient<HostRpcRegistry> {
   return globalClientRef.value;
 }
 
-/** Mirrors `lib/host/runtime.ts`'s `useHostClient`: the effective host id
- *  resolved through the spine's uniform requester. */
+/**
+ * Mirrors `lib/host/runtime.ts`'s `useHostClient` exactly: the SELECTION
+ * LAYER's effective host id, resolved through the spine's uniform requester.
+ *
+ * Reads the authority store rather than the spine's bound slot. Those agree
+ * in production, so a slot-derived mirror passed here for the wrong reason -
+ * and would keep passing after the slot is deleted (P4.2), long after the
+ * thing it claims to mirror had stopped existing. No case below reads this
+ * branch; it is kept faithful so the first one that does gets ∅ and a fixture
+ * that must NAME its effective host, rather than a quietly wrong answer.
+ */
 function getFollowingClient(): HostClient<HostRpcRegistry> {
-  const spine = getGlobalClient();
-  return spine.createRequesterForHostId(spine.getActiveHostId());
+  return getGlobalClient().createRequesterForHostId(
+    useSelectionAuthorityStore.getState().effectiveHostId,
+  );
 }
 
 vi.mock("@/lib/host", () => ({
@@ -174,6 +185,25 @@ describe("useTabHostClient", () => {
     expect(result.current.tab).not.toBe(globalClient);
     expect(result.current.tab?.getActiveHostId()).toBe(
       mockLocalHostEntry.hostId,
+    );
+  });
+
+  it("THROWS outside <TabHostProvider> instead of silently following the app-wide host", () => {
+    globalClientRef.value = buildGlobalClient(() => [
+      mockLocalHostEntry,
+      TAB_HOST,
+    ]);
+    directoryState.data = [mockLocalHostEntry, TAB_HOST];
+
+    // The hook's header has always promised this ("Must be called inside
+    // <TabHostProvider>"); P2.2 made `useTabHostId` enforce it, and nothing
+    // pinned it. It matters more since P2.1: `useHostClientForHostId(null)`
+    // now resolves the EFFECTIVE host rather than handing back the raw spine,
+    // so an unwrapped tile consumer would no longer fail obviously - it would
+    // get a perfectly working client for the wrong host and address it for
+    // life. Loud is the whole point.
+    expect(() => renderHook(() => useTabHostClient())).toThrow(
+      /TabHostProvider/,
     );
   });
 

@@ -8,8 +8,10 @@ import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { LINK_LOGIN_REMINT_MS } from "@/hooks/auth/use-link-login-code-query";
+import { LinkLoginMintError } from "@/lib/auth/link-login-mint-error";
 import {
   useLinkLoginWatch,
+  type LinkLoginDeadKind,
   type LiveClaim,
 } from "@/hooks/auth/use-link-login-watch";
 import { useRespondLinkLoginMutation } from "@/hooks/auth/use-respond-link-login-mutation";
@@ -174,6 +176,80 @@ function ConfirmClaimCard(props: {
   );
 }
 
+/**
+ * A claim is live somewhere, but not on this panel's code: minting came back
+ * `claim-pending`, meaning another surface (portal, CLI, second window) owns
+ * the claim awaiting this user's decision. A state, not an error — and no
+ * QR: any code this panel held is dead behind the server's claim lock.
+ */
+function AwaitingElsewhereCard() {
+  return (
+    <div
+      className="flex flex-col items-center gap-3 text-center"
+      data-testid="link-phone-awaiting-elsewhere"
+    >
+      <Smartphone aria-hidden="true" className="text-muted-foreground" />
+      <p className="text-ui-sm text-foreground">
+        A sign-in request is awaiting your approval on another device or
+        browser.
+      </p>
+      <p className="text-ui-xs text-muted-foreground">
+        Approve or reject it there — a new code can be shown here afterwards.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * The displayed code was terminated externally (superseded by a mint on
+ * another surface, expired, denied elsewhere). Restart is USER-driven only:
+ * an automatic re-mint here would supersede the other surface's fresh code
+ * and ping-pong mints between open surfaces until the rate limit.
+ */
+function SupersededCard(props: {
+  readonly kind: LinkLoginDeadKind;
+  readonly retrying: boolean;
+  readonly onShowNew: () => void;
+}) {
+  return (
+    <div
+      className="flex flex-col items-center gap-3 text-center"
+      data-testid={
+        props.kind === "rejected"
+          ? "link-phone-rejected-elsewhere"
+          : "link-phone-superseded"
+      }
+    >
+      <QrCode aria-hidden="true" className="text-muted-foreground" />
+      <p className="text-ui-sm text-foreground">
+        {props.kind === "rejected"
+          ? "This sign-in request was rejected."
+          : "This code is no longer active."}
+      </p>
+      <p className="text-ui-xs text-muted-foreground">
+        {props.kind === "rejected"
+          ? "It was rejected from another device or browser."
+          : "It was replaced or expired from another device or browser."}
+      </p>
+      <Button
+        variant="outline"
+        disabled={props.retrying}
+        data-testid="link-phone-show-new"
+        onClick={props.onShowNew}
+      >
+        Show a new code here
+        {props.retrying ? (
+          <AgentSpinningDots
+            variant="dots"
+            className="ml-1.5"
+            testId={undefined}
+          />
+        ) : null}
+      </Button>
+    </div>
+  );
+}
+
 function ApprovedCard(props: { readonly onRestart: () => void }) {
   return (
     <div
@@ -268,8 +344,21 @@ export function LinkPhonePanel() {
   const signedIn = useAuthStore((s) => s.status === "signed-in");
   const [approvedDone, setApprovedDone] = useState(false);
   const respond = useRespondLinkLoginMutation();
-  const { claim, code } = useLinkLoginWatch(signedIn && !approvedDone);
+  const { claim, code, deadKind } = useLinkLoginWatch(
+    signedIn && !approvedDone,
+  );
   const minted = code.data ?? null;
+  // `claim-pending` is a state, not an error: the user's single live claim
+  // is awaiting the decision on ANOTHER surface. Rendered only when this
+  // panel has no live code of its own (nothing minted yet, or its code is
+  // dead) — with a live displayed code the pending claim may be THIS code's
+  // own scan racing the rotation mint, and the next status poll surfaces it
+  // as the confirm card; flashing "elsewhere" for it would be wrong.
+  const awaitingElsewhere =
+    code.isError &&
+    code.error instanceof LinkLoginMintError &&
+    code.error.kind === "claim-pending" &&
+    (minted === null || deadKind !== null);
 
   const restart = () => {
     setApprovedDone(false);
@@ -308,6 +397,8 @@ export function LinkPhonePanel() {
           signedIn={signedIn}
           approvedDone={approvedDone}
           claim={claim}
+          awaitingElsewhere={awaitingElsewhere}
+          deadKind={deadKind}
           minted={minted}
           code={{
             isError: code.isError,
@@ -337,6 +428,8 @@ function LinkPhonePanelBody(props: {
   readonly signedIn: boolean;
   readonly approvedDone: boolean;
   readonly claim: LiveClaim | null;
+  readonly awaitingElsewhere: boolean;
+  readonly deadKind: LinkLoginDeadKind | null;
   readonly minted: MintLinkLoginCodeResponse | null;
   readonly code: PanelCodeView;
   readonly respondPending: boolean;
@@ -359,6 +452,20 @@ function LinkPhonePanelBody(props: {
         claim={props.claim}
         busy={props.respondPending}
         onDecide={props.onDecide}
+      />
+    );
+  }
+  // Before the retained mint data: a dead QR must never render while the
+  // real claim waits elsewhere, or after another surface superseded it.
+  if (props.awaitingElsewhere) {
+    return <AwaitingElsewhereCard />;
+  }
+  if (props.deadKind !== null) {
+    return (
+      <SupersededCard
+        kind={props.deadKind}
+        retrying={props.code.isRefetching}
+        onShowNew={props.code.refetch}
       />
     );
   }

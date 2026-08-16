@@ -1006,7 +1006,7 @@ export class AuthService {
     // A failed superseded-save undo left a stale pair durable. Complete that
     // conditional delete BEFORE reading anything to adopt — otherwise this
     // very loop would validate and re-adopt the zombie the fence dropped.
-    if (await this.pendingUndoBlocksRecovery(generation)) {
+    if (await this.pendingUndoBlocksAdoption("recovery")) {
       return;
     }
     let stored: StoredCredentials | null;
@@ -1072,6 +1072,12 @@ export class AuthService {
       return;
     }
     if (!this.isIdentityCurrent(generation) || this.hasLiveBearer()) {
+      return;
+    }
+    // Same adoption-time fence re-check as the reconcile tail: an undo that
+    // registered while this tick's validation was in flight must win.
+    if (this.pendingUndoToken !== null) {
+      this.scheduleSessionRecovery("recovery:pending-undo");
       return;
     }
     this.settleSessionRecovery("recovered");
@@ -2208,6 +2214,16 @@ export class AuthService {
     if (this.isDisposed()) {
       return;
     }
+    // Same fence as the recovery tick: a self-write watcher echo from the
+    // very save whose undo is pending must not become the adoption path that
+    // resurrects it. Runs before the generation capture so a fresh reconcile
+    // request during the retry supersedes this pass normally.
+    if (await this.pendingUndoBlocksAdoption("reconcile")) {
+      return;
+    }
+    if (this.isDisposed()) {
+      return;
+    }
     const identityGen = this.identityGeneration;
     this.reconcileGeneration += 1;
     const reconcileGen = this.reconcileGeneration;
@@ -2256,6 +2272,16 @@ export class AuthService {
     // no-op as the pre-validate check (avoids applySignedIn aborting the live
     // context the reactive path just rotated in place).
     if (stored.token === this.currentBearer) {
+      return;
+    }
+    // Adoption-time fence re-check (synchronous — no interleave between it
+    // and the projection below): the entry fence can pass BEFORE a
+    // superseding finalization even begins its undo, since this reconcile
+    // was triggered by that very write's watcher echo. If an undo registered
+    // while validation was in flight, this pass adopts nothing and the
+    // recovery loop finishes the delete first.
+    if (this.pendingUndoToken !== null) {
+      this.scheduleSessionRecovery("reconcile:pending-undo");
       return;
     }
     this.applyReconciledOutcome(stored, outcome);
@@ -2557,39 +2583,45 @@ export class AuthService {
    * recovery loop completes the delete before adopting anything durable.
    */
   private async undoSupersededCredentialSave(token: string): Promise<void> {
+    // Recorded BEFORE the attempt, not on failure: the very write being
+    // undone has already fired the store watcher, so a reconcile can start
+    // while this delete is still in flight — it must hit the fence during
+    // that window too. The fence's own retry is a concurrent idempotent
+    // compare-and-delete, so the overlap is harmless.
+    this.pendingUndoToken = token;
     try {
       await this.tokenStore.deleteIfToken(token);
+      this.pendingUndoToken = null;
     } catch (error) {
-      this.pendingUndoToken = token;
       this.markStoreUnavailable("undo-superseded-save", error);
     }
   }
 
   /**
-   * Completes an outstanding failed undo before recovery may adopt from the
-   * store. `true` means the store is clean (no pending undo, or the retry
-   * just settled it — `kept` is settled too: someone else's pair owns the
-   * file now and the stale one is gone). `false` means the conditional
-   * delete is STILL failing and nothing durable may be adopted this tick.
+   * The ONE fence in front of EVERY durable-adoption path — the recovery
+   * tick, the watcher reconcile, and any future reader of the store. While a
+   * superseded-save undo is pending, either the retry completes it now (the
+   * cleaned store may then be trusted) or this pass is refused and the
+   * recovery loop is armed to finish the job. A path that reads durable
+   * credentials without calling this first re-adopts the exact zombie the
+   * attempt fence dropped.
    */
-  /**
-   * Recovery-tick guard around {@link retryPendingCredentialUndo}: while the
-   * pending conditional delete cannot land, adoption is blocked and the loop
-   * re-arms (identity-fenced). Extracted so the tick stays under the
-   * complexity ceiling.
-   */
-  private async pendingUndoBlocksRecovery(
-    generation: number,
-  ): Promise<boolean> {
+  private async pendingUndoBlocksAdoption(trigger: string): Promise<boolean> {
     if (await this.retryPendingCredentialUndo()) {
       return false;
     }
-    if (this.isIdentityCurrent(generation)) {
-      this.scheduleSessionRecovery("recovery:pending-undo");
+    if (!this.disposed) {
+      this.scheduleSessionRecovery(`${trigger}:pending-undo`);
     }
     return true;
   }
 
+  /**
+   * `true` means the store is clean: no pending undo, or the retry just
+   * settled it (`kept` is settled too — someone else's pair owns the file
+   * now and the stale one is gone). `false` means the conditional delete is
+   * STILL failing and nothing durable may be adopted this pass.
+   */
   private async retryPendingCredentialUndo(): Promise<boolean> {
     const token = this.pendingUndoToken;
     if (token === null) {

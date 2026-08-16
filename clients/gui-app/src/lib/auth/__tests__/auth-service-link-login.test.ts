@@ -340,6 +340,68 @@ describe("link-login attempt fence", () => {
     }
   });
 
+  it("a watcher self-write echo cannot re-adopt the stale pair while its undo is pending", async () => {
+    const { service, host } = makeService();
+    const { script, restore } = installLinkFetch();
+    const realStore: ITokenStore = host.tokenStore;
+    const { saveEnteredPromise, releaseSave } = pauseStoreSignIn(realStore);
+    let deleteIfTokenBroken = true;
+    const realDeleteIfToken = realStore.deleteIfToken.bind(realStore);
+    Object.defineProperty(realStore, "deleteIfToken", {
+      configurable: true,
+      value: (expectedToken: string): Promise<"deleted" | "kept"> =>
+        deleteIfTokenBroken
+          ? Promise.reject(new Error("EIO: credentials file unwritable"))
+          : realDeleteIfToken(expectedToken),
+    });
+    try {
+      script.validationResponse = () => json(PROFILE_BODY, 200);
+      script.tokenResponse = () =>
+        json(
+          {
+            token: "attempt-a-token",
+            refreshToken: "attempt-a-r",
+            familyId: "f",
+          },
+          200,
+        );
+      // STARTED service: the credentials-store change subscription is live,
+      // so the superseded save's own durable write fires the reconcile path
+      // — the adoption route the recovery-only fence used to miss.
+      await service.start();
+      const linkResult = service.signInWithLinkCode("ABCDE-FGHJK");
+      await vi.advanceTimersByTimeAsync(1_100);
+      await saveEnteredPromise;
+
+      Object.defineProperty(host.deviceFlow, "start", {
+        configurable: true,
+        value: () => Promise.resolve(null),
+      });
+      const deviceSignIn = service.signIn();
+      await vi.advanceTimersByTimeAsync(10);
+      await deviceSignIn;
+
+      releaseSave();
+      const result = await linkResult;
+      expect(result.kind).toBe("failed");
+      // The write's change notification has fired and the reconcile has had
+      // every chance to run — with the undo still failing, it must adopt
+      // NOTHING, even though the stale token would validate (stubbed 200).
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(useAuthStore.getState().status).not.toBe("signed-in");
+      expect((await realStore.get())?.token).toBe("attempt-a-token");
+
+      // The store heals: the pending delete completes first, so neither the
+      // reconcile nor the recovery loop ever signs the zombie back in.
+      deleteIfTokenBroken = false;
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(await realStore.get()).toBeNull();
+      expect(useAuthStore.getState().status).not.toBe("signed-in");
+    } finally {
+      restore();
+    }
+  });
+
   it("terminal denial of the CURRENT attempt projects the ordinary failure", async () => {
     const { service } = makeService();
     const { script, restore } = installLinkFetch();

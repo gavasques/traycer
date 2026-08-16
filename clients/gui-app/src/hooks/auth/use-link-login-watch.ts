@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import type { UseQueryResult } from "@tanstack/react-query";
 import type { MintLinkLoginCodeResponse } from "@traycer/protocol/auth/link-login";
 import { useAuthLinkLoginCode } from "@/hooks/auth/use-link-login-code-query";
@@ -20,11 +20,28 @@ export interface LiveClaim {
   readonly location: string | null;
 }
 
+/**
+ * How the displayed code was terminated externally: `superseded` (gone —
+ * replaced by a mint on another surface, expired, or consumed) or
+ * `rejected` (a denial someone actually made on another surface). Two
+ * states because they read differently to the user; the portal renders the
+ * same pair.
+ */
+export type LinkLoginDeadKind = "superseded" | "rejected";
+
 export interface LinkLoginWatch {
   /** The live claim on the displayed code, if any. */
   readonly claim: LiveClaim | null;
-  /** The mint query (rotation) — paused while a claim is live. */
+  /**
+   * The mint query. Rotation is paused while a claim is live AND while the
+   * displayed code is externally dead — a dead code costs zero further
+   * requests, and an automatic re-mint would supersede the other surface
+   * right back (ping-ponging mints between open surfaces). Restart is the
+   * panel's explicit, user-driven `refetch()` only.
+   */
   readonly code: UseQueryResult<MintLinkLoginCodeResponse | null>;
+  /** External termination of the displayed code, rendered — never reacted to. */
+  readonly deadKind: LinkLoginDeadKind | null;
 }
 
 function claimFromStatus(
@@ -49,29 +66,40 @@ function claimFromStatus(
   };
 }
 
-/** A displayed code the server will never let anyone claim again. */
-function isDeadDatum(datum: LinkLoginStatusDatum | null | undefined): boolean {
+function deadKindFromStatus(
+  datum: LinkLoginStatusDatum | null | undefined,
+): LinkLoginDeadKind | null {
   if (datum === "gone") {
-    return true;
+    return "superseded";
   }
-  return datum !== null && datum !== undefined && datum.status === "denied";
+  if (datum !== null && datum !== undefined && datum.status === "denied") {
+    return "rejected";
+  }
+  return null;
 }
 
 /**
  * Owns the Link-a-phone panel's code lifecycle: rotates the public code
  * while nothing is claimed, watches THE displayed code (the server's
  * one-live-code policy makes it the only claimable one), pauses rotation the
- * moment its claim appears, and refreshes the displayed code immediately
- * when it dies externally (denied elsewhere, expired, consumed) instead of
- * waiting out the rotation interval.
+ * moment its claim appears, and reports external death of the displayed
+ * code as a rendered state with rotation idled — the panel offers an
+ * explicit restart (a manual `refetch`, which TanStack v5 honors on a
+ * disabled query), never an automatic re-mint.
  */
 export function useLinkLoginWatch(enabled: boolean): LinkLoginWatch {
   const [watchedCode, setWatchedCode] = useState<string | null>(null);
 
   const status = useAuthLinkLoginStatus(enabled ? watchedCode : null);
   const claim = claimFromStatus(watchedCode, status.data);
+  const deadKind =
+    claim === null && watchedCode !== null
+      ? deadKindFromStatus(status.data)
+      : null;
 
-  const code = useAuthLinkLoginCode(enabled && claim === null);
+  const code = useAuthLinkLoginCode(
+    enabled && claim === null && deadKind === null,
+  );
   const minted = code.data ?? null;
 
   // Adjust-during-render (guarded): follow the mint onto the code now on
@@ -81,26 +109,5 @@ export function useLinkLoginWatch(enabled: boolean): LinkLoginWatch {
     setWatchedCode(minted.code);
   }
 
-  // External death of the displayed code (denied in another window, expired,
-  // consumed): refresh immediately rather than showing a dead QR until the
-  // rotation interval. One refetch per observed code; the effect is external
-  // sync (query → query), not a state transition.
-  const refreshedForCode = useRef<string | null>(null);
-  const displayedDatum =
-    minted !== null && watchedCode === minted.code ? status.data : null;
-  const codeRefetch = code.refetch;
-  useEffect(() => {
-    if (minted === null || claim !== null) {
-      return;
-    }
-    if (
-      isDeadDatum(displayedDatum) &&
-      refreshedForCode.current !== minted.code
-    ) {
-      refreshedForCode.current = minted.code;
-      void codeRefetch();
-    }
-  }, [claim, codeRefetch, displayedDatum, minted]);
-
-  return { claim, code };
+  return { claim, code, deadKind };
 }

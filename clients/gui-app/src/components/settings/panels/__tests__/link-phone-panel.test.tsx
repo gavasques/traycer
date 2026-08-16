@@ -32,6 +32,7 @@ vi.mock("@/stores/auth/auth-store", () => ({
     selector({ status: "signed-in" }),
 }));
 
+import { LinkLoginMintError } from "@/lib/auth/link-login-mint-error";
 import { LinkPhonePanel } from "../link-phone-panel";
 
 function queryResultWithCode(nowMs: number) {
@@ -183,6 +184,78 @@ describe("LinkPhonePanel", () => {
       .at(-1);
     expect(lastWatched).toBe("BBBBB-BBBBB");
     expect(screen.getByText("BBBBB-BBBBB")).toBeTruthy();
+  });
+
+  it("another surface's supersession renders as a state, never an unprompted mint", () => {
+    const codeQuery = queryResultWithCode(Date.now());
+    mocks.useAuthLinkLoginCode.mockReturnValue(codeQuery);
+    const view = render(<LinkPhonePanel />);
+    // The server reports the displayed code gone — another surface minted
+    // over it. Rendered as the superseded state, never an automatic re-mint
+    // (that would supersede the other surface right back, ping-ponging
+    // mints until the rate limit).
+    mocks.useAuthLinkLoginStatus.mockReturnValue(statusResult("gone"));
+    view.rerender(<LinkPhonePanel />);
+    expect(screen.getByTestId("link-phone-superseded")).toBeTruthy();
+    expect(screen.queryByTestId("link-phone-countdown")).toBeNull();
+    expect(codeQuery.refetch).not.toHaveBeenCalled();
+    // Rotation idles while dead: a dead code costs zero further requests.
+    const lastMintCall = mocks.useAuthLinkLoginCode.mock.calls.at(-1) as
+      unknown[] | undefined;
+    expect(lastMintCall?.[0]).toBe(false);
+    // Only the explicit user action mints again.
+    act(() => {
+      screen.getByTestId("link-phone-show-new").click();
+    });
+    expect(codeQuery.refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("an EXTERNAL rejection reads as rejected, with the same explicit restart", () => {
+    const codeQuery = queryResultWithCode(Date.now());
+    mocks.useAuthLinkLoginCode.mockReturnValue(codeQuery);
+    const view = render(<LinkPhonePanel />);
+    mocks.useAuthLinkLoginStatus.mockReturnValue(
+      statusResult({ status: "denied", claimant: null }),
+    );
+    view.rerender(<LinkPhonePanel />);
+    expect(screen.getByTestId("link-phone-rejected-elsewhere")).toBeTruthy();
+    expect(screen.queryByTestId("link-phone-superseded")).toBeNull();
+    expect(codeQuery.refetch).not.toHaveBeenCalled();
+    act(() => {
+      screen.getByTestId("link-phone-show-new").click();
+    });
+    expect(codeQuery.refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("claim-pending during rotation of a LIVE code keeps the QR — the claim may be its own", () => {
+    // The rotation mint hit the claim lock while the displayed code's own
+    // scan was landing: the next status poll surfaces it as the confirm
+    // card. Flashing "awaiting elsewhere" over a live QR would be wrong.
+    mocks.useAuthLinkLoginCode.mockReturnValue({
+      ...queryResultWithCode(Date.now()),
+      isError: true,
+      error: new LinkLoginMintError("claim-pending"),
+    });
+    render(<LinkPhonePanel />);
+    expect(screen.queryByTestId("link-phone-awaiting-elsewhere")).toBeNull();
+    expect(screen.getByTestId("link-phone-single-use-hint")).toBeTruthy();
+  });
+
+  it("gone → claim-pending renders the awaiting state, not a dead QR or an error", () => {
+    // The displayed code is gone AND minting is refused because the user's
+    // single live claim awaits the decision on another surface: the panel
+    // must say so — not render the retained dead QR, not an error card.
+    mocks.useAuthLinkLoginCode.mockReturnValue({
+      ...queryResultWithCode(Date.now()),
+      isError: true,
+      error: new LinkLoginMintError("claim-pending"),
+    });
+    mocks.useAuthLinkLoginStatus.mockReturnValue(statusResult("gone"));
+    render(<LinkPhonePanel />);
+    expect(screen.getByTestId("link-phone-awaiting-elsewhere")).toBeTruthy();
+    expect(screen.queryByTestId("link-phone-superseded")).toBeNull();
+    expect(screen.queryByTestId("link-phone-countdown")).toBeNull();
+    expect(screen.queryByTestId("link-phone-confirm")).toBeNull();
   });
 
   it("states that a code is single-use and short-lived", () => {

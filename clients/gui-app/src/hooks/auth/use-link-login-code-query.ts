@@ -5,6 +5,7 @@ import {
 } from "@tanstack/react-query";
 import type { MintLinkLoginCodeResponse } from "@traycer/protocol/auth/link-login";
 import type { AuthService } from "@/lib/auth/auth-service";
+import { LinkLoginMintError } from "@/lib/auth/link-login-mint-error";
 import { useHostBinding } from "@/lib/host";
 import { authQueryKeys } from "@/lib/query-keys";
 import { useAuthStore } from "@/stores/auth/auth-store";
@@ -14,22 +15,6 @@ import { useAuthStore } from "@/stores/auth/auth-store";
 // redeem before the pictured code expires. Exported so the panel's countdown
 // can derive the rotation moment from the same cadence rather than a copy.
 export const LINK_LOGIN_REMINT_MS = 50_000;
-
-function mintFailureMessage(
-  kind:
-    "unauthorized" | "claim-pending" | "no-session-family" | "network-error",
-): string {
-  switch (kind) {
-    case "unauthorized":
-      return "Your session could not authorize a link code.";
-    case "claim-pending":
-      return "A sign-in request is already awaiting your approval.";
-    case "no-session-family":
-      return "This session cannot mint link codes — sign in again first.";
-    case "network-error":
-      return "Could not reach the sign-in service.";
-  }
-}
 
 function linkLoginCodeQueryOptions(
   auth: AuthService | null,
@@ -48,12 +33,11 @@ function linkLoginCodeQueryOptions(
     queryFn: async ({ signal }) => {
       const result = await auth.mintLinkLoginCode(signal);
       if (result.kind !== "ok") {
-        // Thrown, not returned: the panel is an inline-error surface and the
-        // query's error state is its retry affordance. `claim-pending` is
-        // benign (the status poll surfaces the claim card within a tick) but
-        // still not a code to display, so it throws the same way — the panel
-        // keeps showing the previous data it already holds.
-        throw new Error(mintFailureMessage(result.kind));
+        // Thrown, not returned: the panel is an inline surface and the
+        // query's error state carries the refusal. The typed error keeps the
+        // wire meaning, so the panel renders `claim-pending` as the awaiting
+        // state instead of an error card over retained stale data.
+        throw new LinkLoginMintError(result.kind);
       }
       return result.response;
     },

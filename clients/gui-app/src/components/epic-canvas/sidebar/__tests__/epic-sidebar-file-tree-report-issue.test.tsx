@@ -103,6 +103,44 @@ vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
   useReactiveActiveHostId: () => "host-1",
 }));
 
+// The surface pin (`useSurfaceHostPin` -> `useEffectiveHostId`, redesign
+// P1.2) is what `usePinnedSurfaceDead` resolves against, not the directory's
+// active-host hook.
+vi.mock("@/hooks/host/use-effective-host-id", () => ({
+  useEffectiveHostId: () => "host-1",
+}));
+
+// `usePinnedSurfaceDead` unconditionally reaches `useHostReachability` ->
+// `useHostDirectoryList` -> `useHostBinding` (pre-dates this epic, P0.2) -
+// this suite's `@/lib/host/runtime` mock below never carried `useHostBinding`,
+// so that chain has always been unexercised here until a wider run reached
+// it; stub reachability directly, the same way the sibling picker suites do.
+vi.mock("@/hooks/agent/use-host-reachability", () => ({
+  useHostReachability: () => ({
+    status: "reachable",
+    hostLabel: "host-1",
+    unavailability: null,
+  }),
+}));
+
+// `usePinnedSurfaceDead` also calls `useHostDirectoryList` directly (not only
+// through `useHostReachability` above) - same chain, same reason.
+vi.mock("@/hooks/host/use-host-directory-list-query", () => ({
+  useHostDirectoryList: () => ({
+    data: [{ hostId: "host-1" }],
+    fetchStatus: "idle",
+  }),
+}));
+
+// `useSurfaceHostClient` (also reached from `FileTreePanelBodyLive`, same
+// P0.2 pin chain) resolves via this hook's real implementation, which needs
+// a full `HostClient` shape (`resolveHostById`, `getActiveHost`) this
+// suite's `@/lib/host/runtime` stub never carried - stub it directly, same
+// pattern the sibling picker suites use.
+vi.mock("@/hooks/host/use-host-client-for-host-id", () => ({
+  useHostClientForHostId: () => null,
+}));
+
 vi.mock("@/hooks/worktree/use-latest-conversation-workspace-seed", () => ({
   useLatestConversationWorkspaceSeed: () => null,
 }));
@@ -295,6 +333,18 @@ vi.mock("@/stores/settings/settings-store", () => ({
 // File-tree-panel-specific dependencies.
 vi.mock("@/hooks/worktree/use-worktree-list-bindings-for-epic-query", () => ({
   useWorktreeListBindingsForEpic: () => ({
+    data: {
+      rows: [
+        {
+          runningDir: "/work/repo",
+          disabledReason: null,
+        },
+      ],
+    },
+  }),
+  // `useFileTreeWorkspaceSelection` (also reached from the P0.2 pin chain)
+  // calls the host-client-parametric variant, not the app-wide one above.
+  useWorktreeListBindingsForEpicForClient: () => ({
     data: {
       rows: [
         {

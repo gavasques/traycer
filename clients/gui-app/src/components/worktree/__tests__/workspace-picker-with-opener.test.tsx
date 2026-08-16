@@ -24,6 +24,12 @@ vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
   useReactiveActiveHostId: () => editorState.activeHostId,
 }));
 
+// `OpenInEditorButton` (rendered inside this picker) resolves against the
+// EFFECTIVE host (redesign P1.2), not the directory's active-host hook.
+vi.mock("@/hooks/host/use-effective-host-id", () => ({
+  useEffectiveHostId: () => editorState.activeHostId,
+}));
+
 vi.mock("@/hooks/host/use-host-directory-entry", () => ({
   useHostDirectoryEntry: (hostId: string) =>
     hostId.length > 0 ? { kind: "local" } : null,

@@ -19,7 +19,7 @@ export const HOST_SELECTION_REDESIGN_PLAN =
   "epics/c6042be5-cbd3-4923-8cbe-d2bc00ae7ade/artifacts/host-lifecycle-redesign";
 
 const SELECT_BY_ID_MESSAGE =
-  "`selectById` is restricted to the Settings activate module and the landing composer (until P1.2 migrates the composer to a surface pin). See " +
+  "`selectById` is the selection authority bridge's alone (P1.2): it is a pure setter for the derived effective host, not a picker. A UI gesture that should move the app-wide selection calls `SelectionAuthorityClient.activate(...)` from the Settings activate module. See " +
   HOST_SELECTION_REDESIGN_PLAN +
   " (selection model §5).";
 
@@ -87,10 +87,54 @@ export const selectByIdRestrictions = [
  * is not in this list.
  */
 export const selectByIdWriteAllowlist = [
-  // Settings → Activate (the one UI writer of preferred / today's explicitSelection).
+  // The ONE authority→directory bridge. Tightened here in P1.2: Settings now
+  // writes `preferredHostId` through `activate()` (see
+  // `selectionAuthorityWriteAllowlist`) and the landing composer writes a
+  // surface pin, so neither may reach the binding directly any more.
+  "src/lib/host/selection-authority-bridge.ts",
+];
+
+const SELECTION_AUTHORITY_MESSAGE =
+  "The selection authority client (`runnerHost.selectionAuthority`) is the preferred-host WRITE API. Only the Settings activate module may reach it, plus the one renderer bridge that mounts the evidence kernel. See " +
+  HOST_SELECTION_REDESIGN_PLAN +
+  " (selection model §5).";
+
+const selectionAuthorityMember = {
+  selector:
+    "MemberExpression[computed=false][property.name='selectionAuthority']",
+  message: SELECTION_AUTHORITY_MESSAGE,
+};
+
+const selectionAuthorityComputedLiteral = {
+  selector:
+    "MemberExpression[computed=true][property.type='Literal'][property.value='selectionAuthority']",
+  message: SELECTION_AUTHORITY_MESSAGE,
+};
+
+const selectionAuthorityDestructure = {
+  selector:
+    "ObjectPattern > Property[key.type='Identifier'][key.name='selectionAuthority']",
+  message: SELECTION_AUTHORITY_MESSAGE,
+};
+
+/** D12 write path, upper half: who may reach the preferred-write API. */
+export const selectionAuthorityRestrictions = [
+  selectionAuthorityMember,
+  selectionAuthorityComputedLiteral,
+  selectionAuthorityDestructure,
+];
+
+/**
+ * Files that may touch `runnerHost.selectionAuthority`.
+ */
+export const selectionAuthorityWriteAllowlist = [
+  // Settings ▸ Activate: the one UI writer of `preferredHostId`.
   "src/components/settings/host-scope/use-host-scope.ts",
-  // Landing composer until P1.2 turns it into a surface pin.
-  "src/components/home/host-workspace-selector/host-workspace-selector.tsx",
+  // Composition root: hands the client to the bridge it mounts. Deliberately
+  // NOT the bridge itself - the bridge takes the client as an option and can
+  // therefore keep the ban, which is what makes this list read as "who may
+  // reach for the write API", not "who is in the selection layer".
+  "src/providers/host-runtime-provider.tsx",
 ];
 
 /**

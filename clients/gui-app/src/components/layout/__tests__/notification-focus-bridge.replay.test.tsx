@@ -71,8 +71,11 @@ vi.mock("@/lib/host", async (importActual) => {
   };
 });
 
-vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
-  useReactiveActiveHostId: () => activeHostIdRef.value,
+// The bridge reads `useEffectiveHostId()` now (redesign P1.2) - the
+// authority's derived effective host, not the directory's active-host
+// hook - so that is the seam this fixture drives.
+vi.mock("@/hooks/host/use-effective-host-id", () => ({
+  useEffectiveHostId: () => activeHostIdRef.value,
 }));
 
 vi.mock("@/hooks/host/use-host-directory-entry", () => ({

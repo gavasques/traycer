@@ -37,6 +37,10 @@ import {
   type RuntimeHostMessengerBinding,
 } from "@/lib/host/host-messenger";
 import { createHostQueryInvalidator } from "@/lib/host/query-invalidator";
+import {
+  mountSelectionAuthorityBridge,
+  type SelectionAuthorityBridge,
+} from "@/lib/host/selection-authority-bridge";
 import { createSessionRetirementSweep } from "@/lib/host/session-retirement";
 import { appLogger } from "@/lib/logger";
 import {
@@ -206,6 +210,11 @@ export function createHostRuntime<Registry extends VersionedRpcRegistry>(
       });
 
       let runtime: HostRuntime<Registry> | null = null;
+      // Mounted with the runtime and torn down with it (below), so the
+      // window's kernel and its `HostClient` binding can never outlive each
+      // other. See `mountSelectionAuthorityBridge` for why it is the app's
+      // only sanctioned `selectById` caller.
+      let selectionBridge: SelectionAuthorityBridge | null = null;
 
       // Endpoint + bearer now ride the per-request `HostRequestAuthority` the
       // coordinator mints, so neither is closed over here. The remote branch
@@ -346,6 +355,15 @@ export function createHostRuntime<Registry extends VersionedRpcRegistry>(
           }
           phase = "runtime.start";
           activeRuntime.start();
+          // AFTER `runtime.start()`: the runtime's `onSelectionChange`
+          // subscription must exist before the first derivation lands, or the
+          // window's opening bind would be swallowed.
+          phase = "selection-bridge.mount";
+          selectionBridge = mountSelectionAuthorityBridge({
+            client: runnerHost.selectionAuthority,
+            directory,
+            now: () => Date.now(),
+          });
           const nextBinding = {
             runtime: activeRuntime,
             hostClient: activeRuntime.hostClient,
@@ -360,6 +378,7 @@ export function createHostRuntime<Registry extends VersionedRpcRegistry>(
           });
         } catch (error) {
           appLogger.error("[host-runtime] startup failed", { phase }, error);
+          selectionBridge?.dispose();
           runtimeMessenger?.dispose();
           runtimeTransportUnsubscribe();
           auth.dispose();
@@ -378,6 +397,7 @@ export function createHostRuntime<Registry extends VersionedRpcRegistry>(
 
       return () => {
         lifecycle.disposed = true;
+        selectionBridge?.dispose();
         runtimeMessenger?.dispose();
         runtimeTransportUnsubscribe();
         activeRuntime.dispose();

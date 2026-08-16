@@ -730,6 +730,14 @@ export class MockRunnerHost implements IRunnerHost {
    * dialability verdict, and projecting it here would hand the authority a
    * cloud-shaped liveness signal that invariant 5 forbids it to hold. The
    * `mock` kind counts as remote - it is not this machine's own host.
+   *
+   * The local host is always a member once known, even when it is absent
+   * from `this.hosts` (the mock's separate multi-host directory list): on
+   * desktop the local machine reports its own fleet membership directly, not
+   * through the registered-hosts directory, so a caller that only sets
+   * `localHost`/`hosts: []` to boot a single-host suite must still get a
+   * real local candidate rather than an empty fleet the authority can never
+   * derive an effective host from.
    */
   private publishSelectionFleet(): void {
     const localHostId = this.getLocalHostIdForSelection();
@@ -738,6 +746,12 @@ export class MockRunnerHost implements IRunnerHost {
       kind:
         entry.hostId === localHostId ? ("local" as const) : ("remote" as const),
     }));
+    if (
+      localHostId !== null &&
+      !hosts.some((entry) => entry.hostId === localHostId)
+    ) {
+      hosts.push({ hostId: localHostId, kind: "local" as const });
+    }
     this.selectionFleet.publish(
       this.selectionIdentity.current().generation,
       localHostId,

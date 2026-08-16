@@ -212,11 +212,36 @@ vi.mock("@/hooks/composer/use-landing-image-fetcher", () => ({
   useLandingImageFetcher: () => vi.fn(),
 }));
 vi.mock("@/hooks/epic/use-epic-create-mutation", () => ({
-  useEpicCreate: () => ({ isPending: testState.createPending }),
+  useEpicCreateForClient: () => ({ isPending: testState.createPending }),
 }));
 vi.mock("@/hooks/agent/use-create-tui-agent", () => ({
-  useCreateTuiAgent: () => ({ isPending: false }),
+  useCreateTuiAgentForClient: () => ({ isPending: false }),
 }));
+// P1.2: the composer resolves its placement (pin ?? effective) through this
+// one hook. These suites are about paste/gating/banner behaviour, not
+// selection derivation, so it is stubbed at that single boundary - the same
+// treatment the other host-backed hooks above get.
+vi.mock("@/hooks/host/use-composer-placement", () => ({
+  useComposerPlacement: () => ({
+    pin: {
+      selection: null,
+      setSelection: () => undefined,
+      resolvedHostId: "host-test",
+      isPinned: false,
+      latchOnFirstUse: () => undefined,
+      followEffective: () => undefined,
+    },
+    target: {
+      resolvedHostId: "host-test",
+      client: null,
+      hostLabel: "Local",
+      isPinned: false,
+      pinnedHostDead: false,
+    },
+    hostLabelFor: () => "Local",
+  }),
+}));
+
 vi.mock("@/lib/host", () => ({
   useHostBinding: () => null,
   useHostClient: () => null,
@@ -230,12 +255,9 @@ vi.mock(
     }),
   }),
 );
-vi.mock(
-  "@/hooks/providers/use-refresh-providers-list-on-turn-default-host",
-  () => ({
-    useRefreshProvidersListOnTurnDefaultHost: () => undefined,
-  }),
-);
+vi.mock("@/hooks/providers/use-refresh-providers-list-on-turn", () => ({
+  useRefreshProvidersListOnTurn: () => undefined,
+}));
 
 afterEach(() => {
   cleanup();

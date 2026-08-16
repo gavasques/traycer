@@ -1,4 +1,6 @@
 import { useLandingComposerActions } from "@/components/home/hooks/use-landing-composer-actions";
+import type { LandingPlacementTarget } from "@/lib/composer/landing-placement";
+import { useHostClient } from "@/lib/host";
 import { epicDisplayTitle } from "@/lib/display-title";
 import { createEpicName } from "@/lib/epic-name";
 import { useComposerRunSettingsStore } from "@/stores/composer/composer-run-settings-store";
@@ -54,11 +56,26 @@ vi.mock("@/lib/host", () => ({
 }));
 
 vi.mock("@/hooks/agent/use-create-tui-agent", () => ({
-  useCreateTuiAgent: () => ({
+  useCreateTuiAgentForClient: () => ({
     create: landingMocks.createTerminalAgent,
     isPending: false,
   }),
 }));
+
+/**
+ * The composer's resolved placement (redesign P1.2). These tests exercise the
+ * READY arm - `resolveLandingPlacement`'s own refusals have their own unit
+ * suite - so the target names the same host the mocked client addresses.
+ */
+function useTestPlacementTarget(): LandingPlacementTarget {
+  return {
+    resolvedHostId: landingMocks.getActiveHostId(),
+    client: useHostClient(),
+    hostLabel: "Local",
+    isPinned: false,
+    pinnedHostDead: false,
+  };
+}
 
 vi.mock("sonner", () => ({
   toast: {
@@ -205,7 +222,7 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(), {
+    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
       wrapper: queryClientWrapper(queryClient),
     });
 
@@ -248,7 +265,7 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(), {
+    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
       wrapper: queryClientWrapper(queryClient),
     });
 
@@ -312,7 +329,7 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(), {
+    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
       wrapper: queryClientWrapper(queryClient),
     });
 
@@ -336,7 +353,7 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(), {
+    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
       wrapper: queryClientWrapper(queryClient),
     });
 
@@ -375,7 +392,7 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(), {
+    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
       wrapper: queryClientWrapper(queryClient),
     });
 
@@ -425,7 +442,7 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(), {
+    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
       wrapper: queryClientWrapper(queryClient),
     });
 
@@ -467,7 +484,7 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(), {
+    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
       wrapper: queryClientWrapper(queryClient),
     });
 
@@ -508,7 +525,7 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(), {
+    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
       wrapper: queryClientWrapper(queryClient),
     });
 
@@ -584,7 +601,7 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(), {
+    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
       wrapper: queryClientWrapper(queryClient),
     });
 
@@ -621,7 +638,7 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(), {
+    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
       wrapper: queryClientWrapper(queryClient),
     });
 
@@ -663,7 +680,7 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(), {
+    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
       wrapper: queryClientWrapper(queryClient),
     });
 
@@ -699,7 +716,7 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(), {
+    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
       wrapper: queryClientWrapper(queryClient),
     });
 
@@ -734,7 +751,7 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(), {
+    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
       wrapper: queryClientWrapper(queryClient),
     });
 
@@ -804,7 +821,7 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(), {
+    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
       wrapper: queryClientWrapper(queryClient),
     });
 
@@ -891,7 +908,7 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(), {
+    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
       wrapper: queryClientWrapper(queryClient),
     });
 
@@ -990,7 +1007,7 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(), {
+    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
       wrapper: queryClientWrapper(queryClient),
     });
 
@@ -1082,7 +1099,7 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(), {
+    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
       wrapper: queryClientWrapper(queryClient),
     });
 
@@ -1160,7 +1177,7 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(), {
+    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
       wrapper: queryClientWrapper(queryClient),
     });
 
@@ -1214,7 +1231,7 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(), {
+    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
       wrapper: queryClientWrapper(queryClient),
     });
 
@@ -1262,7 +1279,7 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(), {
+    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
       wrapper: queryClientWrapper(queryClient),
     });
 
@@ -1328,7 +1345,7 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(), {
+    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
       wrapper: queryClientWrapper(queryClient),
     });
 
@@ -1379,7 +1396,7 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(), {
+    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
       wrapper: queryClientWrapper(queryClient),
     });
 
@@ -1444,7 +1461,7 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(), {
+    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
       wrapper: queryClientWrapper(queryClient),
     });
 
@@ -1500,7 +1517,7 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(), {
+    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
       wrapper: queryClientWrapper(queryClient),
     });
 
@@ -1564,7 +1581,7 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(), {
+    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
       wrapper: queryClientWrapper(queryClient),
     });
 
@@ -1631,7 +1648,7 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(), {
+    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
       wrapper: queryClientWrapper(queryClient),
     });
 
@@ -1705,7 +1722,7 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(), {
+    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
       wrapper: queryClientWrapper(queryClient),
     });
 
@@ -1776,7 +1793,7 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(), {
+    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
       wrapper: queryClientWrapper(queryClient),
     });
 
@@ -1840,7 +1857,7 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(), {
+    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
       wrapper: queryClientWrapper(queryClient),
     });
 
@@ -1887,7 +1904,7 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(), {
+    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
       wrapper: queryClientWrapper(queryClient),
     });
 
@@ -1927,7 +1944,7 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(), {
+    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
       wrapper: queryClientWrapper(queryClient),
     });
 

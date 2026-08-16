@@ -1,8 +1,6 @@
 import { useCallback } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import type { IHostDirectoryService } from "@traycer-clients/shared/host-client/host-runtime";
 import { useHostBinding } from "@/lib/host";
-import { dialableHostEndpoint } from "@/lib/host/transport-key";
 import {
   routeNotificationForHost,
   type NotificationNavigate,
@@ -43,31 +41,6 @@ export function notificationPayloadRequiresOriginHost(
   return payload.kind === "approval" || payload.kind === "interview";
 }
 
-function ensureOriginHostSelected(input: {
-  readonly payload: NotificationPayload;
-  readonly originHostId: string | null | undefined;
-  readonly directory: IHostDirectoryService | null;
-}): boolean {
-  if (!notificationPayloadRequiresOriginHost(input.payload)) {
-    return true;
-  }
-  if (input.originHostId === undefined || input.originHostId === null) {
-    return false;
-  }
-  if (input.directory === null) return false;
-  const origin = input.directory.findById(input.originHostId);
-  // Coarse read, through the canonical rule: this decides whether to SELECT the
-  // origin host and route to it, which is only worth doing if a client can be
-  // built for it — a pure yes/no about a route, with no per-reason copy hanging
-  // off it. Asking `dialableHostEndpoint` rather than the bit directly is what
-  // makes `indeterminate` route (the dial is attempted and fails recoverably)
-  // instead of silently refusing to open an approval the user just clicked.
-  if (origin === null || dialableHostEndpoint(origin) === null) return false;
-  // eslint-disable-next-line no-restricted-syntax -- expires P1.2 — notification activation must not write preferred; selectById dies with Phase-1 callers. epics/c6042be5-cbd3-4923-8cbe-d2bc00ae7ade/artifacts/host-lifecycle-redesign
-  input.directory.selectById(origin.hostId);
-  return true;
-}
-
 function hostFeedStayedOnOrigin(input: {
   readonly feedId: string | null;
   readonly beforeRouteHostId: string | null;
@@ -92,11 +65,19 @@ function hostFeedStayedOnOrigin(input: {
  * leaves it unread via server truth (no optimistic read-state here for a
  * failed write to reconcile).
  *
- * The origin-host guard still applies to that acknowledgment: a host-scoped
+ * Activation does NOT move the app-wide selection (redesign P1.2, D7): the
+ * routed surface resolves against the effective host or its own tab binding,
+ * and a notification click is not the user answering "which host do you work
+ * on" - that gesture exists only in Settings ▸ Activate. The origin-host
+ * SELECTION that used to happen here is gone; the caller (the notification
+ * center / focus bridge) is what decides a foreign-origin row is not
+ * routable at all.
+ *
+ * The origin-host guard still applies to the acknowledgment: a host-scoped
  * feed id (`isHostFeedId`) only completes as `"success"` while the client's
- * CURRENT active host still matches the host captured just before routing -
- * routing itself can switch the app's active host (e.g. opening an epic
- * that lives on a different host), so this settles the row as unread/
+ * CURRENT bound host still matches the host captured just before routing -
+ * routing can still re-point the window through the authority (an epic that
+ * lives on a different host), so this settles the row as unread/
  * no-acknowledgment rather than crediting the wrong host's notification.
  */
 export function useNotificationActivation(): NotificationActivationController {
@@ -117,20 +98,9 @@ export function useNotificationActivationWithNavigate(
 ): NotificationActivationController {
   const binding = useHostBinding();
   const client = binding?.hostClient ?? null;
-  const directory = binding?.directory ?? null;
 
   const activate = useCallback(
     (input: NotificationActivationInput) => {
-      if (
-        !ensureOriginHostSelected({
-          payload: input.payload,
-          originHostId: input.originHostId,
-          directory,
-        })
-      ) {
-        input.onResult?.("failure");
-        return;
-      }
       const beforeRouteHostId = client?.getActiveHostId() ?? null;
       routeNotificationForHost(
         navigate,
@@ -150,7 +120,7 @@ export function useNotificationActivationWithNavigate(
       }
       input.onResult?.("success");
     },
-    [client, directory, navigate],
+    [client, navigate],
   );
 
   return { activate };

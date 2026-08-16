@@ -18,6 +18,8 @@ import { useLandingDraftStore } from "@/stores/home/landing-draft-store";
 import { draftRuntimeRegistry } from "@/stores/home/draft-runtime-registry";
 import { extractPlainTextFromComposerJSONContent } from "@/lib/composer/tiptap-json-content";
 import { useLandingComposerActions } from "@/components/home/hooks/use-landing-composer-actions";
+import type { LandingPlacementTarget } from "@/lib/composer/landing-placement";
+import { useHostClient } from "@/lib/host";
 import { useSurfaceActivity } from "@/components/home/composer/surface-activity-hooks";
 import { useWorkspaceFoldersStore } from "@/stores/workspace/workspace-folders-store";
 import { __resetTabNavigationControllerForTesting } from "@/lib/tab-navigation";
@@ -88,6 +90,17 @@ vi.mock("@/lib/host", () => ({
   }),
 }));
 
+/** The composer's resolved placement (P1.2), pointed at the mocked host. */
+function useTestPlacementTarget(): LandingPlacementTarget {
+  return {
+    resolvedHostId: homeMocks.getActiveHostId(),
+    client: useHostClient(),
+    hostLabel: "Local",
+    isPinned: false,
+    pinnedHostDead: false,
+  };
+}
+
 vi.mock("@/lib/host/runtime", () => ({
   useHostClient: () => ({
     request: homeMocks.request,
@@ -98,7 +111,7 @@ vi.mock("@/lib/host/runtime", () => ({
 }));
 
 vi.mock("@/hooks/agent/use-create-tui-agent", () => ({
-  useCreateTuiAgent: () => ({
+  useCreateTuiAgentForClient: () => ({
     create: () => Promise.resolve(),
     isPending: false,
   }),
@@ -127,7 +140,7 @@ vi.mock("@/components/home/composer/landing-composer", () => ({
     // The real composer reads surface activity from context (provided by
     // HomePage); the mock mirrors that so the gating stays observable.
     const activityEnabled = useSurfaceActivity();
-    const actions = useLandingComposerActions();
+    const actions = useLandingComposerActions(useTestPlacementTarget());
     const draftId = props.draftId;
     const pendingCreateId = props.pendingCreateId;
     const effectiveKey = draftId ?? pendingCreateId;

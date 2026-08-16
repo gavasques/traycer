@@ -93,14 +93,13 @@ export interface DefaultHostReadinessPresentation {
    * The three recoveries for the residual "no host is dialable" card (D7).
    *
    * They are host-MANAGEMENT-free on purpose: that card is reached when the
-   * auto-failover had nowhere to go, which includes directories holding only
-   * machines this app cannot manage. Re-reading the registry, opening the
-   * picker and opening settings are the three things a user can do about that
-   * from anywhere, and the card carried none of them - it shipped with
-   * `actions: []`.
+   * derivation had nowhere to go, which includes directories holding only
+   * machines this app cannot manage. Re-reading the registry and opening
+   * Settings ▸ Host - which is where hosts are activated now - are what a
+   * user can do about that from anywhere, and the card carried neither: it
+   * shipped with `actions: []`.
    */
   readonly refreshDirectory: () => void;
-  readonly openHostPicker: () => void;
   readonly openSettings: () => void;
   /**
    * Whether AT LEAST ONE entry in the merged directory can currently be
@@ -178,7 +177,6 @@ const EMPTY_DEFAULT_HOST_PRESENTATION: DefaultHostReadinessPresentation = {
   reinstall: () => undefined,
   configureShell: () => undefined,
   refreshDirectory: () => undefined,
-  openHostPicker: () => undefined,
   openSettings: () => undefined,
   anyHostDialable: false,
   requestRespawn: () => undefined,

@@ -837,6 +837,57 @@ describe("selection authority IPC binding", () => {
 
       bridge.dispose();
     });
+
+    it("P1.2 acceptance seam: ONE Activate from window A re-derives BOTH attached windows to the same effective host", async () => {
+      fetchRegisteredHostsMock.mockResolvedValue({
+        kind: "ok",
+        response: { hosts: [buildHostListItem("shared-host")] },
+      });
+      const { bridge, registry } = await buildBridge({
+        signedIn: { userId: "user-a", token: "token-1" },
+      });
+      const windowA = buildWindow();
+      const windowB = buildWindow();
+      registry.add("window-a", 101, windowA);
+      registry.add("window-b", 202, windowB);
+      bridge.install();
+      await flushIo();
+
+      const attach = attachHandler();
+      const seqA = invokeSyncWithSender(RunnerHostSync.selectionAttachSeq, 101);
+      const attachA = await attachOk(attach, 101, seqA, []);
+      const seqB = invokeSyncWithSender(RunnerHostSync.selectionAttachSeq, 202);
+      await attachOk(attach, 202, seqB, []);
+
+      windowA.sentMessages.length = 0;
+      windowB.sentMessages.length = 0;
+
+      const activate = activateHandler();
+      await expect(
+        activate(sender(101), attachA.incarnationId, "shared-host"),
+      ).resolves.toEqual({ ok: true });
+
+      // Both windows - not just the one that called Activate - see the SAME
+      // re-derived effective host over their own selectionChanged fan-out.
+      // There is exactly one authority; a second window's view is never a
+      // separately-derived answer.
+      for (const window of [windowA, windowB]) {
+        const selectionMessage = window.sentMessages.find(
+          (message) => message.channel === RunnerHostEvent.selectionChanged,
+        );
+        expect(selectionMessage).toBeDefined();
+        expect(selectionMessage?.payload).toMatchObject({
+          change: {
+            preferredHostId: "shared-host",
+            targetHostId: "shared-host",
+            effectiveHostId: "shared-host",
+            cause: "activate",
+          },
+        });
+      }
+
+      bridge.dispose();
+    });
   });
 
   it("fans selectionChanged, leasesChanged and reattachRequired out to every window", async () => {

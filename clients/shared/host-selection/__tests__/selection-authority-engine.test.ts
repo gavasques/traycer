@@ -1485,3 +1485,140 @@ describe("SelectionAuthorityEngineImpl - A5: tombstone seen-ids are pruned on fl
     authority.dispose();
   });
 });
+
+// ------------------------------------------------------- P1.2 owed pins
+// (host-lifecycle redesign, ticket P1.2 test brief - each pins a real engine
+// behavior that had no test that would catch a regression).
+
+describe("SelectionAuthorityEngineImpl - derivation precedence (P1.2)", () => {
+  it("a usable preferred host outranks a usable local host: effective is the preferred host", async () => {
+    const clock = createFakeAuthorityClock(0);
+    const authority = createTestAuthority({
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: "L",
+        hosts: [fleetHost("L", "local"), fleetHost("P", "remote")],
+      },
+      initialIdentityKey: "acct-1",
+      clock,
+    });
+    const { engine } = authority;
+    const seqA = engine.allocateAttachSeq("A");
+    const attachA = engine.attach("A", attachRequest(seqA, []));
+    if (!attachA.ok) throw new Error("expected attach to succeed");
+
+    // L has no evidence at all, so its lease is the default "connecting" -
+    // usable by `isUsableForSelection` (only `dead` and `restarting-expected`
+    // are excluded). Both P and L are therefore usable at the moment of
+    // activation, which is what makes this a precedence test rather than a
+    // "no other candidate" test.
+    const localLease = findLease(engine.snapshot().leases, "L");
+    if (localLease === undefined) throw new Error("expected a lease for L");
+    expect(isUsableForSelection(localLease)).toBe(true);
+
+    expect(await engine.activate("A", attachA.incarnationId, "P")).toEqual({
+      ok: true,
+    });
+
+    expect(engine.snapshot().preferredHostId).toBe("P");
+    expect(engine.snapshot().targetHostId).toBe("P");
+    expect(engine.snapshot().effectiveHostId).toBe("P");
+
+    // Still true after the activation - L was never made unusable, so this
+    // pins ORDER (the preferred arm runs before the local arm), not merely
+    // "local was unusable so preferred won by default".
+    const localLeaseAfter = findLease(engine.snapshot().leases, "L");
+    if (localLeaseAfter === undefined) throw new Error("expected a lease for L");
+    expect(isUsableForSelection(localLeaseAfter)).toBe(true);
+
+    authority.dispose();
+  });
+});
+
+describe("SelectionAuthorityEngineImpl - F14 deregister-clear (P1.2)", () => {
+  it("a non-empty fleet that omits the preferred host clears preferred and emits cause deregister-clear; an empty fleet does not clear", async () => {
+    const clock = createFakeAuthorityClock(0);
+    const authority = createTestAuthority({
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: null,
+        hosts: [fleetHost("H", "remote")],
+      },
+      initialIdentityKey: "acct-1",
+      clock,
+    });
+    const { engine, events, fleet, preferredStore } = authority;
+    const seqA = engine.allocateAttachSeq("A");
+    const attachA = engine.attach("A", attachRequest(seqA, []));
+    if (!attachA.ok) throw new Error("expected attach to succeed");
+
+    expect(await engine.activate("A", attachA.incarnationId, "H")).toEqual({
+      ok: true,
+    });
+    expect(engine.snapshot().preferredHostId).toBe("H");
+
+    // An EMPTY fleet must NOT clear the preference (module header: "no hosts"
+    // is what this port publishes before its first genuine registry answer,
+    // and while an identity transition is in flight).
+    fleet.publish(0, null, []);
+    expect(engine.snapshot().preferredHostId).toBe("H");
+    expect(preferredStore.load("acct-1")).toBe("H");
+    const selectionEvents = events.filter((event) => event.kind === "selection");
+    const afterEmptyFleet = selectionEvents[selectionEvents.length - 1];
+    if (afterEmptyFleet === undefined || afterEmptyFleet.kind !== "selection") {
+      throw new Error("expected a selection event");
+    }
+    expect(afterEmptyFleet.change.cause).not.toBe("deregister-clear");
+
+    // A NON-EMPTY fleet that omits the preferred host clears it and stamps
+    // the cause deregister-clear.
+    fleet.publish(0, null, [fleetHost("OTHER", "remote")]);
+    expect(engine.snapshot().preferredHostId).toBeNull();
+    expect(preferredStore.load("acct-1")).toBeNull();
+    const afterDeregister = events
+      .filter((event) => event.kind === "selection")
+      .at(-1);
+    if (afterDeregister === undefined || afterDeregister.kind !== "selection") {
+      throw new Error("expected a selection event");
+    }
+    expect(afterDeregister.change.cause).toBe("deregister-clear");
+
+    authority.dispose();
+  });
+});
+
+describe("SelectionAuthorityEngineImpl - identity wipe (P1.2, G1)", () => {
+  it("activating under identity A then transitioning to B empties A's preferred bucket and B inherits nothing", async () => {
+    const clock = createFakeAuthorityClock(0);
+    const authority = createTestAuthority({
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: null,
+        hosts: [fleetHost("H", "remote")],
+      },
+      initialIdentityKey: "acct-A",
+      clock,
+    });
+    const { engine, identity, preferredStore } = authority;
+    const seqA = engine.allocateAttachSeq("A");
+    const attachA = engine.attach("A", attachRequest(seqA, []));
+    if (!attachA.ok) throw new Error("expected attach to succeed");
+
+    expect(await engine.activate("A", attachA.incarnationId, "H")).toEqual({
+      ok: true,
+    });
+    expect(preferredStore.load("acct-A")).toBe("H");
+
+    identity.set("acct-B");
+
+    // A's bucket is wiped, not merely left behind - a shared machine must not
+    // be able to read A's choice back out of the store later.
+    expect(preferredStore.load("acct-A")).toBeNull();
+    // B inherits nothing: no bucket was ever written for acct-B, and the
+    // engine's own preferred is null immediately after the transition.
+    expect(preferredStore.load("acct-B")).toBeNull();
+    expect(engine.snapshot().preferredHostId).toBeNull();
+
+    authority.dispose();
+  });
+});

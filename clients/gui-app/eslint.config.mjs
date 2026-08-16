@@ -22,6 +22,8 @@ import {
   hostSelectionReadImportRestrictions,
   selectByIdRestrictions,
   selectByIdWriteAllowlist,
+  selectionAuthorityRestrictions,
+  selectionAuthorityWriteAllowlist,
 } from "../../eslint/traycer-host-selection-layer-rules.mjs";
 
 // Do not subscribe to the entire Zustand store - reused across the base rules
@@ -129,6 +131,7 @@ const generalCustomSyntaxRestrictions = [
   ...tabNavigationStoreActionBans,
   epicTabRouteConstructionBan,
   ...selectByIdRestrictions,
+  ...selectionAuthorityRestrictions,
 ];
 
 export default tseslint.config(
@@ -299,8 +302,8 @@ export default tseslint.config(
     },
   },
   {
-    // D12 write path: Settings activate + landing composer may call
-    // selectById. Every other production file keeps the ban via
+    // D12 write path, lower half: only the authority→directory bridge may
+    // call selectById. Every other production file keeps the ban via
     // generalCustomSyntaxRestrictions.
     files: selectByIdWriteAllowlist,
     rules: {
@@ -310,6 +313,22 @@ export default tseslint.config(
         noFullStoreSubscription,
         ...generalCustomSyntaxRestrictions.filter(
           (restriction) => !selectByIdRestrictions.includes(restriction),
+        ),
+        ...nestedFocusBoundaryRestrictions([]),
+      ],
+    },
+  },
+  {
+    // D12 write path, upper half: only Settings ▸ Activate and the bridge's
+    // composition root may reach the preferred-write API.
+    files: selectionAuthorityWriteAllowlist,
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        ...traycerTypeSafetyRestrictions,
+        noFullStoreSubscription,
+        ...generalCustomSyntaxRestrictions.filter(
+          (restriction) => !selectionAuthorityRestrictions.includes(restriction),
         ),
         ...nestedFocusBoundaryRestrictions([]),
       ],

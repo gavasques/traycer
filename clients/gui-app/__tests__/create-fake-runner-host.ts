@@ -1,5 +1,47 @@
 import type { IRunnerHost } from "@traycer-clients/shared/platform/runner-host";
-import { createInertSelectionAuthorityClient } from "@traycer-clients/shared/test-fixtures/selection-authority";
+import {
+  createInProcessSelectionAuthority,
+  inertLocalHostOutageSignal,
+  InMemoryAuthorityIdentitySource,
+  InMemoryHostFleetSource,
+  InMemoryPreferredHostStore,
+  unavailableLocalHostEnsurePort,
+} from "@traycer-clients/shared/host-selection/in-process-selection-authority";
+import {
+  createIncrementingIncarnationIds,
+  silentAuthorityLog,
+  systemAuthorityClock,
+} from "@traycer-clients/shared/host-selection/selection-authority-engine";
+
+/**
+ * Browser/dev topology (D16): the same in-window authority engine
+ * `MockRunnerHost` mounts, seeded with a single usable local host so app-boot
+ * suites that render through `HostRuntimeProvider` get a real derivation
+ * instead of the always-refused inert double - see the doc comment below.
+ */
+function createDefaultLocalSelectionAuthority(localHostId: string) {
+  const fleet = new InMemoryHostFleetSource({
+    revision: 0,
+    identityGeneration: 0,
+    localHostId,
+    hosts: [{ hostId: localHostId, kind: "local" as const }],
+  });
+  const identity = new InMemoryAuthorityIdentitySource(null);
+  const mount = createInProcessSelectionAuthority({
+    fleet,
+    identity,
+    localHostEnsure: unavailableLocalHostEnsurePort,
+    localOutage: inertLocalHostOutageSignal,
+    preferredStore: new InMemoryPreferredHostStore(),
+    clock: systemAuthorityClock,
+    newIncarnationId: createIncrementingIncarnationIds(),
+    log: silentAuthorityLog,
+  });
+  fleet.publish(identity.current().generation, localHostId, [
+    { hostId: localHostId, kind: "local" as const },
+  ]);
+  return mount.client;
+}
 
 /**
  * Shared `IRunnerHost` stub base for renderer/bridge-provider tests that need
@@ -92,10 +134,16 @@ export function createFakeRunnerHost(
     migration: null,
     hostManagement: null,
     hostTray: null,
-    // Inert by default: a test that exercises host selection passes a real
-    // in-window authority through `overrides` rather than getting a silently
-    // empty one here.
-    selectionAuthority: createInertSelectionAuthorityClient(),
+    // A real, attach-able in-window authority by default (D16) - the same
+    // topology `MockRunnerHost` mounts - seeded with one usable local host,
+    // so a suite that boots through `HostRuntimeProvider`/the selection
+    // bridge without caring about selection still gets a real effective
+    // host instead of silently binding nothing. A test that wants NO
+    // authority (e.g. to assert the detached/superseded UI) passes
+    // `createInertSelectionAuthorityClient()` through `overrides` instead.
+    selectionAuthority: createDefaultLocalSelectionAuthority(
+      "fake-local-host",
+    ),
     zoom: null,
   };
   return { ...base, ...overrides };

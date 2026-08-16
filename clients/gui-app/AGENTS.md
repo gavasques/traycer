@@ -76,13 +76,33 @@ Every host RPC / AuthService / RunnerHost request goes through Query. No
   `src/lib/query-keys/`.
 
 Host scope: tab tiles use `useTabHostId()` / `useTabHostClient()`; app-wide
-surfaces use `useReactiveActiveHostId()` / `useHostClient()`. Don't mix.
+surfaces use `useEffectiveHostId()` / `useHostClient()`. Don't mix.
+`useEffectiveHostId()` is the selection authority's DERIVED host (selection
+model §1) — one decider per app, delivered to every window. Settings ▸ Activate
+is the only UI gesture that changes it; no picker anywhere writes it, and
+`HostDirectoryService.selectById` is lint-restricted to the one authority
+bridge. Surface pickers write a per-surface pin (`useSurfaceHostPin`), and a
+surface with no pin resolves to `useEffectiveHostId()`.
 
 Composers have a **target host** (tab host, fork dialog's fixed host, the
-new-conversation modal's host). `null` means "follow the app-wide default":
-that is the landing page, whose picker rebinds that default, and the
-new-conversation modal opened from the app-wide sidebar trigger, which sits
-outside every `TabHostProvider`. Every host RPC around a
+new-conversation modal's host). `null` means "follow the effective host" —
+the landing composer and the new-conversation modal opened from the app-wide
+sidebar trigger, both of which sit outside every `TabHostProvider`.
+
+**The composer is PLACEMENT.** Its resolved host (`pin ?? effective`, keyed per
+WINDOW) decides where a created epic/chat lives for life, so its picker writes
+that pin and never the app-wide selection. Submit re-validates: a PINNED host
+must not be dead (D6), and — pinned or following — the client the create is
+about to be sent on must still address the resolved host, else the composer
+refuses inline and creates nothing, never a silent fallback onto whatever the
+window is bound to. There is deliberately no separate reachability gate on the
+following path: usability of the effective host is the selection authority's
+call (selection model §1), and re-deriving it here would be a second decider.
+A create that resolves its host separately from the chip is the bug this
+structure exists to prevent; route new composer creates through the placement
+the chip is showing.
+
+Every host RPC around a
 composer — mentions, slash commands, harness/model catalog, providers/profiles,
 pack retry, catalog refresh — and every surface that dispatches into the
 focused composer (the palette's Pick provider/model, via

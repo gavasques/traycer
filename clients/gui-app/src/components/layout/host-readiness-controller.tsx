@@ -38,7 +38,7 @@ import { LocalHostLoadingContent } from "@/components/local-host-loading";
 import { useReactiveHostReadiness } from "@/hooks/host/use-reactive-host-readiness";
 import { useRemoteSessionsPollReadiness } from "@/hooks/host/use-remote-sessions-poll-readiness";
 import { describeHostCompatibilityError, useHostBinding } from "@/lib/host";
-import type { HostSelectionIntent } from "@/lib/host/host-directory-service";
+import { useEffectiveHostId } from "@/hooks/host/use-effective-host-id";
 import {
   useHostCompatibility,
   type HostCompatibility,
@@ -90,13 +90,20 @@ export function HostReadinessControllerProvider(props: {
   const targetEntry = selectedEntry ?? activeEntry;
   const targetKind = resolveHostTargetKind(targetEntry);
   const compatibility = useHostCompatibility();
-  // Read every render off the directory's LIVE state, never memoized and
-  // never from storage: while the target is UNRESOLVED this is the only thing
-  // that separates a cold local start from a remote pick whose directory row
-  // has not arrived, and the answer changes the instant the user picks a host
-  // (the selection gesture rebinds, which re-renders this controller).
-  const selectionIntent =
-    binding === null ? null : binding.directory.readSelectionIntent();
+  // Read every render off LIVE in-memory state, never from storage: while the
+  // target is UNRESOLVED this is the only thing that separates a cold local
+  // start from a remote host whose directory row has not arrived. The intent
+  // is the AUTHORITY's derived effective host now (redesign P1.2) - the
+  // directory no longer holds one - and it changes the instant Activate
+  // re-derives, which re-renders this controller.
+  const effectiveHostId = useEffectiveHostId();
+  const selectionIntent: LocalBootSelection | null =
+    binding === null
+      ? null
+      : {
+          selectedHostId: effectiveHostId,
+          localHostId: binding.directory.getLocalHostId(),
+        };
   const localBootIntent = resolveLocalBootIntent({
     hasLocalHost: runnerHost.hasLocalHost,
     targetEntry,
@@ -127,9 +134,6 @@ export function HostReadinessControllerProvider(props: {
       });
     });
   }, [directory]);
-  const openHostPicker = useCallback(() => {
-    runnerHost.hostPicker.requestOpen();
-  }, [runnerHost]);
   // The live directory-wide fact behind the host-unavailable card's report
   // family. Computed here, from the same entries readiness is resolved from,
   // so the card states what the directory actually says rather than inferring
@@ -160,7 +164,6 @@ export function HostReadinessControllerProvider(props: {
           localBootIntent={localBootIntent}
           onConfigureShell={props.onConfigureShell}
           onRefreshDirectory={refreshDirectory}
-          onOpenHostPicker={openHostPicker}
           onOpenSettings={props.onOpenSettings}
           anyHostDialable={anyHostDialable}
           onRequestRespawn={respawn.mutate}
@@ -187,7 +190,6 @@ function HostReadinessControllerContents(props: {
   readonly localBootIntent: boolean;
   readonly onConfigureShell: () => void;
   readonly onRefreshDirectory: () => void;
-  readonly onOpenHostPicker: () => void;
   readonly onOpenSettings: () => void;
   readonly anyHostDialable: boolean;
   readonly onRequestRespawn: () => void;
@@ -203,7 +205,6 @@ function HostReadinessControllerContents(props: {
         localBootIntent: props.localBootIntent,
         configureShell: props.onConfigureShell,
         refreshDirectory: props.onRefreshDirectory,
-        openHostPicker: props.onOpenHostPicker,
         openSettings: props.onOpenSettings,
         anyHostDialable: props.anyHostDialable,
         requestRespawn: props.onRequestRespawn,
@@ -216,7 +217,6 @@ function HostReadinessControllerContents(props: {
       props.targetKind,
       props.onConfigureShell,
       props.onRefreshDirectory,
-      props.onOpenHostPicker,
       props.onOpenSettings,
       props.anyHostDialable,
       props.onRequestRespawn,
@@ -298,22 +298,31 @@ function resolveHostTargetKind(
  *    though the row has not resolved yet. This is the case that used to run a
  *    real `convergeReady` against the wrong machine.
  *
- * The intent must come from memory, not from the persisted keys that seed it:
- * both writes are best-effort and swallow failures, so on a machine with
- * blocked storage a live remote pick reads back as "nothing selected" - which
- * is the FIRST-INSTALL answer - and a local restart whose id write failed
- * reads back as a remote pick. Both directions fail toward doing the wrong
- * thing to the local machine, which is the one thing this function exists to
- * prevent.
+ * The intent must come from memory, not from persisted keys: the local-id
+ * write is best-effort and swallows failures, so on a machine with blocked
+ * storage a local restart whose id write failed reads back as a remote pick.
+ * That direction fails toward doing the wrong thing to the local machine,
+ * which is the one thing this function exists to prevent.
  *
- * `selectionIntent === null` means there is no directory at all (no runtime
- * binding yet). Nothing can have been selected in that state, so the only
- * boot it can be is the local one.
+ * `selectionIntent === null` means there is no runtime binding yet. Nothing
+ * can be effective in that state, so the only boot it can be is the local
+ * one.
  */
+interface LocalBootSelection {
+  /**
+   * The host this app is pointed at, or `null` when the authority has no
+   * effective host at all (∅ - first run, or nothing usable). NOT resolved
+   * against the directory: that is the point.
+   */
+  readonly selectedHostId: string | null;
+  /** This machine's own local host id, as the directory knows it. */
+  readonly localHostId: string | null;
+}
+
 function resolveLocalBootIntent(args: {
   readonly hasLocalHost: boolean;
   readonly targetEntry: HostDirectoryEntry | undefined;
-  readonly selectionIntent: HostSelectionIntent | null;
+  readonly selectionIntent: LocalBootSelection | null;
 }): boolean {
   if (!args.hasLocalHost) return false;
   if (args.targetEntry !== undefined) return args.targetEntry.kind !== "remote";
@@ -330,7 +339,6 @@ function presentationFromLifecycle(args: {
   readonly localBootIntent: boolean;
   readonly configureShell: () => void;
   readonly refreshDirectory: () => void;
-  readonly openHostPicker: () => void;
   readonly openSettings: () => void;
   readonly anyHostDialable: boolean;
   readonly requestRespawn: () => void;
@@ -355,7 +363,6 @@ function presentationFromLifecycle(args: {
     reinstall: args.lifecycle.provisioning.reinstall,
     configureShell: args.configureShell,
     refreshDirectory: args.refreshDirectory,
-    openHostPicker: args.openHostPicker,
     openSettings: args.openSettings,
     anyHostDialable: args.anyHostDialable,
     requestRespawn: args.requestRespawn,
@@ -1103,14 +1110,6 @@ function unavailableFallback(
         disabled: false,
         pending: false,
         onClick: presentation.refreshDirectory,
-      },
-      {
-        label: "Switch host",
-        testId: "host-unavailable-switch-host",
-        variant: "outline",
-        disabled: false,
-        pending: false,
-        onClick: presentation.openHostPicker,
       },
       {
         label: "Open settings",

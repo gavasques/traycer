@@ -847,113 +847,16 @@ describe("useNotificationActivation origin-host guard (P0-1)", () => {
     ).toBe(false);
   });
 
-  it("selects an approval's origin host before routing to its exact tile", () => {
-    const store = useEpicCanvasStore.getState();
-    const tabId = store.openEpicTab("epic-origin", "Origin B");
-    store.openTileInTab(tabId, {
-      id: "chat-origin",
-      instanceId: "host-b-chat",
-      type: "chat",
-      name: "Host B chat",
-      hostId: hostB.hostId,
-    });
-    const canvas = useEpicCanvasStore.getState().canvasByTabId[tabId];
-    if (canvas === undefined || canvas.activePaneId === null) {
-      throw new Error("expected host B canvas");
-    }
-    const onResult = vi.fn();
-    const hook = renderHook(() => useNotificationActivation(), {
-      wrapper: createWrapper(),
-    });
-
-    act(() => {
-      hook.result.current.activate({
-        payload: {
-          kind: "approval",
-          epicId: "epic-origin",
-          chatId: "chat-origin",
-          approvalId: "approval-origin",
-          sessionId: undefined,
-          artifactId: undefined,
-        },
-        receivedAt: 101,
-        feedId: "cloud:approval-origin",
-        originHostId: hostB.hostId,
-        onResult,
-      });
-    });
-
-    expect(client.getActiveHostId()).toBe(hostB.hostId);
-    expect(navigateSpy.mock.calls[0]?.[0]).toMatchObject({
-      params: { epicId: "epic-origin", tabId },
-      search: {
-        focusPaneId: canvas.activePaneId,
-        focusTileInstanceId: "host-b-chat",
-      },
-    });
-    expect(onResult).toHaveBeenCalledWith("success");
-  });
-
-  it("fails closed before routing an approval whose origin is unavailable", () => {
-    bindingState.current = {
-      hostClient: client,
-      directory: createTestDirectory(
-        [{ ...hostB, transportDialability: "not-dialable" }],
-        () => undefined,
-      ),
-    };
-    const onResult = vi.fn();
-    const hook = renderHook(() => useNotificationActivation(), {
-      wrapper: createWrapper(),
-    });
-
-    act(() => {
-      hook.result.current.activate({
-        payload: {
-          kind: "approval",
-          epicId: "epic-origin",
-          chatId: "chat-origin",
-          approvalId: "approval-origin",
-          sessionId: undefined,
-          artifactId: undefined,
-        },
-        receivedAt: 102,
-        feedId: "cloud:approval-origin",
-        originHostId: hostB.hostId,
-        onResult,
-      });
-    });
-
-    expect(navigateSpy).not.toHaveBeenCalled();
-    expect(onResult).toHaveBeenCalledWith("failure");
-  });
-
-  it("fails closed before routing an approval with no origin host", () => {
-    const onResult = vi.fn();
-    const hook = renderHook(() => useNotificationActivation(), {
-      wrapper: createWrapper(),
-    });
-
-    act(() => {
-      hook.result.current.activate({
-        payload: {
-          kind: "approval",
-          epicId: "epic-origin",
-          chatId: "chat-origin",
-          approvalId: "approval-origin",
-          sessionId: undefined,
-          artifactId: undefined,
-        },
-        receivedAt: 103,
-        feedId: null,
-        originHostId: null,
-        onResult,
-      });
-    });
-
-    expect(navigateSpy).not.toHaveBeenCalled();
-    expect(onResult).toHaveBeenCalledWith("failure");
-  });
+  // "selects an approval's origin host before routing to its exact tile" and
+  // both "fails closed before routing an approval ..." tests are deleted:
+  // their subject, `ensureOriginHostSelected` (and the origin-availability
+  // fail-closed gate built on it), no longer exists. Activation does not
+  // move the app-wide selection at all now (redesign P1.2, D7) - a
+  // notification click routes against whatever host the target surface
+  // already resolves through, and a foreign-origin row's routability is the
+  // caller's decision, not this hook's. The surviving tests in this block
+  // (the acknowledgment guard above, tile-targeting below) cover what is
+  // still this hook's job.
 
   it("does not reuse a host B tile for a host A approval", () => {
     const store = useEpicCanvasStore.getState();

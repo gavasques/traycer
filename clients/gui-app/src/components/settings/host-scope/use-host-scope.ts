@@ -1,11 +1,15 @@
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import type { HostClient } from "@traycer-clients/shared/host-client/host-client";
+import type {
+  ActivateResult,
+  SelectionAuthorityClient,
+} from "@traycer-clients/shared/host-selection/selection-authority-contract";
+import { toast } from "sonner";
 import { useHostClientFor } from "@/hooks/host/use-host-client-for";
-import {
-  useHostBinding,
-  useHostClient,
-  type HostRpcRegistry,
-} from "@/lib/host";
+import { useHostClient, type HostRpcRegistry } from "@/lib/host";
+import { useRunnerHost } from "@/providers/use-runner-host";
+import { Analytics, AnalyticsEvent } from "@/lib/analytics";
+import { appLogger } from "@/lib/logger";
 import {
   deriveHostScopeStatus,
   type HostScopeStatus,
@@ -38,7 +42,12 @@ export interface HostScope {
   readonly status: HostScopeStatus;
   readonly client: HostClient<HostRpcRegistry> | null;
   readonly setHostId: (hostId: string) => void;
-  /** Point this window's ambient work at the administered host. */
+  /**
+   * ACTIVATE: the app's one and only writer of `preferredHostId` (selection
+   * model §1, invariant 1). It does not bind anything here - it asks the
+   * selection authority, which validates against the fleet, persists, and
+   * re-derives; the new effective host comes back down to every window.
+   */
   readonly makeActive: (hostId: string) => void;
   readonly isLoading: boolean;
   /**
@@ -94,7 +103,7 @@ export function useHostScope(): HostScope {
  */
 export function useHostScopeFor(selection: HostScopeSelection): HostScope {
   const ambientClient = useHostClient();
-  const binding = useHostBinding();
+  const runnerHost = useRunnerHost();
   // The list itself is shared with every other picker in the app — see
   // `useHostOptions`. What is left here is the SELECTION on top of it, which is
   // the only part Settings and the usage popover own.
@@ -102,6 +111,14 @@ export function useHostScopeFor(selection: HostScopeSelection): HostScope {
   const { hosts, activeHostId, listsResolved, listsFailed, nowMs } = options;
 
   const { scopedHostId, setScopedHostId } = selection;
+  const authority = runnerHost.selectionAuthority;
+  const makeActive = useCallback(
+    (hostId: string) => {
+      const option = findHostOption(hosts, hostId);
+      void requestActivate(authority, hostId, option);
+    },
+    [authority, hosts],
+  );
 
   // Still loading is not the same as gone, and a list that FAILED cannot prove
   // a host was removed. Both rules — and the reason the `vanished` verdict is
@@ -171,12 +188,71 @@ export function useHostScopeFor(selection: HostScopeSelection): HostScope {
     // substitution this status enum exists to make impossible.
     client: status === "following" ? ambientClient : overrideClient,
     setHostId: setScopedHostId,
-    makeActive: (hostId: string) => {
-      binding?.directory.selectById(hostId);
-    },
+    makeActive,
     isLoading: options.isLoading,
     listsFailed,
     retryLists: options.retryLists,
     nowMs,
   };
+}
+
+/**
+ * The Activate write, with its refusal arms rendered (F14/D13).
+ *
+ * Exported for its own test: this IS the "only Settings writes preferred"
+ * acceptance seam, and reaching it through `useHostScopeFor` would mean
+ * standing up the whole Settings provider tree to observe one call and one
+ * toast - the panels' own tests mock this module wholesale for exactly that
+ * reason. `makeActive` is the one-line wiring that calls it.
+ *
+ * `ok: true` resolves only after the authority validated, persisted, and
+ * re-derived, so the analytics event below is fired against a preference that
+ * actually landed - and it is the ONLY `HostSelected` in the app now. A
+ * refusal is a real answer about a host, not a transport failure, so each one
+ * says what the user can do about it instead of a generic error.
+ *
+ * Deliberately not refused by the authority, and therefore never toasted
+ * here: a registered host that is currently OFFLINE. Preferred is intent, not
+ * liveness (D1/D5) - derivation serves a fallback until it returns.
+ */
+export async function requestActivate(
+  authority: SelectionAuthorityClient,
+  hostId: string,
+  option: HostScopeOption | null,
+): Promise<void> {
+  let result: ActivateResult;
+  try {
+    result = await authority.activate(hostId);
+  } catch (error: unknown) {
+    appLogger.warn("[host-scope] activate request failed", {
+      hostId,
+      error: String(error),
+    });
+    toast.error("Couldn't activate this host. Try again.");
+    return;
+  }
+  if (result.ok) {
+    Analytics.getInstance().track(AnalyticsEvent.HostSelected, {
+      source: "direct_ui",
+      host_kind: option?.isLocalMachine === true ? "local" : "remote",
+    });
+    return;
+  }
+  toast.error(activateRefusalMessage(result.reason, option?.name ?? "That host"));
+}
+
+function activateRefusalMessage(
+  reason: "unknown-host" | "incompatible" | "not-attached" | "unrecognized",
+  label: string,
+): string {
+  if (reason === "unknown-host") {
+    return `${label} is no longer registered to this account.`;
+  }
+  if (reason === "incompatible") {
+    return `${label} needs a host update before it can be activated.`;
+  }
+  if (reason === "not-attached") {
+    return "This window lost its connection to the selection service - reload and try again.";
+  }
+  return `Couldn't activate ${label}.`;
 }

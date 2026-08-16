@@ -261,6 +261,8 @@ export enum AnalyticsEvent {
   HostSetupSucceeded = "host_setup_succeeded",
   HostSetupFailed = "host_setup_failed",
   HostSelected = "host_selected",
+  HostFailover = "host_failover_moved",
+  HostRecovered = "host_recovered",
   HostUpdateStarted = "host_update_started",
   HostUpdateSucceeded = "host_update_succeeded",
   HostUpdateFailed = "host_update_failed",
@@ -476,6 +478,16 @@ export interface AnalyticsEventProperties {
   readonly [AnalyticsEvent.HostSelected]: SourceProperties & {
     readonly host_kind: "local" | "remote";
   };
+  /**
+   * The DERIVATION moved the app, with no gesture behind it - the selection
+   * authority's `failover` / `recovery` cause (redesign P1.2). Property-less
+   * on purpose: what happened is the whole event, and a host id here would be
+   * an identifier for a machine, attached to a signal nobody segments by.
+   * `HostSelected` stays the INTENT event, fired only by Settings ▸ Activate,
+   * so the two can never be conflated again.
+   */
+  readonly [AnalyticsEvent.HostFailover]: null;
+  readonly [AnalyticsEvent.HostRecovered]: null;
   readonly [AnalyticsEvent.HostUpdateStarted]: SourceProperties;
   readonly [AnalyticsEvent.HostUpdateSucceeded]: null;
   readonly [AnalyticsEvent.HostUpdateFailed]: {
@@ -1380,6 +1392,8 @@ const EVENT_PROPERTY_KEYS = new Map<AnalyticsEvent, ReadonlyArray<string>>([
 
 const EVENTS_WITHOUT_PROPERTIES = new Set<AnalyticsEvent>([
   AnalyticsEvent.SignInSucceeded,
+  AnalyticsEvent.HostFailover,
+  AnalyticsEvent.HostRecovered,
   AnalyticsEvent.HostUpdateSucceeded,
   AnalyticsEvent.TaskShared,
   AnalyticsEvent.ChatMessageEdited,

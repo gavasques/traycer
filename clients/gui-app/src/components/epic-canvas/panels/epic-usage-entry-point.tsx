@@ -2,10 +2,8 @@ import { useState, type ReactNode } from "react";
 import { LineChart } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TooltipWrapper } from "@/components/ui/tooltip-wrapper";
-// eslint-disable-next-line @typescript-eslint/no-restricted-imports -- expires P1.2 — usage popover becomes a surface pin. epics/c6042be5-cbd3-4923-8cbe-d2bc00ae7ade/artifacts/host-lifecycle-redesign
-import { useHostClient } from "@/lib/host";
-// eslint-disable-next-line @typescript-eslint/no-restricted-imports -- expires P1.2 — usage popover becomes a surface pin. epics/c6042be5-cbd3-4923-8cbe-d2bc00ae7ade/artifacts/host-lifecycle-redesign
-import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
+import { useEffectiveHostId } from "@/hooks/host/use-effective-host-id";
+import { useHostClientForHostId } from "@/hooks/host/use-host-client-for-host-id";
 import { useUsageSummarySupported } from "@/hooks/usage-analytics/use-usage-summary-support";
 import { StatusRowChromeBoundary } from "@/components/epic-canvas/panels/status-row-chrome-boundary";
 import { EpicUsageDialog } from "@/components/epic-canvas/panels/epic-usage-dialog";
@@ -26,9 +24,11 @@ import { cn } from "@/lib/utils";
  * on-demand with `poll: false`, matching every other actively-viewed usage
  * surface.
  *
- * App-wide host access (`useReactiveActiveHostId`/`useHostClient`), not
+ * Resolves against the EFFECTIVE host (`useEffectiveHostId`), not
  * `useTabHostId` - this status row sits above the per-tile `TabHostProvider`
- * scope, same as its siblings.
+ * scope, same as its siblings. It is a singleton with no picker of its own,
+ * so it follows (selection model §2): its chip would be type-keyed the day it
+ * grows one, and until then the resolved host IS the effective host.
  */
 export function EpicUsageEntryPoint(props: {
   readonly epicId: string;
@@ -43,8 +43,8 @@ export function EpicUsageEntryPoint(props: {
 function EpicUsageEntryPointBody(props: {
   readonly epicId: string;
 }): ReactNode {
-  const hostId = useReactiveActiveHostId();
-  const client = useHostClient();
+  const hostId = useEffectiveHostId();
+  const client = useHostClientForHostId(hostId);
   const supported = useUsageSummarySupported(hostId);
   const [open, setOpen] = useState(false);
 

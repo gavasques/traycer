@@ -43,7 +43,7 @@ import { createComposerPickerStore } from "@/components/chat/composer/picker/com
 import { useComposerPickerItems } from "@/components/chat/composer/picker/use-composer-picker-items";
 import { useProfileRateLimitSwitchPrompt } from "@/components/chat/composer/use-profile-rate-limit-switch-prompt";
 import { ProfileRateLimitSwitchBanner } from "@/components/chat/composer/profile-rate-limit-switch-banner";
-import { useRefreshProvidersListOnTurnDefaultHost } from "@/hooks/providers/use-refresh-providers-list-on-turn-default-host";
+import { useRefreshProvidersListOnTurn } from "@/hooks/providers/use-refresh-providers-list-on-turn";
 import { commitProfileSelection } from "@/stores/composer/commit-selection";
 import { ComposerBody } from "@/components/home/composer/composer-body";
 import { COMPOSER_EDITOR_CLASSNAME } from "@/components/home/composer/composer-editor-classnames";
@@ -57,8 +57,8 @@ import {
 import { isAttachmentIngestPending } from "@/hooks/composer/use-composer-paste";
 import { useLandingComposerMentionRoots } from "@/hooks/composer/use-workspace-mention-roots";
 import { useRunnerHost } from "@/providers/use-runner-host";
-import { useEpicCreate } from "@/hooks/epic/use-epic-create-mutation";
-import { useCreateTuiAgent } from "@/hooks/agent/use-create-tui-agent";
+import { useEpicCreateForClient } from "@/hooks/epic/use-epic-create-mutation";
+import { useCreateTuiAgentForClient } from "@/hooks/agent/use-create-tui-agent";
 import { useComposerToolbarStore } from "@/components/home/hooks/use-composer-toolbar-store";
 import { useProviderPackGate } from "@/hooks/providers/use-provider-pack-gate";
 import { fallbackSeedSource } from "@/lib/composer/composer-seed-source";
@@ -87,7 +87,13 @@ import {
   type ComposerMode,
 } from "@/components/home/data/landing-options";
 import { ComposerModeSwitcher } from "@/components/home/composer/composer-mode-switcher";
-import { useHostBinding, useHostClient } from "@/lib/host";
+import { UNKNOWN_HOST_PLACEHOLDER } from "@/lib/host/constants";
+import { useComposerPlacement } from "@/hooks/host/use-composer-placement";
+import { subscribeFollowingSurfaceReset } from "@/stores/host/surface-host-selection-store";
+import {
+  ComposerHostNotice,
+  type ComposerHostNoticeState,
+} from "@/components/home/composer/composer-host-notice";
 import { Analytics, AnalyticsEvent } from "@/lib/analytics";
 import { usePromptStash } from "@/hooks/composer/use-prompt-stash";
 import { PromptStashControl } from "@/components/chat/composer/prompt-stash-control";
@@ -136,7 +142,16 @@ export function LandingComposer(props: LandingComposerProps) {
   const editorRef = useRef<ComposerPromptEditorHandle | null>(null);
   const createdUnboundDraftIdRef = useRef<string | null>(null);
   const [pickerStore] = useState(() => createComposerPickerStore());
-  const hostClient = useHostBinding()?.hostClient ?? null;
+  // The composer's PLACEMENT (redesign P1.2, selection model §54): its own
+  // window-keyed surface pin, or the effective host while it follows. Not the
+  // app-wide selection - the picker no longer moves that - so every RPC this
+  // surface makes, and every create it performs, resolves through here.
+  const placement = useComposerPlacement();
+  const placementTarget = placement.target;
+  const composerIsPinned = placement.pin.isPinned;
+  const hostLabelFromDirectory = placement.hostLabelFor;
+  const resolvedHostId = placementTarget.resolvedHostId;
+  const hostClient = placementTarget.client;
   const activityEnabled = useSurfaceActivity();
   const runtime = draftRuntimeRegistry.getOrHydrate(props.draftId);
   const [unboundRuntime] = useState(() =>
@@ -214,15 +229,15 @@ export function LandingComposer(props: LandingComposerProps) {
   // `settingsSeed` may carry a frozen `profileId` from an old landing draft
   // (`landing-draft-store` persists a draft's settings snapshot indefinitely,
   // independent of the current provider state) or the cross-session
-  // `globalLastRunSettings` fallback - validated against the active host
-  // (the one this draft will actually create the chat on) via the same
-  // machinery `useComposerToolbarStore` runs for every composer surface.
-  // Never authoritative: the landing composer has no reauth gate of its own
-  // to defend a dead pin with a banner, so a genuinely-removed profile must
-  // be corrected to ambient here rather than silently submitted as the new
-  // chat's initial settings. The catalog reads through the same `hostClient`:
-  // the landing host picker rebinds the app-wide default, so the active
-  // client IS this composer's target host.
+  // `globalLastRunSettings` fallback - validated against this composer's
+  // resolved host (the one this draft will actually create the chat on) via
+  // the same machinery `useComposerToolbarStore` runs for every composer
+  // surface. Never authoritative: the landing composer has no reauth gate of
+  // its own to defend a dead pin with a banner, so a genuinely-removed profile
+  // must be corrected to ambient here rather than silently submitted as the
+  // new chat's initial settings. The catalog reads through the same
+  // `hostClient` - the composer's pinned/followed host, NOT the app-wide
+  // default (P1.2 retired the picker's rebind of that default).
   const toolbarStore = useComposerToolbarStore(
     "landing",
     fallbackSeedSource(settingsSeed, hostClient),
@@ -244,8 +259,11 @@ export function LandingComposer(props: LandingComposerProps) {
     isActive: chatComposerActive,
   });
 
-  const createEpic = useEpicCreate();
-  const terminalAgentCreate = useCreateTuiAgent();
+  const createEpic = useEpicCreateForClient(hostClient);
+  const terminalAgentCreate = useCreateTuiAgentForClient(
+    hostClient,
+    resolvedHostId ?? UNKNOWN_HOST_PLACEHOLDER,
+  );
   const isSubmitting =
     runtimeState.isSubmitting ||
     createEpic.isPending ||
@@ -258,9 +276,8 @@ export function LandingComposer(props: LandingComposerProps) {
       state.drafts.find((draft) => draft.id === draftId)?.workspace ?? null
     );
   });
-  const defaultHostClient = useHostClient();
   // Rate-limit switch prompt for the landing composer's own toolbar
-  // selection, scoped to the app-wide default host (landing has no tab of
+  // selection, scoped to this composer's RESOLVED host (landing has no tab of
   // its own) - the same shared hook the chat composer uses, mirroring its
   // wiring in `chat-composer.tsx`. Purely informational: it never blocks
   // epic creation.
@@ -269,13 +286,15 @@ export function LandingComposer(props: LandingComposerProps) {
     profileId,
     selectedModel,
     active: activityEnabled,
-    client: defaultHostClient,
+    client: hostClient,
   });
   // Keeps the banner's `providers.list` read converging with a turn's
   // passive rate-limit capture from ANY running epic on this host -
-  // mirrors `useRefreshProvidersListOnTurn` in `chat-composer.tsx`, scoped
-  // to the default host instead of a tab.
-  useRefreshProvidersListOnTurnDefaultHost(harnessId);
+  // mirrors `useRefreshProvidersListOnTurn` in `chat-composer.tsx`, scoped to
+  // the composer's resolved host. (It used the app-wide default before P1.2;
+  // a pinned composer would then invalidate a cache entry keyed to a host it
+  // never reads, and never the one whose banner it feeds.)
+  useRefreshProvidersListOnTurn(harnessId, resolvedHostId);
   const onSwitchRateLimitedProfile = useCallback(
     (nextProfileId: string | null) => {
       commitProfileSelection(toolbarStore, nextProfileId);
@@ -284,7 +303,7 @@ export function LandingComposer(props: LandingComposerProps) {
   );
   const resolvedWorkspace = useResolvedWorkspaceFolders(
     draftWorkspace,
-    defaultHostClient,
+    hostClient,
   );
   const workspaceAvailability = useMemo(
     () =>
@@ -559,7 +578,37 @@ export function LandingComposer(props: LandingComposerProps) {
     workspaceCanStart &&
     hasSubmittableContent;
 
-  const actions = useLandingComposerActions();
+  const actions = useLandingComposerActions(placementTarget);
+  // Submit-time refusal copy (selection model §54) and the G4 re-point notice
+  // share one slot: both say "this composer's device is not what you think",
+  // and showing two stacked banners about the same host would be noise.
+  const [hostNotice, setHostNotice] = useState<ComposerHostNoticeState | null>(
+    null,
+  );
+  const dismissHostNotice = useCallback(() => {
+    setHostNotice(null);
+  }, []);
+  // G4: a FOLLOWING composer re-points when derivation moves the effective
+  // host, and its host-dependent state must not silently travel with it - the
+  // staged worktree/branch choices name paths and refs on the machine the user
+  // picked them on. Pinned composers ignore this by construction (D6): the pin
+  // is retained and the surface keeps addressing its own host.
+  //
+  // Deliberately scoped to the staged INTENT, not to the draft's chosen
+  // folders: an automatic failover is not a user gesture, and discarding a
+  // folder set the user assembled by hand would be an unrecoverable loss on a
+  // blip. The folders re-resolve against the new host through the picker's
+  // existing absent-row + Locate affordance, which names the dangle instead of
+  // hiding it - and submit re-validation stands behind both.
+  useEffect(() => {
+    return subscribeFollowingSurfaceReset(({ nextEffectiveHostId }) => {
+      if (composerIsPinned) return;
+      useWorktreeIntentStagingStore
+        .getState()
+        .clear({ surface: "landing", draftId });
+      setHostNotice({ kind: "repointed", hostId: nextEffectiveHostId });
+    });
+  }, [composerIsPinned, draftId]);
   const { dictationControl, dictationPreparing } = useComposerDictation({
     editorRef,
     isActive: chatComposerActive,
@@ -636,7 +685,7 @@ export function LandingComposer(props: LandingComposerProps) {
     if (!canSubmit) return;
     const toolbar = toolbarStore.getState();
     if (toolbar.selection.modelSlug.length === 0) return;
-    actions.submit({
+    const refusal = actions.submit({
       // `handleDocumentChange` mints the unbound draft the moment the first
       // edit becomes submittable, but `props.draftId` only catches up on the
       // parent's next render - so a type-then-Enter still reads `null` here.
@@ -652,12 +701,21 @@ export function LandingComposer(props: LandingComposerProps) {
         permission: toolbar.permission,
       },
     });
+    // Nothing was created when a refusal comes back - the draft, its content
+    // and its staged workspace are exactly as the user left them, and the
+    // reason is stated inline above the composer rather than as a toast.
+    setHostNotice(
+      refusal === null ? null : { kind: "refused", message: refusal.message },
+    );
   }, [actions, canSubmit, draftId, pickerStore, toolbarStore]);
 
   const handleStartTerminal = useCallback(
     (launch: TerminalAgentLaunch) => {
       if (!workspaceCanStart || isSubmitting) return;
-      actions.selectTerminalAgent(launch, draftId);
+      const refusal = actions.selectTerminalAgent(launch, draftId);
+      setHostNotice(
+        refusal === null ? null : { kind: "refused", message: refusal.message },
+      );
     },
     [actions, draftId, isSubmitting, workspaceCanStart],
   );
@@ -704,28 +762,36 @@ export function LandingComposer(props: LandingComposerProps) {
       workspaceDisabledHint={submitBlockedHint}
       header={<div className="flex justify-start">{switcher}</div>}
       topBanner={
-        rateLimitPrompt.kind === "visible" ? (
-          <ProfileRateLimitSwitchBanner
-            key={rateLimitPrompt.warningKey}
-            harnessId={harnessId}
-            providerId={rateLimitPrompt.providerId}
-            severity={rateLimitPrompt.severity}
-            limitedFamilies={rateLimitPrompt.limitedFamilies}
-            current={rateLimitPrompt.current}
-            profiles={rateLimitPrompt.profiles}
-            destinations={rateLimitPrompt.destinations}
-            primaryTarget={rateLimitPrompt.primaryTarget}
-            probeTarget={rateLimitPrompt.probeTarget}
-            // Landing has no tab of its own; `null` resolves the usage
-            // sidecar/R-key refresh to the app-wide default host, matching
-            // the `hostId={null}` this surface hands `ComposerBody` below.
-            runTargetHostId={null}
-            onSwitchProfile={onSwitchRateLimitedProfile}
-            affectedChatCount={0}
-            onSwitchProfileForTask={noopSwitchProfileForTask}
-            onDismiss={rateLimitPrompt.dismiss}
+        <>
+          <ComposerHostNotice
+            notice={hostNotice}
+            hostLabelFor={hostLabelFromDirectory}
+            onDismiss={dismissHostNotice}
           />
-        ) : null
+          {rateLimitPrompt.kind === "visible" ? (
+            <ProfileRateLimitSwitchBanner
+              key={rateLimitPrompt.warningKey}
+              harnessId={harnessId}
+              providerId={rateLimitPrompt.providerId}
+              severity={rateLimitPrompt.severity}
+              limitedFamilies={rateLimitPrompt.limitedFamilies}
+              current={rateLimitPrompt.current}
+              profiles={rateLimitPrompt.profiles}
+              destinations={rateLimitPrompt.destinations}
+              primaryTarget={rateLimitPrompt.primaryTarget}
+              probeTarget={rateLimitPrompt.probeTarget}
+              // The composer's resolved host (pin, else effective), matching
+              // the `hostId` this surface hands `ComposerBody` below - so the
+              // usage sidecar / R-key refresh reads the machine the turn will
+              // actually run on.
+              runTargetHostId={resolvedHostId}
+              onSwitchProfile={onSwitchRateLimitedProfile}
+              affectedChatCount={0}
+              onSwitchProfileForTask={noopSwitchProfileForTask}
+              onDismiss={rateLimitPrompt.dismiss}
+            />
+          ) : null}
+        </>
       }
       stashControl={
         <PromptStashControl
@@ -746,10 +812,11 @@ export function LandingComposer(props: LandingComposerProps) {
       hasPastedImageBytes={hasLandingImageBytes}
       ingestPastedComposerImages={ingestPastedComposerImages}
       onEditorReady={reingestPendingImages}
-      // No tab yet: the landing composer creates on the app-wide default host,
-      // which its own host picker rebinds - so `null` (follow the default) IS
-      // the picked host here.
-      hostId={null}
+      // No tab yet, but a placement all the same: the composer creates on its
+      // window-keyed surface pin's resolved host (P1.2). `null` reaches here
+      // only in the ∅ case - nothing usable to create on - which submit
+      // re-validation refuses before any create runs.
+      hostId={resolvedHostId}
       onSubmit={handleSubmit}
       onStartTerminal={handleStartTerminal}
       onDocumentChange={handleDocumentChange}

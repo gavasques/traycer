@@ -80,7 +80,6 @@ const PRESENTATION: DefaultHostReadinessPresentation = {
   reinstall: () => undefined,
   configureShell: () => undefined,
   refreshDirectory: () => undefined,
-  openHostPicker: () => undefined,
   openSettings: () => undefined,
   anyHostDialable: false,
   requestRespawn: () => undefined,
@@ -473,13 +472,14 @@ describe("<HostReadyGate />", () => {
     expect(screen.queryByTestId("local-host-retry")).toBeNull();
   });
 
-  it("offers retry, switch host, open settings, and report-issue on the zero-dialable card", () => {
-    // Pins the four affordances that ship with the zero-dialable card: re-read
-    // the registry, open the picker, open settings, and report. Each used to
-    // be missing (`actions: []`, `footer: null`) behind a full-screen block.
+  it("offers retry, open settings, and report-issue on the zero-dialable card", () => {
+    // Pins the affordances that ship with the zero-dialable card: re-read the
+    // registry, open settings, and report. Each used to be missing
+    // (`actions: []`, `footer: null`) behind a full-screen block. The header
+    // host picker was deleted (redesign P1.2), so "switch host" is no longer
+    // one of these affordances.
     useDesktopDialogStore.setState({ reportIssueAvailable: true });
     const refreshDirectory = vi.fn();
-    const openHostPicker = vi.fn();
     const openSettings = vi.fn();
     renderGate(
       { kind: "unavailable-host" },
@@ -491,16 +491,13 @@ describe("<HostReadyGate />", () => {
         stage: "loading",
         anyHostDialable: false,
         refreshDirectory,
-        openHostPicker,
         openSettings,
       },
     );
 
     fireEvent.click(screen.getByTestId("host-unavailable-retry"));
-    fireEvent.click(screen.getByTestId("host-unavailable-switch-host"));
     fireEvent.click(screen.getByTestId("host-unavailable-open-settings"));
     expect(refreshDirectory).toHaveBeenCalledTimes(1);
-    expect(openHostPicker).toHaveBeenCalledTimes(1);
     expect(openSettings).toHaveBeenCalledTimes(1);
 
     expect(screen.getByRole("button", { name: "Report issue" })).toBeTruthy();

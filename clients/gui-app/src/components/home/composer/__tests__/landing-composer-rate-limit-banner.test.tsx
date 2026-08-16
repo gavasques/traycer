@@ -117,9 +117,9 @@ vi.mock("@/stores/composer/commit-selection", () => ({
 }));
 
 vi.mock(
-  "@/hooks/providers/use-refresh-providers-list-on-turn-default-host",
+  "@/hooks/providers/use-refresh-providers-list-on-turn",
   () => ({
-    useRefreshProvidersListOnTurnDefaultHost: vi.fn(),
+    useRefreshProvidersListOnTurn: vi.fn(),
   }),
 );
 
@@ -231,11 +231,36 @@ vi.mock("@/hooks/composer/use-landing-image-fetcher", () => ({
   useLandingImageFetcher: () => vi.fn(),
 }));
 vi.mock("@/hooks/epic/use-epic-create-mutation", () => ({
-  useEpicCreate: () => ({ isPending: false }),
+  useEpicCreateForClient: () => ({ isPending: false }),
 }));
 vi.mock("@/hooks/agent/use-create-tui-agent", () => ({
-  useCreateTuiAgent: () => ({ isPending: false }),
+  useCreateTuiAgentForClient: () => ({ isPending: false }),
 }));
+// P1.2: the composer resolves its placement (pin ?? effective) through this
+// one hook. These suites are about paste/gating/banner behaviour, not
+// selection derivation, so it is stubbed at that single boundary - the same
+// treatment the other host-backed hooks above get.
+vi.mock("@/hooks/host/use-composer-placement", () => ({
+  useComposerPlacement: () => ({
+    pin: {
+      selection: null,
+      setSelection: () => undefined,
+      resolvedHostId: "host-test",
+      isPinned: false,
+      latchOnFirstUse: () => undefined,
+      followEffective: () => undefined,
+    },
+    target: {
+      resolvedHostId: "host-test",
+      client: null,
+      hostLabel: "Local",
+      isPinned: false,
+      pinnedHostDead: false,
+    },
+    hostLabelFor: () => "Local",
+  }),
+}));
+
 vi.mock("@/lib/host", () => ({
   useHostBinding: () => null,
   useHostClient: () => null,
@@ -323,9 +348,11 @@ describe("LandingComposer rate-limit banner wiring", () => {
     if (bannerProps === null) throw new Error("expected banner props");
     // Task-wide checkbox is never wired: affectedChatCount is fixed at 0.
     expect(bannerProps.affectedChatCount).toBe(0);
-    // Landing has no tab; the usage sidecar/R-key refresh must resolve to
-    // the app-wide default host, never a stray non-null id.
-    expect(bannerProps.runTargetHostId).toBeNull();
+    // Landing has no tab, but it does have a PLACEMENT (redesign P1.2): the
+    // usage sidecar / R-key refresh must resolve to the composer's own
+    // resolved host - the machine the turn will run on - not to whichever
+    // host the window happens to be bound to.
+    expect(bannerProps.runTargetHostId).toBe("host-test");
     expect(bannerProps.probeTarget).toBeNull();
 
     bannerProps.onSwitchProfile("profile-b");

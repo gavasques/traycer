@@ -22,8 +22,7 @@ import { useClipboardCopy } from "@/hooks/ui/use-clipboard-copy";
 import { useEditorOpen } from "@/hooks/editor/use-editor-open-mutation";
 import { useEditorOpenFeedback } from "@/hooks/editor/use-editor-open-feedback";
 import { useEditorAvailability } from "@/hooks/editor/use-editor-availability-query";
-// eslint-disable-next-line @typescript-eslint/no-restricted-imports -- expires P1.2 — file-tree / editor opener becomes a surface pin. epics/c6042be5-cbd3-4923-8cbe-d2bc00ae7ade/artifacts/host-lifecycle-redesign
-import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
+import { useEffectiveHostId } from "@/hooks/host/use-effective-host-id";
 import { useHostDirectoryEntry } from "@/hooks/host/use-host-directory-entry";
 import { useRunnerHost } from "@/providers/use-runner-host";
 import { useSettingsStore } from "@/stores/settings/settings-store";
@@ -75,8 +74,11 @@ export interface OpenInEditorButtonProps {
 
 export function OpenInEditorButton(props: OpenInEditorButtonProps) {
   const runnerHost = useRunnerHost();
-  const activeHostId = useReactiveActiveHostId();
-  const activeHostEntry = useHostDirectoryEntry(activeHostId ?? "");
+  // A FOLLOWING surface (selection model §2): it has no picker of its own, so
+  // its resolved host is the effective one. The opener itself is local-only -
+  // see the gate below - so following costs nothing here.
+  const effectiveHostId = useEffectiveHostId();
+  const effectiveHostEntry = useHostDirectoryEntry(effectiveHostId ?? "");
   const defaultEditor = useSettingsStore((s) => s.defaultEditor);
   const setDefaultEditor = useSettingsStore((s) => s.setDefaultEditor);
   const mutation = useEditorOpen("workspace");
@@ -101,19 +103,19 @@ export function OpenInEditorButton(props: OpenInEditorButtonProps) {
   if (!runnerHost.hasLocalHost) return null;
 
   const { openTarget } = props;
-  // The opener dispatches on the active-host client (`useEditorOpen`) and the
-  // open-in-editor surface is local-only, so it may only enable when the target
-  // lives on the active host AND that active host is local (or mock, in tests).
-  // Matching the active id alone is not enough: with a remote host selected,
-  // both `activeHostId` and the selected row's `hostId` are the remote id, so an
-  // id-only check would route `editor.openPaths` through the remote machine.
-  const activeHostIsLocal =
-    activeHostEntry !== null &&
-    (activeHostEntry.kind === "local" || activeHostEntry.kind === "mock");
+  // The opener dispatches on the effective host's client (`useEditorOpen`) and
+  // the open-in-editor surface is local-only, so it may only enable when the
+  // target lives on the effective host AND that host is local (or mock, in
+  // tests). Matching the id alone is not enough: with a remote host effective,
+  // both ids are the remote one, so an id-only check would route
+  // `editor.openPaths` through the remote machine.
+  const effectiveHostIsLocal =
+    effectiveHostEntry !== null &&
+    (effectiveHostEntry.kind === "local" || effectiveHostEntry.kind === "mock");
   const hostMatches =
     openTarget !== null &&
-    openTarget.hostId === activeHostId &&
-    activeHostIsLocal;
+    openTarget.hostId === effectiveHostId &&
+    effectiveHostIsLocal;
 
   // Hide editors whose URL-scheme handler is not registered on the host's
   // machine (i.e. not installed) so a user is never offered one that fails to

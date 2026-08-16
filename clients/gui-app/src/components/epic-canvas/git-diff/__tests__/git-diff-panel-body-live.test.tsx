@@ -93,6 +93,13 @@ vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
   useReactiveActiveHostId: () => pinTestState.activeHostId,
 }));
 
+// The surface pin (`useSurfaceHostPin` -> `useEffectiveHostId`, redesign
+// P1.2) resolves and latches against the effective host, not the directory's
+// active-host hook - drive it off the same fixture state.
+vi.mock("@/hooks/host/use-effective-host-id", () => ({
+  useEffectiveHostId: () => pinTestState.activeHostId,
+}));
+
 vi.mock("@/hooks/agent/use-host-reachability", () => ({
   useHostReachability: () => pinTestState.reachability,
 }));

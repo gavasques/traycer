@@ -173,7 +173,14 @@ vi.mock("@/lib/host", async (importOriginal) => {
 });
 
 vi.mock("@/hooks/host/use-host-client-for-host-id", () => ({
-  useHostClientForHostId: () => null,
+  useHostClientForHostId: (hostId: string | null) =>
+    hostId === HOST_ID ? liveHostClient : null,
+}));
+
+// `EpicUsageEntryPoint` resolves against the EFFECTIVE host (redesign
+// P1.2), not the ambient `useHostClient()` this suite otherwise stubs.
+vi.mock("@/hooks/host/use-effective-host-id", () => ({
+  useEffectiveHostId: () => HOST_ID,
 }));
 
 const openTransportStub = vi.hoisted(() => () => {

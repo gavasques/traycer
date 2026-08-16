@@ -1,4 +1,3 @@
-import { HostPicker } from "@/components/layout/header/host-picker";
 import { ChatUsageDialog } from "@/components/chat/chat-usage-dialog";
 import { AppUpdateToastController } from "@/components/layout/bridges/app-update-toast-controller";
 import { DesktopZoomController } from "@/components/layout/bridges/desktop-zoom-controller";
@@ -108,7 +107,7 @@ export interface TraycerAppProps {
  *   RunnerHostProvider → QueryClientProvider → ThemeProvider →
  *   TooltipProvider → HostRuntimeProvider → HostCompatibilityProvider →
  *   auth-scoped lifecycle providers → RunnerHostBridges → LocalHostGate →
- *   RouterProvider → HostPicker → Toaster.
+ *   RouterProvider → Toaster.
  *
  * Concrete shells (Electron, Capacitor, gui-app-dev preview) construct a
  * `IRunnerHost` at bootstrap and pass it alongside the shared
@@ -273,7 +272,6 @@ function TraycerAppRuntimeSurface(props: TraycerAppRuntimeSurfaceProps) {
       <RateLimitQueueProvider />
       <HistoryPruneProvider router={props.router} />
       <RouterProvider router={props.router} />
-      <HostPicker />
       {/*
         Ticket 12's chat cost line: mounted ONCE app-wide (not per-tab) since
         the tab strip's "Usage" context-menu item can target any open chat's

@@ -68,6 +68,7 @@ import { useEpicStore } from "@/hooks/use-epic-store";
 import type { HostClient } from "@traycer-clients/shared/host-client/host-client";
 import type { HostRpcRegistry } from "@/lib/host";
 import { useHostClientForHostId } from "@/hooks/host/use-host-client-for-host-id";
+import { useComposerSurfaceHostPin } from "@/hooks/host/use-composer-surface-host-pin";
 import { UNKNOWN_HOST_PLACEHOLDER } from "@/lib/host/constants";
 import { LEADER_SCOPE_NEW_CONVERSATION_MODAL } from "@/lib/keybindings/leader-scope";
 import {
@@ -474,12 +475,22 @@ export function NewConversationModalBody(props: {
   // Every host-derived surface below - workspace seed and controls, profile
   // validation, picker items, and both create paths - hangs off this one
   // client, so a pinned request cannot leave some of them on the active host
-  // and the rest on the pinned one. `null` resolves to the app-wide default.
-  const hostClient = useHostClientForHostId(hostId);
+  // and the rest on the pinned one.
+  //
+  // A request that names no host is an APP-WIDE placement composer, exactly
+  // like the landing one, so it shares that composer's window-keyed surface
+  // pin (redesign P1.2, selection model §2): its picker writes the pin and
+  // everything here resolves `pin ?? effective`. Resolving the app-wide
+  // default instead would let this modal's chip name one device while its
+  // create landed on another. A request that DOES name a host keeps it, with
+  // the picker inert (§55).
+  const composerPin = useComposerSurfaceHostPin();
+  const resolvedHostId = hostId ?? composerPin.resolvedHostId;
+  const hostClient = useHostClientForHostId(hostId ?? composerPin.selection);
   const latestWorkspaceSeed = useModalWorkspaceSeed(
     epicId,
     parentId,
-    hostId,
+    resolvedHostId,
     hostClient,
   );
   const seed = useNewConversationModalSeed(epicId, latestWorkspaceSeed);
@@ -991,10 +1002,11 @@ export function NewConversationModalBody(props: {
       hasPastedImageBytes={hasPastedImageBytes}
       ingestPastedComposerImages={null}
       onEditorReady={null}
-      // The pinned host (or `null` = active), the same id `hostClient` above
-      // resolves - so the toolbar's and terminal launcher's pickers offer this
-      // host's harnesses/models/profiles and create profiles on it.
-      hostId={hostId}
+      // The pinned host, else this composer's surface-pin resolution - the
+      // same id `hostClient` above resolves, so the toolbar's and terminal
+      // launcher's pickers offer this host's harnesses/models/profiles and
+      // create profiles on it.
+      hostId={resolvedHostId}
       onSubmit={handleSubmit}
       onStartTerminal={handleStartTerminal}
       onDocumentChange={handleDocumentChange}

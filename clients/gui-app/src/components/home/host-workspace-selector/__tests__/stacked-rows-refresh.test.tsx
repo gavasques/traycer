@@ -125,6 +125,17 @@ vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
   useReactiveActiveHostId: () => mocks.activeHostId.current,
 }));
 
+// P1.2: the picker's non-fixed arm resolves `pin ?? effective` and takes its
+// client from `useHostClientForHostId`. Both are mocked at their own boundary
+// (like the host list above) so this suite stays about the refresh edge.
+vi.mock("@/hooks/host/use-effective-host-id", () => ({
+  useEffectiveHostId: () => mocks.activeHostId.current,
+}));
+
+vi.mock("@/hooks/host/use-host-client-for-host-id", () => ({
+  useHostClientForHostId: () => hostClient,
+}));
+
 vi.mock("@/hooks/host/use-host-directory-list-query", () => ({
   useHostDirectoryList: () => ({
     data: [

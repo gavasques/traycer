@@ -786,11 +786,15 @@ describe("cloneChatOnHostSwitch: history-carrying fork and its retry", () => {
     expect(onCloneFailed).toHaveBeenCalledTimes(1);
   });
 
-  it("a selection that MOVED while settings resolved fails the clone instead of creating on the wrong host", async () => {
-    // The create mutation stamps the ACTIVE host at mutate time. A user who
-    // moves the active host mid-resolution (from a surface that never cancels
-    // this flow) must get a failed clone, not a chat created on the moved-to
-    // host under an open intent that names the original target.
+  it("a selection that MOVES while settings resolve does not disturb the clone (redesign P1.2, D6)", async () => {
+    // Previously (`selectedHostIdAtStart` / the app-wide-selection guard,
+    // deleted by D6): a mid-resolution move of the ACTIVE host failed the
+    // clone rather than risk landing it on the moved-to host, because the
+    // create mutation used to stamp the ambient active host at mutate time.
+    // Now the clone always creates on the TARGET host's own client
+    // (`useEpicCreateChatForHostClient`), which never reads the app-wide
+    // selection at all - so a selection move mid-flight, however it lands,
+    // is simply irrelevant to where this clone goes.
     const createChat = vi.fn<CreateChatCommand>();
     const onCloneFailed = vi.fn();
     const targetEntry: HostDirectoryEntry = {
@@ -829,7 +833,7 @@ describe("cloneChatOnHostSwitch: history-carrying fork and its retry", () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(createChat).not.toHaveBeenCalled();
-    expect(onCloneFailed).toHaveBeenCalledTimes(1);
+    expect(onCloneFailed).not.toHaveBeenCalled();
+    expect(createChat).toHaveBeenCalledTimes(1);
   });
 });

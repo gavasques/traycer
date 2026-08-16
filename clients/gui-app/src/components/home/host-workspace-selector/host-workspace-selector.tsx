@@ -32,11 +32,8 @@ import type {
 } from "@traycer/protocol/host/worktree-schemas";
 import type { HostClient } from "@traycer-clients/shared/host-client/host-client";
 import type { HostDirectoryEntry } from "@traycer-clients/shared/host-client/host-directory";
-import {
-  useHostBinding,
-  useHostClient,
-  type HostRpcRegistry,
-} from "@/lib/host";
+import { useHostBinding, type HostRpcRegistry } from "@/lib/host";
+import { useComposerSurfaceHostPin } from "@/hooks/host/use-composer-surface-host-pin";
 import { useRefreshHostDirectoryOnOpen } from "@/hooks/host/use-refresh-host-directory-on-open";
 import { useRemoteHostsPlanRestricted } from "@/hooks/host/use-remote-hosts-plan-gate";
 import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
@@ -56,7 +53,8 @@ import {
   usePendingRemoveBindingEntryPaths,
 } from "@/hooks/workspace/use-workspace-binding-remove-entry-mutation";
 import { useWorkspaceBindingAddFolderForClient } from "@/hooks/workspace/use-workspace-binding-add-folder-mutation";
-import { useEpicCreateChat } from "@/hooks/epic/use-epic-chat-mutations";
+import { useEpicCreateChatForHostClient } from "@/hooks/epic/use-epic-chat-mutations";
+import { useHostClientForHostId } from "@/hooks/host/use-host-client-for-host-id";
 import { useEpicNestedFocusNavigation } from "@/hooks/epic/use-epic-nested-focus-navigation";
 import { useResolvedWorkspaceFolders } from "@/hooks/workspace/use-resolved-workspace-folders-query";
 import type { ResolvedFolder } from "@/lib/workspace/resolved-folder";
@@ -309,12 +307,19 @@ function HomeSurface(props: HomeSurfaceProps) {
 }
 
 /**
- * Host-only dropdown + Workspace rail/panel folder picker, bound to the
- * ACTIVE host and a staging key. Shared by every surface that picks (but has
- * not yet created) a chat/agent's host + folders + worktree intent: the
- * landing composer, the terminal-agent launcher submenu, and the fork-chat
- * dialog. Writes the per-folder choices to the staging store under
- * `stagingKey`; the launch/send handler reads them back from the same key.
+ * Host-only dropdown + Workspace rail/panel folder picker, bound to a staging
+ * key and to whichever host its `hostScope` names. Shared by every surface
+ * that picks (but has not yet created) a chat/agent's host + folders +
+ * worktree intent: the landing composer, the terminal-agent launcher submenu,
+ * and the fork-chat dialog. Writes the per-folder choices to the staging store
+ * under `stagingKey`; the launch/send handler reads them back from the same
+ * key.
+ *
+ * Two host scopes, and the name is now historical: `fixed` addresses a
+ * caller-supplied host with an inert picker, and what used to be the "active"
+ * scope is the composer's window-keyed SURFACE PIN (selection model §2), which
+ * resolves to `pin ?? effective` and follows the effective host only until the
+ * user names one. Neither scope writes the app-wide selection any more.
  */
 type ActiveHostWorkspaceControlsProps = {
   readonly stagingKey: WorktreeStagingKey;
@@ -349,22 +354,39 @@ export function ActiveHostWorkspaceControls(
   const directoryList = useHostDirectoryList();
   const disabled = props.disabled;
   const directoryEntries = directoryList.data ?? [];
-  const reactiveActiveHostId = useReactiveActiveHostId();
+  // The composer is PLACEMENT, and placement is a per-surface pin (redesign
+  // P1.2, selection model §2/§54) - not the app-wide selection, which is
+  // Settings ▸ Activate's alone now. So this arm resolves `pin ?? effective`
+  // and the picker below writes the pin; nothing here moves the window.
+  //
+  // The FIXED arm (fork dialogs, tab-context composers) reads none of it and
+  // writes nothing at all - §55: "nothing about them may write anything".
+  const composerPin = useComposerSurfaceHostPin();
   const activeHostId =
     props.hostScope.kind === "fixed"
       ? props.hostScope.hostId
-      : reactiveActiveHostId;
+      : composerPin.resolvedHostId;
   const activeEntry =
     directoryEntries.find((entry) => entry.hostId === activeHostId) ?? null;
+  // "Local" is the neutral pre-directory default, and it is only honest while
+  // this surface is FOLLOWING: a pin naming a host the directory does not
+  // carry is a real unavailable state (D6), not a slow first paint.
   const hostLabel =
     activeEntry?.label ??
-    (props.hostScope.kind === "fixed" ? "Unavailable" : "Local");
-  const binding = useHostBinding();
-  const defaultHostClient = useHostClient();
+    (props.hostScope.kind === "fixed" || composerPin.isPinned
+      ? "Unavailable"
+      : "Local");
+  // `pin.selection`, NOT `pin.resolvedHostId`: a FOLLOWING surface must keep
+  // using the app-wide bound client (which the authority bridge holds on the
+  // effective host) rather than a transient requester, so nothing about the
+  // unpinned path changes. Only a pin resolves its own host's requester - and
+  // that is what stops a pinned composer from sending to the machine the
+  // window happens to be bound to.
+  const pinResolvedHostClient = useHostClientForHostId(composerPin.selection);
   const activeHostClient =
     props.hostScope.kind === "fixed"
       ? props.hostScope.hostClient
-      : defaultHostClient;
+      : pinResolvedHostClient;
   // The picker's rows come from the merged host list, not from the directory
   // this component reads for the chip label: a host the account owns but this
   // client cannot dial belongs in the list (named, with its reason, inert),
@@ -401,18 +423,20 @@ export function ActiveHostWorkspaceControls(
         : homeWorkspaceSource,
     [disabled, homeWorkspaceSource],
   );
-  // Resolve repo-identifier → path against the scope-correct host: the
-  // default host in active scope, the source agent's FIXED host in the
+  // Resolve repo-identifier → path against the scope-correct host: this
+  // composer's pinned (or followed) host, the source agent's FIXED host in the
   // terminal-agent fork dialog (else paths resolve on the wrong machine).
   const resolved = useResolvedWorkspaceFolders(
     workspaceSource.source,
     activeHostClient,
   );
+  // Writes THIS surface's pin and nothing else. Before P1.2 this called
+  // `binding.directory.selectById(hostId)` - moving the whole app to place one
+  // chat, which is the defect the surface-pin model exists to end.
   const handleSelectHost = (hostId: string): void => {
     if (disabled) return;
     if (props.hostScope.kind === "fixed") return;
-    if (binding === null) return;
-    binding.directory.selectById(hostId);
+    composerPin.setSelection(hostId);
   };
 
   if (props.layout === "stacked") {
@@ -434,7 +458,10 @@ export function ActiveHostWorkspaceControls(
           isLoading={hostOptions.isLoading}
           listsFailed={hostOptions.listsFailed}
           onRetryLists={hostOptions.retryLists}
-          intent="bind"
+          // `pin`, not `bind`: since P1.2 a pick here writes this composer's
+          // surface pin and never rebinds the window. (The two intents gate
+          // rows identically; only `view` differs.)
+          intent="pin"
         />
         <section
           aria-label="Workspaces"
@@ -1769,7 +1796,6 @@ function InEpicSurface(props: InEpicSurfaceProps) {
     ownerId: surface.ownerId,
     ownerKind,
   });
-  const createChat = useEpicCreateChat();
   const folderActions = useWorkspaceFolderActionsForClient(props.hostClient);
   const bindingEntries = surface.binding?.entries ?? EMPTY_BINDING_ENTRIES;
   // ANTI-REVERT — render THIS owner's binding entries ONLY; never an epic-wide
@@ -1835,6 +1861,12 @@ function InEpicSurface(props: InEpicSurfaceProps) {
   const [pendingCloneHostId, setPendingCloneHostId] = useState<string | null>(
     null,
   );
+  // The clone lands on the TARGET host and no longer moves the app-wide
+  // selection (redesign P1.2, D6), so the create runs on that host's own
+  // client - the app-wide variant would reject it as a host mismatch, which
+  // is exactly the check that used to be satisfied by rebinding the window.
+  const cloneTargetClient = useHostClientForHostId(pendingCloneHostId);
+  const createChat = useEpicCreateChatForHostClient(cloneTargetClient);
   const setFolderIntent = useWorktreeIntentMemoryStore(
     (state) => state.setFolderIntent,
   );

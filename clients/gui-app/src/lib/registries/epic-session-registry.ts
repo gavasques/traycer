@@ -16,6 +16,37 @@ export const EpicSessionContext = createContext<OpenEpicStoreHandle | null>(
   null,
 );
 
+type EpicSessionPresentationState =
+  | {
+      readonly kind: "ready";
+      readonly targetHostId: string | null;
+      readonly originalHostId: string | null;
+    }
+  | {
+      readonly kind: "establishing";
+      readonly targetHostId: string | null;
+      readonly originalHostId: string | null;
+    }
+  | {
+      readonly kind: "failed";
+      readonly targetHostId: string | null;
+      readonly originalHostId: string | null;
+    };
+
+export type EpicSessionPresentation = EpicSessionPresentationState & {
+  readonly retry: () => void;
+  readonly openOnOriginalHost: () => void;
+};
+
+/**
+ * Separates an established Y.Doc session from a host re-point in flight. The
+ * old handle remains in `EpicSessionContext` until the replacement has a
+ * complete snapshot; consumers use this presentation state to show a bounded
+ * recovery result instead of treating a missing effective host as silence.
+ */
+export const EpicSessionPresentationContext =
+  createContext<EpicSessionPresentation | null>(null);
+
 /**
  * The RPC client resolved for the same host that owns `EpicSessionContext`.
  * Session-level provisioning prevents sidebar rows from independently mounting

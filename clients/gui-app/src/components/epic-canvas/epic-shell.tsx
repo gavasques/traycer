@@ -5,7 +5,7 @@
  * canvas for its pane, so sidebar collapse/resize can never remount canvas
  * content.
  */
-import { useMemo, type ReactNode } from "react";
+import { use, useMemo, type ReactNode } from "react";
 import { TileCanvas } from "@/components/epic-canvas/canvas/tile-canvas";
 import { WorkspaceFileIconSpriteSheet } from "@/components/epic-canvas/workspace-file/workspace-file-icons";
 import { EpicConnectionPill } from "@/components/epic-canvas/panels/epic-connection-pill";
@@ -21,6 +21,11 @@ import { SnapshotLoadingProvider } from "@/components/epic-canvas/snapshots/snap
 import { EpicSessionGate } from "@/providers/epic-session-gate";
 import { useMaybeOpenEpicHandle } from "@/providers/use-open-epic-handle";
 import { ResourcesStreamMount } from "@/providers/resources-stream-mount";
+import {
+  EpicSessionPresentationContext,
+  type EpicSessionPresentation,
+} from "@/lib/registries/epic-session-registry";
+import { Button } from "@/components/ui/button";
 
 interface EpicShellProps {
   readonly epicId: string;
@@ -37,6 +42,8 @@ interface EpicShellProps {
 export function EpicShell(props: EpicShellProps) {
   const { epicId, tabId, active } = props;
   const sessionReady = useMaybeOpenEpicHandle() !== null;
+  const presentation = use(EpicSessionPresentationContext);
+  const failure = presentation?.kind === "failed" ? presentation : null;
 
   return (
     <div
@@ -48,15 +55,32 @@ export function EpicShell(props: EpicShellProps) {
     >
       <WorkspaceFileIconSpriteSheet />
       <EpicSessionGate
-        fallback={<EpicShellLoadingBody epicId={epicId} tabId={tabId} />}
+        fallback={
+          failure === null ? (
+            <EpicShellLoadingBody epicId={epicId} tabId={tabId} />
+          ) : (
+            <EpicRepointFailure presentation={failure} />
+          )
+        }
       >
-        <EpicShellSessionBody epicId={epicId} tabId={tabId} active={active} />
+        {failure === null ? (
+          <EpicShellSessionBody
+            epicId={epicId}
+            tabId={tabId}
+            active={active}
+            readOnly={presentation?.kind === "establishing"}
+          />
+        ) : (
+          <EpicRepointFailure presentation={failure} />
+        )}
       </EpicSessionGate>
     </div>
   );
 }
 
-function EpicShellSessionBody(props: EpicShellProps) {
+function EpicShellSessionBody(
+  props: EpicShellProps & { readonly readOnly: boolean },
+) {
   const snapshotLoaded = useEpicSnapshotLoaded();
   const snapshotFetchError = useEpicSnapshotFetchError();
   const snapshotContextValue = useMemo(
@@ -72,11 +96,20 @@ function EpicShellSessionBody(props: EpicShellProps) {
         statusRow={
           <EpicShellStatusRow
             snapshotLoaded={snapshotLoaded}
+            sessionReady
             epicId={props.epicId}
             tabId={props.tabId}
           />
         }
-        canvas={<TileCanvas epicId={props.epicId} tabId={props.tabId} />}
+        canvas={
+          <div
+            className={props.readOnly ? "pointer-events-none select-none" : undefined}
+            data-epic-repoint-read-only={props.readOnly ? "true" : "false"}
+            inert={props.readOnly}
+          >
+            <TileCanvas epicId={props.epicId} tabId={props.tabId} />
+          </div>
+        }
       />
     </SnapshotLoadingProvider>
   );
@@ -91,6 +124,7 @@ function EpicShellLoadingBody(props: {
       statusRow={
         <EpicShellStatusRow
           snapshotLoaded={false}
+          sessionReady={false}
           epicId={props.epicId}
           tabId={props.tabId}
         />
@@ -102,16 +136,15 @@ function EpicShellLoadingBody(props: {
 
 interface EpicShellStatusRowProps {
   readonly snapshotLoaded: boolean;
+  readonly sessionReady: boolean;
   readonly epicId: string;
   readonly tabId: string;
 }
 
 /**
- * Top-right status row: the sync pill plus the Task-level Sweep affordance.
- * Both are gated on `snapshotLoaded` - it implies a live Epic session, and the
- * Sweep action is host-backed, so a merely-retained pane must never mount it
- * (an ungated host hook there throws out of the pane and the route error
- * boundary swallows the whole canvas).
+ * Top-right status row: keep the connection pill present while a live session
+ * establishes, but defer host-backed usage/sweep controls until its snapshot
+ * makes their data dependencies valid.
  */
 function EpicShellStatusRow(props: EpicShellStatusRowProps) {
   return (
@@ -119,14 +152,47 @@ function EpicShellStatusRow(props: EpicShellStatusRowProps) {
       data-testid="epic-shell-status-row"
       className="flex h-10 shrink-0 items-center justify-end gap-1.5 px-3 text-foreground"
     >
+      {props.sessionReady ? <EpicConnectionPill epicId={props.epicId} /> : null}
       {props.snapshotLoaded ? (
         <>
           <EpicUsageEntryPoint epicId={props.epicId} />
-          <EpicConnectionPill epicId={props.epicId} />
           <EpicSweepAction epicId={props.epicId} tabId={props.tabId} />
         </>
       ) : null}
     </output>
+  );
+}
+
+function EpicRepointFailure(props: {
+  readonly presentation: EpicSessionPresentation;
+}) {
+  const hostLabel = props.presentation.targetHostId ?? "the selected host";
+  const originalHostId = props.presentation.originalHostId;
+  return (
+    <div
+      className="flex min-h-0 flex-1 items-center justify-center p-6"
+      data-testid="epic-repoint-failure"
+    >
+      <div className="flex max-w-md flex-col gap-3 rounded-lg border border-border bg-card p-5 text-card-foreground shadow-sm">
+        <p className="text-ui-sm font-medium">
+          Couldn&apos;t load this task from {hostLabel}.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" onClick={props.presentation.retry}>
+            Retry
+          </Button>
+          {originalHostId !== null ? (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={props.presentation.openOnOriginalHost}
+            >
+              Open on original host
+            </Button>
+          ) : null}
+        </div>
+      </div>
+    </div>
   );
 }
 

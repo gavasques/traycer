@@ -44,6 +44,15 @@ export type ResolvedWorkspaceFolder = z.infer<
 
 export const snapshotMetaEpicSchema = z.object({
   schemaVersion: z.string(),
+  /**
+   * The concrete cloud collaboration room the host opened for this snapshot.
+   *
+   * This remains optional for wire compatibility with hosts that predate the
+   * field. Consumers must treat an absent identity as unknown, not infer it
+   * from `epicId`: a schema migration can replace the room while retaining the
+   * Epic id.
+   */
+  roomId: z.string().optional(),
   epicLight: epicLightSchema.nullable(),
   permissionRole: permissionRoleSchema.nullable(),
   repos: z.array(taskRepoAssociationSchema),

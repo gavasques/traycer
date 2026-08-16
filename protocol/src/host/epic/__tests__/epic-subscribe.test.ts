@@ -39,8 +39,36 @@ describe("epic.subscribe@1.0 server frames", () => {
     if (parsed.kind === "snapshot") {
       expect(parsed.epicId).toBe("epic-1");
       expect(parsed.meta.permissionRole).toBe("owner");
+      // A frame from an older host did not carry room identity. It stays
+      // parseable; clients conservatively choose a plain swap in that case.
+      expect(parsed.meta.roomId).toBeUndefined();
       expect(parsed.hasBinaryPayload).toBe(true);
     }
+  });
+
+  it("retains an optional room identity on a snapshot frame", () => {
+    const parsed = epicSubscribeServerFrameSchema.parse({
+      kind: "snapshot",
+      epicId: "epic-1",
+      meta: {
+        schemaVersion: "1.0.0",
+        roomId: "room-epic-1-v2",
+        epicLight: null,
+        permissionRole: "owner",
+        repos: [],
+        workspaces: [],
+        repoMapping: [],
+        workspaceFolders: [],
+        unresolvedRepos: [],
+        hostStateVectorBase64: "AQ==",
+      },
+      hasBinaryPayload: true,
+    });
+
+    if (parsed.kind !== "snapshot") {
+      throw new Error("expected snapshot frame");
+    }
+    expect(parsed.meta.roomId).toBe("room-epic-1-v2");
   });
 
   it("parses binary-bearing update and awareness frames", () => {

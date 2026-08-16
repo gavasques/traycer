@@ -2002,15 +2002,18 @@ class StreamSession<
     envelope: StreamFrameEnvelope,
     binaryPayload: Uint8Array | null,
   ): void {
-    // A delivered APPLICATION frame - not the subscribe-ack, and not a pong
-    // (both intercepted upstream) - is the proof this connection's resolver
-    // initialized and the stream is usable. Here (and in the
-    // sustained-subscription dwell, for event-only streams that deliver
-    // nothing unprompted) the reconnect backoff and the no-progress
-    // UNAUTHORIZED give-up bound reset; a host that acks the subscribe and
-    // then fails initialization keeps escalating instead of looping at the
-    // floor delay (int #4781).
-    this.resetLoopCounters();
+    // Every server frame proves the socket can deliver work, so it resets the
+    // transport backoff. Only a snapshot proves an epic stream completed its
+    // establishing path: `earlyMeta`, permission changes, and incremental
+    // frames can arrive before the host has initialized the cloud-backed
+    // replica. Treating any of those as auth-loop progress lets an `earlyMeta`
+    // → `UNAUTHORIZED` loop evade the give-up bound forever (int #4781 /
+    // traycer#892). The dwell remains the separate health proof for quiet
+    // non-epic streams.
+    this.reconnectAttempt = 0;
+    if (envelope.kind === "snapshot") {
+      this.noProgressUnauthorizedReconnects = 0;
+    }
     const handler = this.serverFrameHandler;
     if (handler === null) {
       return;

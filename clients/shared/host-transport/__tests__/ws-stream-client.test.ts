@@ -2877,7 +2877,7 @@ describe("WsStreamClient UNAUTHORIZED auth recovery", () => {
     session.close();
   });
 
-  it("resets the no-progress streak only after an application frame", async () => {
+  it("resets the no-progress streak only after a snapshot", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: false });
 
     const { factory, sockets } = makeFactory();
@@ -2895,7 +2895,7 @@ describe("WsStreamClient UNAUTHORIZED auth recovery", () => {
     session.onStatusChange((status) => statuses.push(status));
     session.onServerFrame((envelope) => frames.push(envelope));
 
-    // Build a two-cycle no-progress streak without delivering application
+    // Build a two-cycle no-progress streak without delivering a snapshot,
     // frames, then prove a snapshot clears it before the next auth episode.
     completeHandshake(sockets[0].socket);
     sockets[0].socket.fireText(UNAUTHORIZED_FATAL);
@@ -2907,15 +2907,25 @@ describe("WsStreamClient UNAUTHORIZED auth recovery", () => {
 
     completeHandshake(sockets[2].socket);
     sockets[2].socket.fireText({
-      kind: "permissionChanged",
+      kind: "snapshot",
       epicId: "e1",
-      permissionRole: "editor",
-      hasBinaryPayload: false,
+      meta: {
+        schemaVersion: "2.0.0",
+        epicLight: null,
+        permissionRole: "editor",
+        repos: [],
+        workspaces: [],
+        repoMapping: [],
+        workspaceFolders: [],
+        unresolvedRepos: [],
+      },
+      hasBinaryPayload: true,
     });
+    sockets[2].socket.fireBinary(new Uint8Array());
     expect(frames).toHaveLength(1);
 
     // Start the later UNAUTHORIZED episode on a fresh socket. If the
-    // application frame did not reset the streak, this first rejection would
+    // snapshot did not reset the streak, this first rejection would
     // reach the bound immediately instead of reconnecting.
     sockets[2].socket.fireClose(1006, "abnormal", false);
     await vi.advanceTimersByTimeAsync(5);

@@ -1,15 +1,20 @@
 import {
   use,
+  useCallback,
   useEffect,
   useEffectEvent,
+  useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
+import * as Y from "yjs";
 import { useNavigate } from "@tanstack/react-router";
 import { QueryClientContext, type QueryClient } from "@tanstack/react-query";
 import {
   createOpenEpicStore,
   type EpicStreamClientFactory,
+  LOCAL_ORIGIN,
   type OpenEpicStoreHandle,
 } from "@/stores/epics/open-epic/store";
 import { EpicStreamClient } from "@traycer-clients/shared/host-transport/epic-stream-client";
@@ -18,7 +23,7 @@ import { openOwnedDurableStreamClient } from "@/lib/host/owned-durable-stream-cl
 import { useAuthStore } from "@/stores/auth/auth-store";
 import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
 import { useAuthService, useHostBinding } from "@/lib/host";
-import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
+import { useEffectiveHostId } from "@/hooks/host/use-effective-host-id";
 import { useReactiveOwnerIdentityKey } from "@/hooks/host/use-reactive-owner-identity-key";
 import { updateEpicTitleInCloudTaskCaches } from "@/lib/cloud-epic-tasks-query/cache";
 import {
@@ -29,12 +34,16 @@ import {
 import {
   EpicSessionContext,
   EpicSessionHostClientContext,
+  EpicSessionPresentationContext,
   getEpicStreamClientFactoryOverride,
   getOpenEpicRegistry,
   handleHostIds,
   handleOwnerIdentityKeys,
 } from "@/lib/registries/epic-session-registry";
 import { useHostClientForHostId } from "@/hooks/host/use-host-client-for-host-id";
+import { shouldMergeEpicRoomSwap } from "@/lib/epics/epic-room-swap";
+
+const ESTABLISHING_DEADLINE_MS = 15_000;
 
 export interface EpicSessionProviderProps {
   readonly epicId: string;
@@ -43,8 +52,17 @@ export interface EpicSessionProviderProps {
 }
 
 interface MountedSessionState {
-  readonly key: string;
   readonly handle: OpenEpicStoreHandle;
+  readonly hostId: string;
+  readonly ownerIdentityKey: string | null;
+}
+
+type SessionPresentationKind = "ready" | "establishing" | "failed";
+
+interface SessionPresentationState {
+  readonly kind: SessionPresentationKind;
+  readonly targetHostId: string | null;
+  readonly originalHostId: string | null;
 }
 
 export function EpicSessionProvider(
@@ -57,7 +75,7 @@ export function EpicSessionProvider(
   // by the durable transport itself (live endpoint + wake re-dial), not by a
   // provider-driven re-subscribe; a `hostId` CHANGE releases the session below.
   const openTransport = useDurableStreamTransportFactory();
-  const activeHostId = useReactiveActiveHostId();
+  const effectiveHostId = useEffectiveHostId();
   // Owner-identity discriminator (R-1): `activeHostId` alone cannot see a
   // same-host remote public-key rotation (re-enrollment / corruption
   // recovery), since the hostId is unchanged. Folded into the rebuild
@@ -70,7 +88,6 @@ export function EpicSessionProvider(
   // One explicit-host resolver per retained Epic surface. Sidebar rows share
   // the result through context instead of each mounting a directory listener,
   // query observer, and transient client for this same host.
-  const resolvedSessionHostClient = useHostClientForHostId(activeHostId);
   const authService = useAuthService();
   const queryClient = use(QueryClientContext);
   const navigate = useNavigate();
@@ -143,37 +160,49 @@ export function EpicSessionProvider(
     };
   }, [desktopBridge, epicId, navigate, ownershipKey, tabId]);
 
-  const sessionKey = `${epicId}\x1f${activeHostId ?? "host:none"}\x1f${sessionUserId ?? "user:none"}`;
   const [session, setSession] = useState<MountedSessionState | null>(null);
+  const sessionRef = useRef<MountedSessionState | null>(null);
+  const originalHostIdRef = useRef<string | null>(null);
+  const [requestedHostId, setRequestedHostId] = useState<string | null>(null);
+  const [retryGeneration, setRetryGeneration] = useState(0);
+  const [presentation, setPresentation] = useState<SessionPresentationState>({
+    kind: "establishing",
+    targetHostId: effectiveHostId,
+    originalHostId: null,
+  });
+  const targetHostId = requestedHostId ?? effectiveHostId;
+  const resolvedSessionHostClient = useHostClientForHostId(
+    session?.hostId ?? targetHostId,
+  );
+
+  const retryRepoint = useCallback((): void => {
+    setRetryGeneration((generation) => generation + 1);
+  }, []);
+  const openOnOriginalHost = useCallback((): void => {
+    const originalHostId = originalHostIdRef.current;
+    if (originalHostId === null) return;
+    setRequestedHostId(originalHostId);
+    setRetryGeneration((generation) => generation + 1);
+  }, []);
 
   useEffect(() => {
     if (!ownershipClaimed) return;
-    // A null active host means the directory has not bound a default host yet
-    // (initial hydration race, or a transient gap while a host restarts /
-    // re-provisions). The session factory needs a concrete `hostId` to open its
-    // durable transport, so defer acquisition until the host binds: bail WITHOUT
-    // touching the registry (a transient null must not tear down a healthy warm
-    // session), and let the effect re-run when `activeHostId` becomes non-null
-    // (it is a dependency below) to acquire the real session. Without this gate
-    // the factory throws synchronously inside `createOpenEpicStore`, and the
-    // throw escapes this effect to the root error boundary - tearing down the
-    // whole app, the exact failure class this stream rework set out to remove.
-    if (activeHostId === null) return;
+    if (targetHostId === null) {
+      // A selection gap must be visible. The old provider silently bailed and
+      // left the task permanently skeleton-bound; retain any established
+      // handle but put the shell into an explicit recoverable state.
+      setPresentation({
+        kind: "failed",
+        targetHostId: null,
+        originalHostId: originalHostIdRef.current,
+      });
+      return;
+    }
+    if (originalHostIdRef.current === null) {
+      originalHostIdRef.current = targetHostId;
+    }
     const lifecycle = { cancelled: false };
     const registry = getOpenEpicRegistry();
-    const existing = registry.get(epicId);
-    if (existing !== null) {
-      const existingHostId = handleHostIds.get(existing) ?? null;
-      const existingOwnerIdentityKey =
-        handleOwnerIdentityKeys.get(existing) ?? null;
-      if (
-        existing.userId !== sessionUserId ||
-        existingHostId !== activeHostId ||
-        existingOwnerIdentityKey !== ownerIdentityKey
-      ) {
-        registry.release(epicId);
-      }
-    }
     const handleSessionAuthError = (): void => {
       onAuthError();
     };
@@ -192,14 +221,14 @@ export function EpicSessionProvider(
       if (override !== null) {
         return override(factoryEpicId, callbacks);
       }
-      // `activeHostId` is non-null here: the acquire effect gates on it above,
+      // `targetHostId` is non-null here: the acquire effect gates on it above,
       // and it is a `const`, so that narrowing flows into this factory closure.
       // Removing the gate would surface a compile error at this call (which
       // requires a concrete `hostId`), not a runtime throw - the type system is
       // the invariant.
       const result = openOwnedDurableStreamClient(
         openTransport,
-        activeHostId,
+        targetHostId,
         (ws) =>
           new EpicStreamClient({
             wsStreamClient: ws,
@@ -218,39 +247,161 @@ export function EpicSessionProvider(
         close: result.close,
       };
     };
-    const nextHandle = registry.acquireMounted(epicId, (id) =>
+    const createHandle = (): OpenEpicStoreHandle =>
       createOpenEpicStore({
-        epicId: id,
+        epicId,
         streamClientFactory,
         userId: sessionUserId,
         onAuthError: handleSessionAuthError,
-      }),
-    );
-    handleHostIds.set(nextHandle, activeHostId);
+      });
+    const current = sessionRef.current;
+    if (
+      current === null ||
+      current.handle.userId !== sessionUserId ||
+      current.ownerIdentityKey !== ownerIdentityKey
+    ) {
+      // Identity changes are security boundaries, not re-points: discard the
+      // old user/owner session before opening another stream.
+      if (current !== null) {
+        registry.release(epicId);
+      }
+      const nextHandle = registry.acquireMounted(epicId, createHandle);
+      handleHostIds.set(nextHandle, targetHostId);
+      handleOwnerIdentityKeys.set(nextHandle, ownerIdentityKey);
+      const nextSession = {
+        handle: nextHandle,
+        hostId: targetHostId,
+        ownerIdentityKey,
+      };
+      sessionRef.current = nextSession;
+      setSession(nextSession);
+      setPresentation({
+        kind: "ready",
+        targetHostId,
+        originalHostId: originalHostIdRef.current,
+      });
+      return;
+    }
+    if (current.hostId === targetHostId) {
+      setPresentation({
+        kind: "ready",
+        targetHostId,
+        originalHostId: originalHostIdRef.current,
+      });
+      return;
+    }
+
+    // The previous handle remains registered and rendered while its successor
+    // establishes. The successor is deliberately outside the registry until a
+    // complete snapshot makes an atomic replacement possible.
+    const nextHandle = createHandle();
+    handleHostIds.set(nextHandle, targetHostId);
     handleOwnerIdentityKeys.set(nextHandle, ownerIdentityKey);
-    queueMicrotask(() => {
-      if (lifecycle.cancelled) return;
-      setSession({ key: sessionKey, handle: nextHandle });
+    setPresentation({
+      kind: "establishing",
+      targetHostId,
+      originalHostId: originalHostIdRef.current,
     });
+    let settled = false;
+    const disposePending = (): void => {
+      if (settled) return;
+      settled = true;
+      nextHandle.dispose();
+    };
+    const commitReplacement = (): void => {
+      if (lifecycle.cancelled || settled) return;
+      if (!nextHandle.store.getState().snapshotLoaded) return;
+      if (sessionRef.current !== current) {
+        disposePending();
+        return;
+      }
+      settled = true;
+      const previousRoomId =
+        current.handle.store.getState().snapshotMeta?.roomId;
+      const nextRoomId = nextHandle.store.getState().snapshotMeta?.roomId;
+      if (
+        shouldMergeEpicRoomSwap(
+          { roomId: previousRoomId },
+          { roomId: nextRoomId },
+        )
+      ) {
+        // LOCAL_ORIGIN routes the CRDT union through the replacement's normal
+        // local-update path, preserving unacknowledged edits for recovery.
+        Y.applyUpdate(
+          nextHandle.doc,
+          Y.encodeStateAsUpdate(current.handle.doc),
+          LOCAL_ORIGIN,
+        );
+      }
+      const replaced = registry.replaceMounted(
+        epicId,
+        current.handle,
+        nextHandle,
+      );
+      if (!replaced) {
+        nextHandle.dispose();
+        return;
+      }
+      const nextSession = {
+        handle: nextHandle,
+        hostId: targetHostId,
+        ownerIdentityKey,
+      };
+      sessionRef.current = nextSession;
+      setSession(nextSession);
+      setPresentation({
+        kind: "ready",
+        targetHostId,
+        originalHostId: originalHostIdRef.current,
+      });
+    };
+    const unsubscribe = nextHandle.store.subscribe(commitReplacement);
+    const deadline = window.setTimeout(() => {
+      if (lifecycle.cancelled || settled) return;
+      disposePending();
+      setPresentation({
+        kind: "failed",
+        targetHostId,
+        originalHostId: originalHostIdRef.current,
+      });
+    }, ESTABLISHING_DEADLINE_MS);
+    commitReplacement();
 
     return () => {
       lifecycle.cancelled = true;
-      getOpenEpicRegistry().releaseMounted(epicId);
+      window.clearTimeout(deadline);
+      unsubscribe();
+      disposePending();
     };
   }, [
-    activeHostId,
     epicId,
     openTransport,
     ownerIdentityKey,
     ownershipClaimed,
-    sessionKey,
     sessionUserId,
+    targetHostId,
+    retryGeneration,
   ]);
 
-  const handle =
-    ownershipClaimed && session?.key === sessionKey ? session.handle : null;
+  useEffect(() => {
+    return () => {
+      getOpenEpicRegistry().releaseMounted(epicId);
+      sessionRef.current = null;
+      originalHostIdRef.current = null;
+    };
+  }, [epicId]);
+
+  const handle = ownershipClaimed ? session?.handle ?? null : null;
+  const sessionPresentation = useMemo(
+    () => ({
+      ...presentation,
+      retry: retryRepoint,
+      openOnOriginalHost,
+    }),
+    [openOnOriginalHost, presentation, retryRepoint],
+  );
   useCloudTaskTitleCacheSync({
-    activeHostId,
+    activeHostId: session?.hostId ?? null,
     epicId,
     handle,
     queryClient,
@@ -259,11 +410,13 @@ export function EpicSessionProvider(
 
   return (
     <EpicSessionContext.Provider value={handle}>
-      <EpicSessionHostClientContext.Provider
-        value={handle === null ? null : resolvedSessionHostClient}
-      >
-        {children}
-      </EpicSessionHostClientContext.Provider>
+      <EpicSessionPresentationContext.Provider value={sessionPresentation}>
+        <EpicSessionHostClientContext.Provider
+          value={handle === null ? null : resolvedSessionHostClient}
+        >
+          {children}
+        </EpicSessionHostClientContext.Provider>
+      </EpicSessionPresentationContext.Provider>
     </EpicSessionContext.Provider>
   );
 }

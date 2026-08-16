@@ -31,7 +31,7 @@ import { artifactBodyFragmentName } from "@traycer/protocol/persistence/epic/art
 import type { DeletedEpicArtifact } from "@traycer/protocol/persistence/epic/artifacts";
 import { createTypedMap } from "@traycer/protocol/utils/yjs-utils";
 import { evaluateReparent, reparentRejectionError } from "@/lib/reparent-rules";
-import { isUnavailableEpicReason } from "@/lib/epics/unavailable-epic";
+import { isUnavailableEpicCode } from "@/lib/epics/unavailable-epic";
 import { basePersistOptions, openEpicKey } from "@/lib/persist";
 import type {
   AgentRolesSlice,
@@ -176,10 +176,8 @@ function isFatalMigrationClose(
   );
 }
 
-function isUnavailableUnauthorized(details: FatalErrorDetails): boolean {
-  return (
-    details.code === "UNAUTHORIZED" && isUnavailableEpicReason(details.reason)
-  );
+function isUnavailableFatal(details: FatalErrorDetails): boolean {
+  return isUnavailableEpicCode(details.code);
 }
 
 function snapshotFetchErrorFrom(
@@ -2430,7 +2428,7 @@ export function createOpenEpicStore(
               }
               if (isFatalClose(status, reason)) {
                 const { details } = reason;
-                if (isUnavailableUnauthorized(details)) {
+                if (isUnavailableFatal(details)) {
                   set({ snapshotFetchError: snapshotFetchErrorFrom(details) });
                   return;
                 }

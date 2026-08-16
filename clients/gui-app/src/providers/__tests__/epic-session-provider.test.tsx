@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { use, useEffect } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
@@ -48,8 +48,8 @@ vi.mock("@/lib/host/use-durable-stream-transport", () => ({
   useDurableStreamTransportFactory: () => openTransportStub,
 }));
 
-vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
-  useReactiveActiveHostId: () => hostState.id,
+vi.mock("@/hooks/host/use-effective-host-id", () => ({
+  useEffectiveHostId: () => hostState.id,
 }));
 
 vi.mock("@/hooks/host/use-host-client-for-host-id", () => ({
@@ -69,6 +69,8 @@ import { EpicSessionProvider } from "@/providers/epic-session-provider";
 import {
   __getOpenEpicRegistryForTests,
   __setEpicStreamClientFactoryForTests,
+  EpicSessionPresentationContext,
+  type EpicSessionPresentation,
 } from "@/lib/registries/epic-session-registry";
 import { useMaybeOpenEpicHandle } from "@/providers/use-open-epic-handle";
 import { useEpicSessionHostClient } from "@/hooks/epic/use-epic-session-host-client";
@@ -85,9 +87,34 @@ import type {
   DesktopPerWindowStatePatch,
   DesktopWindowsBridge,
 } from "@/lib/windows/types";
+import type { EpicStreamCallbacks } from "@traycer-clients/shared/host-transport/epic-stream-client";
+import type { SnapshotMetaEpic } from "@traycer/protocol/host/epic/snapshot-meta";
 
 interface ControlledStream {
   closeCount: number;
+}
+
+interface ControlledEpicStream extends ControlledStream {
+  readonly callbacks: EpicStreamCallbacks;
+}
+
+function snapshotMeta(roomId: string): SnapshotMetaEpic {
+  return {
+    schemaVersion: "2.0.0",
+    roomId,
+    epicLight: null,
+    permissionRole: "editor",
+    repos: [],
+    workspaces: [],
+    repoMapping: [],
+    workspaceFolders: [],
+    unresolvedRepos: [],
+    hostStateVectorBase64: "AA==",
+  };
+}
+
+function deliverSnapshot(stream: ControlledEpicStream, roomId: string): void {
+  stream.callbacks.onSnapshot(snapshotMeta(roomId), new Uint8Array([0, 0]));
 }
 
 type DesktopOwnershipClaimForTests =
@@ -142,6 +169,17 @@ function SessionHostClientProbe(props: {
   useEffect(() => {
     onClient(client);
   }, [client, onClient]);
+  return null;
+}
+
+function PresentationProbe(props: {
+  onPresentation: (presentation: EpicSessionPresentation | null) => void;
+}) {
+  const { onPresentation } = props;
+  const presentation = use(EpicSessionPresentationContext);
+  useEffect(() => {
+    onPresentation(presentation);
+  }, [onPresentation, presentation]);
   return null;
 }
 
@@ -428,11 +466,11 @@ describe("<EpicSessionProvider />", () => {
     expect(__getOpenEpicRegistryForTests().size()).toBe(1);
   });
 
-  it("reacquires a fresh handle when the active host changes", async () => {
-    const streams: ControlledStream[] = [];
+  it("keeps the old handle mounted, then CRDT-merges it after an equal-room re-point", async () => {
+    const streams: ControlledEpicStream[] = [];
     const seenHandles: OpenEpicStoreHandle[] = [];
-    __setEpicStreamClientFactoryForTests((_epicId, _callbacks) => {
-      const stream: ControlledStream = { closeCount: 0 };
+    __setEpicStreamClientFactoryForTests((_epicId, callbacks) => {
+      const stream: ControlledEpicStream = { closeCount: 0, callbacks };
       streams.push(stream);
       return {
         applyUpdate: () => undefined,
@@ -464,6 +502,10 @@ describe("<EpicSessionProvider />", () => {
     if (firstHandle === undefined) {
       throw new Error("expected initial handle");
     }
+    act(() => {
+      deliverSnapshot(streams[0], "room-a");
+      firstHandle.doc.getMap("epic").set("local-repoint-edit", "pending");
+    });
 
     act(() => {
       hostState.id = "host-b";
@@ -482,12 +524,141 @@ describe("<EpicSessionProvider />", () => {
     });
 
     await waitFor(() => {
+      expect(streams).toHaveLength(2);
+    });
+    expect(seenHandles.at(-1)).toBe(firstHandle);
+    expect(streams[0].closeCount).toBe(0);
+
+    act(() => {
+      deliverSnapshot(streams[1], "room-a");
+    });
+    await waitFor(() => {
       expect(seenHandles.at(-1)).not.toBe(firstHandle);
     });
 
     expect(streams).toHaveLength(2);
     expect(streams[0].closeCount).toBe(1);
     expect(__getOpenEpicRegistryForTests().size()).toBe(1);
+    expect(
+      seenHandles.at(-1)?.doc.getMap("epic").get("local-repoint-edit"),
+    ).toBe("pending");
+  });
+
+  it("uses a plain swap when the replacement reports a different room", async () => {
+    const streams: ControlledEpicStream[] = [];
+    const seenHandles: OpenEpicStoreHandle[] = [];
+    __setEpicStreamClientFactoryForTests((_epicId, callbacks) => {
+      const stream: ControlledEpicStream = { closeCount: 0, callbacks };
+      streams.push(stream);
+      return {
+        applyUpdate: () => undefined,
+        awareness: () => undefined,
+        applyArtifactRoomUpdate: () => undefined,
+        artifactRoomAwareness: () => undefined,
+        retryMigration: () => undefined,
+        close: () => {
+          stream.closeCount += 1;
+        },
+      };
+    });
+    const view = render(
+      <EpicSessionProvider epicId="epic-session-test" tabId="epic-session-test">
+        <HandleProbe onHandle={(handle) => seenHandles.push(handle)} />
+      </EpicSessionProvider>,
+    );
+
+    await waitFor(() => expect(seenHandles).toHaveLength(1));
+    const firstHandle = seenHandles[0];
+    act(() => {
+      deliverSnapshot(streams[0], "room-a");
+      firstHandle.doc.getMap("epic").set("local-repoint-edit", "pending");
+      hostState.id = "host-b";
+      view.rerender(
+        <EpicSessionProvider
+          epicId="epic-session-test"
+          tabId="epic-session-test"
+        >
+          <HandleProbe onHandle={(handle) => seenHandles.push(handle)} />
+        </EpicSessionProvider>,
+      );
+    });
+
+    await waitFor(() => expect(streams).toHaveLength(2));
+    act(() => {
+      deliverSnapshot(streams[1], "room-b");
+    });
+    await waitFor(() => expect(seenHandles.at(-1)).not.toBe(firstHandle));
+    expect(
+      seenHandles.at(-1)?.doc.getMap("epic").get("local-repoint-edit"),
+    ).toBeUndefined();
+  });
+
+  it("bounds a re-point that never snapshots and returns to the original host", async () => {
+    vi.useFakeTimers();
+    try {
+      const streams: ControlledEpicStream[] = [];
+      const presentations: Array<EpicSessionPresentation | null> = [];
+      __setEpicStreamClientFactoryForTests((_epicId, callbacks) => {
+        const stream: ControlledEpicStream = { closeCount: 0, callbacks };
+        streams.push(stream);
+        return {
+          applyUpdate: () => undefined,
+          awareness: () => undefined,
+          applyArtifactRoomUpdate: () => undefined,
+          artifactRoomAwareness: () => undefined,
+          retryMigration: () => undefined,
+          close: () => {
+            stream.closeCount += 1;
+          },
+        };
+      });
+      const view = render(
+        <EpicSessionProvider
+          epicId="epic-session-test"
+          tabId="epic-session-test"
+        >
+          <PresentationProbe
+            onPresentation={(presentation) => presentations.push(presentation)}
+          />
+        </EpicSessionProvider>,
+      );
+
+      await act(() => Promise.resolve());
+      expect(streams).toHaveLength(1);
+      act(() => {
+        hostState.id = "host-b";
+        view.rerender(
+          <EpicSessionProvider
+            epicId="epic-session-test"
+            tabId="epic-session-test"
+          >
+            <PresentationProbe
+              onPresentation={(presentation) =>
+                presentations.push(presentation)
+              }
+            />
+          </EpicSessionProvider>,
+        );
+      });
+      expect(streams).toHaveLength(2);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15_000);
+      });
+      const failed = presentations.at(-1);
+      expect(failed?.kind).toBe("failed");
+      expect(failed?.targetHostId).toBe("host-b");
+      expect(failed?.originalHostId).toBe("host-a");
+      expect(streams[0].closeCount).toBe(0);
+      expect(streams[1].closeCount).toBe(1);
+
+      act(() => {
+        failed?.openOnOriginalHost();
+      });
+      expect(presentations.at(-1)?.kind).toBe("ready");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("(R-1) reacquires a fresh handle on a same-host remote public-key rotation, isolated from every other field", async () => {

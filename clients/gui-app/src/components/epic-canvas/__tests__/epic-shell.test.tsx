@@ -35,6 +35,10 @@ vi.mock("@/hooks/host/use-host-client-for-host-id", () => ({
   useHostClientForHostId: () => null,
 }));
 
+vi.mock("@/hooks/host/use-effective-host-id", () => ({
+  useEffectiveHostId: () => "host-test",
+}));
+
 // `EpicSessionProvider` opens its own durable transport via this factory, but
 // the test installs an `__setEpicStreamClientFactoryForTests` override that
 // short-circuits before `openTransport` runs - so a stable stub opener that is
@@ -229,7 +233,7 @@ describe("<EpicShell />", () => {
     queryClient.clear();
   });
 
-  it("does not render a header title skeleton or raw epic id while the snapshot is loading", () => {
+  it("keeps the connection pill visible without a snapshot while withholding title content", () => {
     installControlledFactory();
     const queryClient = new QueryClient({
       defaultOptions: {
@@ -245,6 +249,7 @@ describe("<EpicShell />", () => {
 
     expect(screen.queryByTestId("epic-shell-title-skeleton")).toBeNull();
     expect(screen.queryByText(EPIC_ID)).toBeNull();
+    expect(screen.getByTestId("epic-connection-pill")).not.toBeNull();
 
     queryClient.clear();
   });

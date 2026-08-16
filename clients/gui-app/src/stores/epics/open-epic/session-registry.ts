@@ -153,6 +153,36 @@ export class OpenEpicSessionRegistry {
     this.emit();
   }
 
+  /**
+   * Atomically replaces the mounted handle for an Epic after a safe re-point.
+   *
+   * The replacement inherits the existing mounted-reference count: React has
+   * not unmounted its tab, it has only changed which host supplies that tab's
+   * Y.Doc. Disposing the old entry deliberately skips the release listener,
+   * because desktop ownership belongs to the tab/Epic, not one transient
+   * transport during that tab's lifetime.
+   */
+  replaceMounted(
+    epicId: string,
+    previousHandle: OpenEpicStoreHandle,
+    nextHandle: OpenEpicStoreHandle,
+  ): boolean {
+    const previous = this.entries.get(epicId);
+    if (previous === undefined || previous.handle !== previousHandle) {
+      return false;
+    }
+    const next = this.createEntry(
+      epicId,
+      nextHandle,
+      previous.mountedRefs,
+    );
+    this.entries.set(epicId, next);
+    this.disposeEntry(previous, false);
+    this.prune();
+    this.emit();
+    return true;
+  }
+
   private acquireWithMountRefs(
     epicId: string,
     factory: (epicId: string) => OpenEpicStoreHandle,
@@ -165,6 +195,18 @@ export class OpenEpicSessionRegistry {
       return existing.handle;
     }
     const handle = factory(epicId);
+    const entry = this.createEntry(epicId, handle, mountedRefs);
+    this.entries.set(epicId, entry);
+    this.prune();
+    this.emit();
+    return handle;
+  }
+
+  private createEntry(
+    epicId: string,
+    handle: OpenEpicStoreHandle,
+    mountedRefs: number,
+  ): RegistryEntry {
     const entry: RegistryEntry = {
       epicId,
       handle,
@@ -198,17 +240,14 @@ export class OpenEpicSessionRegistry {
     // before: an epic whose agents just started working must stop being
     // prunable without waiting for an unrelated store write.
     entry.unsubscribeActivity = subscribeAgentActivity(handleEligibilityChange);
-    this.entries.set(epicId, entry);
-    this.prune();
-    this.emit();
-    return handle;
+    return entry;
   }
 
   release(epicId: string): void {
     const entry = this.entries.get(epicId);
     if (entry === undefined) return;
     this.entries.delete(epicId);
-    this.disposeEntry(entry);
+    this.disposeEntry(entry, true);
     this.emit();
   }
 
@@ -221,7 +260,7 @@ export class OpenEpicSessionRegistry {
 
   disposeAll(): void {
     for (const entry of this.entries.values()) {
-      this.disposeEntry(entry);
+      this.disposeEntry(entry, true);
     }
     this.entries.clear();
     this.emit();
@@ -291,15 +330,17 @@ export class OpenEpicSessionRegistry {
       if (!entry.handle.isClean()) continue;
       if (hasActiveAgentWork(entry.epicId)) continue;
       this.entries.delete(entry.epicId);
-      this.disposeEntry(entry);
+      this.disposeEntry(entry, true);
     }
   }
 
-  private disposeEntry(entry: RegistryEntry): void {
+  private disposeEntry(entry: RegistryEntry, notifyRelease: boolean): void {
     if (entry.unsubscribe !== null) entry.unsubscribe();
     if (entry.unsubscribeActivity !== null) entry.unsubscribeActivity();
     entry.handle.dispose();
-    this.releaseListener?.(entry.epicId);
+    if (notifyRelease) {
+      this.releaseListener?.(entry.epicId);
+    }
   }
 
   private tick(): number {

@@ -2,7 +2,7 @@ import { useCallback } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { saveBlobToDisk } from "@/lib/files/save-blob-to-disk";
-import { copyImageBlobToClipboard } from "@/lib/images/copy-image-to-clipboard";
+import { copyImageBlobPromiseToClipboard } from "@/lib/images/copy-image-to-clipboard";
 import { captureUsageExportImageBlob } from "@/lib/usage-analytics/usage-export-image";
 import { appLogger } from "@/lib/logger";
 import { imageMutationKeys } from "@/lib/query-keys";
@@ -33,8 +33,8 @@ export interface UseUsageImageExportResult {
  * "Copy image" / "Download image" for a usage dialog: rasterise the
  * dialog's summary region (headline, tiles, trend chart) to a PNG, then
  * hand it to the clipboard or the save-to-disk path. Both legs reuse the
- * app-wide runtime-aware plumbing - `copyImageBlobToClipboard` falls back
- * to the desktop nativeImage bridge, `saveBlobToDisk` to the native save
+ * app-wide runtime-aware plumbing - `copyImageBlobPromiseToClipboard` falls
+ * back to the desktop nativeImage bridge, `saveBlobToDisk` to the native save
  * dialog - so this hook only owns capture + toasts.
  */
 export function useUsageImageExport(
@@ -42,16 +42,13 @@ export function useUsageImageExport(
 ): UseUsageImageExportResult {
   const { getExportNode, fileName, heading, subheading } = params;
 
-  const copyMutation = useMutation<void, Error, HTMLElement>({
+  // The copy leg is started by `copyImage` and only *tracked* here: the
+  // clipboard write has to be issued inside the click's user activation, and
+  // a `mutationFn` body can run a tick later. The variable is that already
+  // running promise, so this mutation owns pending state and toasts only.
+  const copyMutation = useMutation<void, Error, Promise<void>>({
     mutationKey: imageMutationKeys.usageExportCopy(),
-    mutationFn: async (node) => {
-      const blob = await captureUsageExportImageBlob({
-        region: node,
-        heading,
-        subheading,
-      });
-      await copyImageBlobToClipboard(blob);
-    },
+    mutationFn: (started) => started,
     onSuccess: () => {
       toast.success("Usage image copied");
     },
@@ -97,8 +94,12 @@ export function useUsageImageExport(
   const copyImage = useCallback(() => {
     const node = getExportNode();
     if (node === null) return;
-    mutateCopy(node);
-  }, [getExportNode, mutateCopy]);
+    mutateCopy(
+      copyImageBlobPromiseToClipboard(
+        captureUsageExportImageBlob({ region: node, heading, subheading }),
+      ),
+    );
+  }, [getExportNode, heading, subheading, mutateCopy]);
 
   const { mutate: mutateDownload } = downloadMutation;
   const downloadImage = useCallback(() => {

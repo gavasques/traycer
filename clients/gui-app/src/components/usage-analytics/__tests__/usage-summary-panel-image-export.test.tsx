@@ -29,6 +29,8 @@ type UsageSummaryRequest = RequestOfMethod<
 const mocks = vi.hoisted(() => ({
   captureUsageExportImageBlob: vi.fn(),
   copyImageBlobToClipboard: vi.fn(),
+  copyImageBlobPromiseToClipboard:
+    vi.fn<(blobPromise: Promise<Blob>) => Promise<void>>(),
   saveBlobToDisk: vi.fn(),
 }));
 
@@ -44,6 +46,7 @@ vi.mock("@/lib/usage-analytics/usage-export-image", () => ({
 
 vi.mock("@/lib/images/copy-image-to-clipboard", () => ({
   copyImageBlobToClipboard: mocks.copyImageBlobToClipboard,
+  copyImageBlobPromiseToClipboard: mocks.copyImageBlobPromiseToClipboard,
 }));
 
 vi.mock("@/lib/files/save-blob-to-disk", () => ({
@@ -54,6 +57,7 @@ afterEach(() => {
   cleanup();
   mocks.captureUsageExportImageBlob.mockReset();
   mocks.copyImageBlobToClipboard.mockReset();
+  mocks.copyImageBlobPromiseToClipboard.mockReset();
   mocks.saveBlobToDisk.mockReset();
 });
 
@@ -223,7 +227,7 @@ describe("<UsageSummaryPanel /> image export", () => {
     const user = userEvent.setup();
     const blob = new Blob(["fake-png-bytes"], { type: "image/png" });
     mocks.captureUsageExportImageBlob.mockResolvedValue(blob);
-    mocks.copyImageBlobToClipboard.mockResolvedValue(undefined);
+    mocks.copyImageBlobPromiseToClipboard.mockResolvedValue(undefined);
     renderPanel(usageSummaryResponse);
     await screen.findByTestId("usage-cost-figure");
     const exportRegion = screen.getByTestId("usage-export-region");
@@ -231,14 +235,40 @@ describe("<UsageSummaryPanel /> image export", () => {
     await user.click(screen.getByTestId("usage-copy-image"));
 
     await waitFor(() => {
-      expect(mocks.copyImageBlobToClipboard).toHaveBeenCalledWith(blob);
+      expect(mocks.copyImageBlobPromiseToClipboard).toHaveBeenCalledTimes(1);
     });
+    const [captured] = mocks.copyImageBlobPromiseToClipboard.mock.calls[0];
+    await expect(captured).resolves.toBe(blob);
     expect(mocks.captureUsageExportImageBlob).toHaveBeenCalledWith({
       region: exportRegion,
       heading: "Usage",
       subheading: EXPECTED_SUBHEADING,
     });
     expect(mocks.saveBlobToDisk).not.toHaveBeenCalled();
+  });
+
+  it("hands the pending capture to the clipboard on click, before it resolves", async () => {
+    const user = userEvent.setup();
+    const blob = new Blob(["fake-png-bytes"], { type: "image/png" });
+    let resolveCapture: (value: Blob) => void = () => undefined;
+    mocks.captureUsageExportImageBlob.mockReturnValue(
+      new Promise<Blob>((resolve) => {
+        resolveCapture = resolve;
+      }),
+    );
+    mocks.copyImageBlobPromiseToClipboard.mockResolvedValue(undefined);
+    renderPanel(usageSummaryResponse);
+    await screen.findByTestId("usage-cost-figure");
+
+    await user.click(screen.getByTestId("usage-copy-image"));
+
+    // The clipboard call is what has to happen inside the click's user
+    // activation, so it must already have been made while the capture it was
+    // handed is still pending - not after the blob lands.
+    expect(mocks.copyImageBlobPromiseToClipboard).toHaveBeenCalledTimes(1);
+    const [captured] = mocks.copyImageBlobPromiseToClipboard.mock.calls[0];
+    resolveCapture(blob);
+    await expect(captured).resolves.toBe(blob);
   });
 
   it("captures the export region and saves it to disk from 'Download image'", async () => {
@@ -263,6 +293,6 @@ describe("<UsageSummaryPanel /> image export", () => {
       heading: "Usage",
       subheading: EXPECTED_SUBHEADING,
     });
-    expect(mocks.copyImageBlobToClipboard).not.toHaveBeenCalled();
+    expect(mocks.copyImageBlobPromiseToClipboard).not.toHaveBeenCalled();
   });
 });

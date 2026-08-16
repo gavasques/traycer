@@ -231,7 +231,7 @@ export const PERSIST_STORES = [
     kind: "scoped",
   },
 
-  // ── Static zustand stores (27) ───────────────────────────────────────────
+  // ── Static zustand stores (28) ───────────────────────────────────────────
   { camelName: "onboarding", leaf: "onboarding", kind: "static" },
   { camelName: "commandPalette", leaf: "command-palette", kind: "static" },
   { camelName: "composerDraft", leaf: "composer-drafts", kind: "static" },
@@ -308,6 +308,11 @@ export const PERSIST_STORES = [
   {
     camelName: "githubMentionFilters",
     leaf: "github-mention-filters",
+    kind: "static",
+  },
+  {
+    camelName: "notificationsFilter",
+    leaf: "notifications-filter",
     kind: "static",
   },
 

@@ -64,7 +64,7 @@ import {
   SUSTAINED_READY_RESET_MS,
 } from "./config";
 import { DialFailureLog } from "./dial-failure-log";
-import { recordNegotiatedHostMethods } from "../negotiated-manifest-registry";
+import { recordNegotiatedHostManifest } from "../negotiated-manifest-registry";
 import { resolveUnavailableMethodDegrade } from "../unavailable-method-degrade";
 import {
   CURRENT_MUX_VERSION,
@@ -1609,10 +1609,7 @@ export class RemoteSession<
     // tells us truthfully which methods the host has. A long-lived session
     // refreshes this on every re-attach, which is when a host upgraded
     // underneath us re-handshakes.
-    recordNegotiatedHostMethods(
-      this.options.hostId,
-      Object.keys(hostRpcMerged),
-    );
+    recordNegotiatedHostManifest(this.options.hostId, hostRpcMerged);
     // Floor vs floor ONLY - optional methods are deliberately outside the
     // session-fatal surface (see `SessionManifests`); a peer lacking one
     // degrades per-call/per-gate instead.

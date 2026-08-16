@@ -287,8 +287,10 @@ import {
   epicBatchUpdateRolesV10,
   epicCreateArtifactV10,
   epicCreateChatUpgradeV10ToV11,
+  epicCreateChatUpgradeV11ToV12,
   epicCreateChatV10,
   epicCreateChatV11,
+  epicCreateChatV12,
   epicCreateCommentThreadV10,
   epicCreateTuiAgentV10,
   epicCreateTuiAgentV11,
@@ -341,6 +343,7 @@ import {
   epicResolveArtifactByPathV10,
   epicSearchArtifactsV10,
   epicRevokeCollaboratorV10,
+  epicChatPublicationStateV10,
   epicSetChatArchivedV10,
   epicSetChatSharingDefaultV10,
   epicSetCloudChatVisibilityV10,
@@ -471,7 +474,11 @@ import {
   prSubscribeDetailV10,
   prGetLocalDiffV10,
   prGetLocalDiffSummaryV10,
+  prGetLocalDiffSummaryV11,
+  prGetLocalDiffSummaryUpgradeV10ToV11,
   prGetLocalFileDiffV10,
+  prGetLocalFileDiffV11,
+  prGetLocalFileDiffUpgradeV10ToV11,
 } from "@traycer/protocol/host/pr-contracts";
 import {
   mentionGithubCatalogV10,
@@ -5563,7 +5570,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   },
   "epic.createChat": {
     1: {
-      latestMinor: 1,
+      latestMinor: 2,
       versions: {
         0: {
           contract: epicCreateChatV10,
@@ -5574,6 +5581,14 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
         1: {
           contract: epicCreateChatV11,
           upgradeFromPreviousVersion: epicCreateChatUpgradeV10ToV11,
+        },
+        // v1.2: the PRECISE-boundary variant gains the `sourceOwnerUserId`
+        // hint v1.1 gave the latest-checkpoint one, so a cross-host fork's
+        // target host can satisfy the cloud tier's owner check for a chat it
+        // holds no registry facts about (cross-host fork ticket A1).
+        2: {
+          contract: epicCreateChatV12,
+          upgradeFromPreviousVersion: epicCreateChatUpgradeV11ToV12,
         },
       },
       downgradePathsFromLatest: {},
@@ -5671,6 +5686,34 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
       },
       downgradePathsFromLatest: {},
     },
+  },
+  // Optional (non-floor) capability: on-demand publication coverage for a chat
+  // this host OWNS, so the fork dialog can tell a user BEFORE they fork that a
+  // cross-host target could not read the transcript. Registered exactly like
+  // `epic.setChatArchived` below and for the same reason: decision #15/R4-D2
+  // says a new capability must ride a `{major, minor}` bump of an EXISTING
+  // method, never a new NAME, because the floor handshake is fail-closed on the
+  // method-name SET - a name only one peer knows is fatal for the WHOLE
+  // connection, not just for this call. The `degrade: unsupported` strategy is
+  // what makes a new name landable at all: it keeps the method OFF
+  // `RELEASED_FLOOR_METHOD_NAMES` and OUT of the frozen released-method-names
+  // snapshot, so an old peer simply does not advertise it and the caller gets
+  // E_HOST_UNSUPPORTED for this call alone. That refusal IS the gate's
+  // "unknown" row - the dialog then allows the fork and lets the host-side
+  // refusal backstop it, rather than asserting a publication fact it could not
+  // read.
+  "epic.chatPublicationState": {
+    1: {
+      latestMinor: 0,
+      versions: {
+        0: {
+          contract: epicChatPublicationStateV10,
+          upgradeFromPreviousVersion: null,
+        },
+      },
+      downgradePathsFromLatest: {},
+    },
+    degrade: { kind: "unsupported" },
   },
   // Optional (non-floor) capability: durable host-backed archive toggle for a
   // chat OR terminal-agent record (single method keyed by id). The
@@ -6814,11 +6857,19 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   "pr.getLocalDiffSummary": {
     degrade: { kind: "unsupported" },
     1: {
-      latestMinor: 0,
+      latestMinor: 1,
       versions: {
         0: {
           contract: prGetLocalDiffSummaryV10,
           upgradeFromPreviousVersion: null,
+        },
+        // 1.1: byte-path sidecars (`pathBytes`/`previousPathBytes`) on every
+        // file row, so non-UTF-8 paths survive the summary -> per-file round
+        // trip. The 1.0-caller response fold (rows, not fields) lives host-
+        // side at emission; the bridge here only fills request-side nulls.
+        1: {
+          contract: prGetLocalDiffSummaryV11,
+          upgradeFromPreviousVersion: prGetLocalDiffSummaryUpgradeV10ToV11,
         },
       },
       downgradePathsFromLatest: {},
@@ -6827,11 +6878,17 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   "pr.getLocalFileDiff": {
     degrade: { kind: "unsupported" },
     1: {
-      latestMinor: 0,
+      latestMinor: 1,
       versions: {
         0: {
           contract: prGetLocalFileDiffV10,
           upgradeFromPreviousVersion: null,
+        },
+        // 1.1: the request echoes the summary row's byte-path sidecars per
+        // side; bridge-filled `null` = "legacy peer", identical to clean.
+        1: {
+          contract: prGetLocalFileDiffV11,
+          upgradeFromPreviousVersion: prGetLocalFileDiffUpgradeV10ToV11,
         },
       },
       downgradePathsFromLatest: {},

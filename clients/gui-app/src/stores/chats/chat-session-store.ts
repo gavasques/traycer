@@ -15,6 +15,7 @@ import {
   removeOptimisticQueuedItemByClientActionId,
   removeOptimisticQueuedItemByMessageId,
 } from "@/stores/chats/optimistic-queue";
+import { NO_TRANSCRIPT_BASELINE } from "@/stores/chats/chat-announcements";
 import type {
   StreamFlushCoordinator,
   StreamFlushLease,
@@ -321,6 +322,22 @@ export interface ChatSessionState {
    */
   readonly fatalClose: FatalErrorDetails | null;
   readonly snapshotLoaded: boolean;
+  /**
+   * The connection whose authoritative snapshot established the CURRENT
+   * transcript, or `NO_TRANSCRIPT_BASELINE` before the first one lands.
+   *
+   * Consumers that must tell a live arrival from transcript history read
+   * this instead of inferring it from row shape (see `useChatAnnouncements`):
+   * a changed value means the transcript was (re)hydrated wholesale - mount,
+   * or a reconnect that can backfill rows written while this client was
+   * away - so whatever is visible is history. An unchanged value means the
+   * client has been connected and watching since the last observation, so
+   * anything that appears or settles is live, however it sorts and whenever
+   * its timestamps say it happened. Steady-state snapshots on the SAME
+   * connection (an authoritative host-side refresh) deliberately keep the
+   * value, since those carry live news too.
+   */
+  readonly transcriptBaselineEpoch: number;
   readonly chat: Chat | null;
   readonly access: ChatAccess | null;
   readonly messages: ReadonlyArray<Message>;
@@ -958,6 +975,7 @@ export function createChatSessionStoreWithNotificationDependencies(
         if (sweep.sweptActionIds.size > 0) {
           const stagingKey: WorktreeStagingKey = {
             surface: "owner",
+            hostId: options.hostId,
             epicId: options.epicId,
             ownerKind: "chat",
             ownerId: options.chatId,
@@ -1092,6 +1110,10 @@ export function createChatSessionStoreWithNotificationDependencies(
             failedSendRestoration: settled.failedSendRestoration,
             restore: sweepStaleRestoreSlot(state.restore, connectionEpoch),
             snapshotLoaded: true,
+            // Stamped with the CONNECTION, not a per-snapshot counter: a
+            // reconnect's backfill re-baselines transcript consumers, while a
+            // steady-state refresh on this same connection does not.
+            transcriptBaselineEpoch: connectionEpoch,
             worktreeBinding: frame.snapshot.worktreeBinding,
             missingWorktreePaths: frame.snapshot.missingWorktreePaths,
             liveAssistantMessage: liveAssistantForTurnStateFrame({
@@ -1154,6 +1176,7 @@ export function createChatSessionStoreWithNotificationDependencies(
         if (rejectedPending !== null) {
           restoreStagedWorktreeIntentForPending(rejectedPending, {
             surface: "owner",
+            hostId: options.hostId,
             epicId: options.epicId,
             ownerKind: "chat",
             ownerId: options.chatId,
@@ -1802,6 +1825,7 @@ export function createChatSessionStoreWithNotificationDependencies(
       connectionStatus: "connecting",
       fatalClose: null,
       snapshotLoaded: false,
+      transcriptBaselineEpoch: NO_TRANSCRIPT_BASELINE,
       chat: null,
       access: null,
       messages: [],
@@ -1884,6 +1908,7 @@ export function createChatSessionStoreWithNotificationDependencies(
         // the landing page bundling its intent with `epic.create`.
         const stagedKey: WorktreeStagingKey = {
           surface: "owner",
+          hostId: options.hostId,
           epicId: options.epicId,
           ownerKind: "chat",
           ownerId: options.chatId,
@@ -1987,7 +2012,12 @@ export function createChatSessionStoreWithNotificationDependencies(
         if (worktreeIntent !== null) {
           useWorktreeIntentMemoryStore
             .getState()
-            .setEpicIntent(options.epicId, worktreeIntent, Date.now());
+            .setEpicIntent(
+              options.epicId,
+              options.hostId,
+              worktreeIntent,
+              Date.now(),
+            );
           get().refreshMissingWorktreePaths([]);
         }
         return { clientActionId: sentClientActionId, messageId };
@@ -2081,6 +2111,7 @@ export function createChatSessionStoreWithNotificationDependencies(
         const messageId = uuidv4();
         const stagedKey: WorktreeStagingKey = {
           surface: "owner",
+          hostId: options.hostId,
           epicId: options.epicId,
           ownerKind: "chat",
           ownerId: options.chatId,
@@ -2144,7 +2175,12 @@ export function createChatSessionStoreWithNotificationDependencies(
         if (worktreeIntent !== null) {
           useWorktreeIntentMemoryStore
             .getState()
-            .setEpicIntent(options.epicId, worktreeIntent, Date.now());
+            .setEpicIntent(
+              options.epicId,
+              options.hostId,
+              worktreeIntent,
+              Date.now(),
+            );
           get().refreshMissingWorktreePaths([]);
         }
         return { clientActionId: sentClientActionId, messageId };

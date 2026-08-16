@@ -27,6 +27,7 @@ import {
   userMessagePayloadSchema,
   userMessageSchema,
   userMessageSchemaPreInReplyTo,
+  userMessageSchemaPreTurnTail,
   userMessageSenderSchema,
   userMessageSenderSchemaPreInReplyTo,
   type ChatEvent,
@@ -74,7 +75,10 @@ import {
   worktreeIntentSchema,
   worktreeIntentSchemaV10,
 } from "@traycer/protocol/host/worktree-schemas";
-import { managedCommandSchema } from "@traycer/protocol/host/managed-command/unary-schemas";
+import {
+  managedCommandSchema,
+  managedCommandSchemaPreImage,
+} from "@traycer/protocol/host/managed-command/unary-schemas";
 
 const jsonContentSchema = getRecordSchema(
   commonRecordRegistry,
@@ -709,14 +713,24 @@ const chatSubscribeTurnStateChangedServerFrameSchema = z.object({
  * Never sent to a peer that negotiated ≤1.5: it has no variant for this kind,
  * and the whole surface arrives together or not at all.
  */
-const chatSubscribeManagedCommandsChangedServerFrameSchema = z.object({
-  kind: z.literal("managedCommandsChanged"),
-  ...textFrameFields,
-  ...chatReferenceFields,
-  // Defaulted for the same reason as the snapshot's field: a consumer reads one
-  // array shape on both channels and never null-checks either.
-  managedCommands: z.array(managedCommandSchema).default([]),
-});
+// Parameterised over the command schema for the same reason `blockDelta` is
+// parameterised over its event schema: this frame is shared by the frozen `1.6`
+// bundle and the live one, and the command shape differs between them.
+function managedCommandsChangedServerFrameSchema<
+  CommandSchema extends z.ZodType,
+>(commandSchema: CommandSchema) {
+  return z.object({
+    kind: z.literal("managedCommandsChanged"),
+    ...textFrameFields,
+    ...chatReferenceFields,
+    // Defaulted for the same reason as the snapshot's field: a consumer reads
+    // one array shape on both channels and never null-checks either.
+    managedCommands: z.array(commandSchema).default([]),
+  });
+}
+
+const chatSubscribeManagedCommandsChangedServerFrameSchema =
+  managedCommandsChangedServerFrameSchema(managedCommandSchema);
 
 // `blockDelta`'s `event` schema is the one shared-frame shape that changes
 // incompatibly across `chat.subscribe` minors (`runtimeEventSchema` gained
@@ -893,6 +907,18 @@ const chatSubscribeCommonServerFrameSchemasPreInReplyTo =
     message: userMessageSchemaPreInReplyTo,
     queue: chatQueueStateSchemaPreInReplyTo,
     event: chatEventSchemaPreInReplyTo,
+  });
+
+// Frozen common frames bound to `chat.subscribe@1.6`: live queue/event trees,
+// but the message swapped for its pre-`turnTailUuid` freeze - 1.6 shipped
+// before the Claude anchor gained `turnTailUuid`, and its surface is frozen
+// EXACTLY (`chat-subscribe-v16-surface-compat.test.ts`), so a `messageAccepted`
+// frame on that line must never declare the field.
+const chatSubscribeCommonServerFrameSchemasPreTurnTail =
+  buildChatSubscribeCommonServerFrameSchemas({
+    message: userMessageSchemaPreTurnTail,
+    queue: chatQueueStateSchema,
+    event: chatEventSchema,
   });
 
 // Frozen common frames bound to `chat.subscribe@1.4–1.5`: live message/event
@@ -1892,11 +1918,13 @@ export const chatSubscribeV15 = defineStreamRpcContract({
 // directly (a bug: it let every later change to `chatSchema`/`messageSchema`/
 // `contentBlockSchema` mutate this released line) - pinned here to its
 // pre-image shape so this line can never observe `imageResults`/the image
-// resolution record added on `1.7`. Only `chat` (→ `chatSchemaPreImage`) and
-// `blockDelta`'s event (→ `runtimeEventSchemaPreImage`) actually differ from
-// the live shapes; queue/message/managedCommands/turnStateChanged are
-// untouched by images, so this bundle reuses those live sub-schemas exactly
-// like `chatSubscribeServerFrameSchemaV14`/`V15` do.
+// resolution record added on `1.7`. `chat` (→ `chatSchemaPreImage`),
+// `blockDelta`'s event (→ `runtimeEventSchemaPreImage`), and the common
+// frames' message (→ `userMessageSchemaPreTurnTail`, via the pre-turn-tail
+// bundle: the Claude anchor gained `turnTailUuid` after 1.6 shipped) differ
+// from the live shapes; queue/managedCommands/turnStateChanged are untouched
+// by either freeze point, so those reuse the live sub-schemas exactly like
+// `chatSubscribeServerFrameSchemaV14`/`V15` do.
 const chatSnapshotSchemaV16 = z.object({
   chat: chatSchemaPreImage,
   access: chatAccessSchema,
@@ -1910,7 +1938,10 @@ const chatSnapshotSchemaV16 = z.object({
   pendingFileEditApprovals: z.array(chatFileEditApprovalStateSchema),
   accumulatedFileChanges: z.array(chatAccumulatedFileChangeSchema),
   backgroundItems: z.array(backgroundItemSchema).optional(),
-  managedCommands: z.array(managedCommandSchema).default([]),
+  // Pinned to the pre-image: `1.6` is the released line the Shells surface
+  // arrived on, and the details widening (`command`/`cwd`/`cadence`) landed
+  // after it. Same reason `chat` above is pinned to `chatSchemaPreImage`.
+  managedCommands: z.array(managedCommandSchemaPreImage).default([]),
   turnInProgress: z.boolean().optional(),
 });
 
@@ -1924,8 +1955,8 @@ const chatSubscribeSnapshotServerFrameSchemaV16 = z.object({
 const chatSubscribeServerFrameSchemaV16 = z.discriminatedUnion("kind", [
   chatSubscribeSnapshotServerFrameSchemaV16,
   chatSubscribeTurnStateChangedServerFrameSchema,
-  chatSubscribeManagedCommandsChangedServerFrameSchema,
-  ...chatSubscribeCommonServerFrameSchemas,
+  managedCommandsChangedServerFrameSchema(managedCommandSchemaPreImage),
+  ...chatSubscribeCommonServerFrameSchemasPreTurnTail,
   blockDeltaServerFrameSchema(runtimeEventSchemaPreImage),
 ]);
 

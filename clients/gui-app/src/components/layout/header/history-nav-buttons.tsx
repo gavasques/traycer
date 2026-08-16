@@ -8,6 +8,8 @@ import {
   useHistoryNavAvailable,
   useHistoryNavState,
 } from "@/lib/history-navigation";
+import { formatChordForDisplay } from "@/lib/keybindings/chord";
+import { useBindingForAction } from "@/stores/settings/keybinding-store";
 
 // `-webkit-app-region` isn't in the standard CSSProperties typings; the cluster
 // opts out of title-bar drag so the arrows stay clickable on frameless desktop.
@@ -43,6 +45,16 @@ export function HistoryNavButtons() {
 function HistoryNavArrows() {
   const router = useRouter();
   const { canGoBack, canGoForward } = useHistoryNavState();
+  const backChord = useBindingForAction("nav.back");
+  const forwardChord = useBindingForAction("nav.forward");
+  const backTooltip =
+    backChord === null
+      ? "Go back"
+      : `Go back (${formatChordForDisplay(backChord)})`;
+  const forwardTooltip =
+    forwardChord === null
+      ? "Go forward"
+      : `Go forward (${formatChordForDisplay(forwardChord)})`;
   return (
     <div className="flex shrink-0 items-center" style={NO_DRAG_STYLE}>
       {/* Tooltip trigger is the wrapping <span>, not the Button: a disabled
@@ -50,7 +62,7 @@ function HistoryNavArrows() {
           would vanish exactly when the arrow is disabled - the moment a user most
           needs the label to know what the greyed control does. */}
       <TooltipWrapper
-        label="Go back"
+        label={backTooltip}
         side="top"
         sideOffset={6}
         align={undefined}
@@ -71,7 +83,7 @@ function HistoryNavArrows() {
         </span>
       </TooltipWrapper>
       <TooltipWrapper
-        label="Go forward"
+        label={forwardTooltip}
         side="top"
         sideOffset={6}
         align={undefined}

@@ -1,12 +1,16 @@
 import "../../../../../__tests__/test-browser-apis";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { renderHook } from "@testing-library/react";
 import {
   classifyDirectionalIntent,
   commitsDirectionalGesture,
 } from "@/components/layout/shell/shell-gestures";
 import { useNavDrawerClosePull } from "@/components/layout/shell/use-nav-drawer-close-pull";
+import {
+  useEdgeNavSwipe,
+  type EdgeNavDirection,
+} from "@/components/layout/shell/use-edge-nav-swipe";
 import { useDragToDismissKeyboard } from "@/components/layout/shell/use-drag-to-dismiss-keyboard";
 import { setMobileApp } from "@/lib/mobile-app";
 import { useMobileNavStore } from "@/stores/layout/mobile-nav-store";
@@ -224,6 +228,7 @@ afterEach(() => {
   activeUnmounts = [];
   document.body.innerHTML = "";
   document.documentElement.style.removeProperty("--safe-area-inset-left");
+  document.documentElement.style.removeProperty("--safe-area-inset-right");
   // The inset reader caches module-wide and only retires on a viewport event,
   // so clearing the property is not enough - without this a test that set an
   // inset would hand its geometry to every test after it.
@@ -319,7 +324,9 @@ describe("useNavDrawerClosePull - claiming a pull on the panel", () => {
     return panel;
   }
 
-  function mountOnPanel(panel: HTMLElement): ReadonlyArray<ClosePullActivation> {
+  function mountOnPanel(
+    panel: HTMLElement,
+  ): ReadonlyArray<ClosePullActivation> {
     setMobileApp(true);
     return mountPull({
       withinPanel: (target) => target instanceof Node && panel.contains(target),
@@ -796,7 +803,6 @@ describe("useNavDrawerClosePull - what it refuses", () => {
   });
 });
 
-
 describe("useDragToDismissKeyboard", () => {
   it("blurs on a tap outside the focused field", () => {
     setMobileApp(true);
@@ -1161,5 +1167,365 @@ describe("useDragToDismissKeyboard", () => {
     dispatchTouchEnd("touchend", 10);
 
     expect(document.activeElement).toBe(input);
+  });
+});
+
+/**
+ * The platform navigation swipes. Each edge answers exactly ONE direction -
+ * the one travelling inward from it - so the two zones can never both claim a
+ * gesture, and a drag off the screen is not a navigation that changed its mind.
+ *
+ * `window.innerWidth` is pinned rather than assumed: the trailing zone is
+ * derived from it, and a suite-wide default that shifted would move the zone
+ * without moving the coordinates the cases dispatch at.
+ */
+describe("useEdgeNavSwipe", () => {
+  const VIEWPORT_PX = 400;
+
+  interface SwipeProbe {
+    readonly navigations: ReadonlyArray<EdgeNavDirection>;
+  }
+
+  function mountSwipe(options: {
+    readonly edgesClaimed: () => boolean;
+  }): SwipeProbe {
+    const navigations: EdgeNavDirection[] = [];
+    const { unmount } = renderHook(() =>
+      useEdgeNavSwipe({
+        onNavigate: (direction) => {
+          navigations.push(direction);
+        },
+        edgesClaimed: options.edgesClaimed,
+      }),
+    );
+    activeUnmounts.push(unmount);
+    return { navigations };
+  }
+
+  /** The ordinary case: the mobile app, with nothing covering the edges. */
+  function mountOnBareScreen(): SwipeProbe {
+    setMobileApp(true);
+    return mountSwipe({ edgesClaimed: NOTHING_CLAIMED });
+  }
+
+  function swipe(options: {
+    readonly from: number;
+    readonly to: number;
+    readonly target: EventTarget;
+    readonly dropY: number;
+  }): void {
+    dispatchPointer("pointerdown", {
+      clientX: options.from,
+      clientY: 300,
+      target: options.target,
+      timeStamp: 0,
+      pointerId: 1,
+      isPrimary: true,
+    });
+    dispatchPointer("pointermove", {
+      clientX: options.to,
+      clientY: 300 + options.dropY,
+      target: options.target,
+      timeStamp: 100,
+      pointerId: 1,
+      isPrimary: true,
+    });
+  }
+
+  beforeEach(() => {
+    Object.defineProperty(window, "innerWidth", {
+      value: VIEWPORT_PX,
+      configurable: true,
+    });
+  });
+
+  it("navigates back on a rightward swipe from the leading edge", () => {
+    const probe = mountOnBareScreen();
+
+    swipe({ from: 8, to: 60, target: document.body, dropY: 0 });
+
+    expect(probe.navigations).toEqual(["back"]);
+  });
+
+  it("navigates forward on a leftward swipe from the trailing edge", () => {
+    const probe = mountOnBareScreen();
+
+    swipe({
+      from: VIEWPORT_PX - 8,
+      to: VIEWPORT_PX - 60,
+      target: document.body,
+      dropY: 0,
+    });
+
+    expect(probe.navigations).toEqual(["forward"]);
+  });
+
+  // Outward from the leading edge is the counter-direction there - a swipe off
+  // the screen, not a back. The trailing edge owns leftward and this edge does
+  // not answer it.
+  it("ignores a leftward swipe that starts at the leading edge", () => {
+    const probe = mountOnBareScreen();
+
+    swipe({ from: 30, to: 0, target: document.body, dropY: 0 });
+
+    expect(probe.navigations).toEqual([]);
+  });
+
+  it("ignores a rightward swipe that starts at the trailing edge", () => {
+    const probe = mountOnBareScreen();
+
+    swipe({
+      from: VIEWPORT_PX - 30,
+      to: VIEWPORT_PX,
+      target: document.body,
+      dropY: 0,
+    });
+
+    expect(probe.navigations).toEqual([]);
+  });
+
+  it("ignores a swipe that starts between the two zones", () => {
+    const probe = mountOnBareScreen();
+
+    swipe({ from: 200, to: 320, target: document.body, dropY: 0 });
+
+    expect(probe.navigations).toEqual([]);
+  });
+
+  // A vertical scroll that happens to begin at the edge stays a scroll; the
+  // classifier judges a drag by which way it is mostly going.
+  it("leaves a vertical-dominant drag from the edge to whatever is scrolling", () => {
+    const probe = mountOnBareScreen();
+
+    swipe({ from: 8, to: 16, target: document.body, dropY: 80 });
+
+    expect(probe.navigations).toEqual([]);
+  });
+
+  // Nothing is claimed until the classifier sees travel a tap could not have
+  // made, which is what keeps a control at the screen edge tappable.
+  it("leaves a tap at the edge to whatever it landed on", () => {
+    const probe = mountOnBareScreen();
+
+    dispatchPointer("pointerdown", {
+      clientX: 8,
+      clientY: 300,
+      target: document.body,
+      timeStamp: 0,
+      pointerId: 1,
+      isPrimary: true,
+    });
+    dispatchPointer("pointerup", {
+      clientX: 9,
+      clientY: 301,
+      target: document.body,
+      timeStamp: 40,
+      pointerId: 1,
+      isPrimary: true,
+    });
+
+    expect(probe.navigations).toEqual([]);
+  });
+
+  // Navigation is a discrete step, so the rest of the drag is nothing. A second
+  // activation would take the user two surfaces back for one swipe.
+  it("navigates at most once per pointer", () => {
+    const probe = mountOnBareScreen();
+
+    dispatchPointer("pointerdown", {
+      clientX: 8,
+      clientY: 300,
+      target: document.body,
+      timeStamp: 0,
+      pointerId: 1,
+      isPrimary: true,
+    });
+    dispatchPointer("pointermove", {
+      clientX: 60,
+      clientY: 300,
+      target: document.body,
+      timeStamp: 100,
+      pointerId: 1,
+      isPrimary: true,
+    });
+    dispatchPointer("pointermove", {
+      clientX: 200,
+      clientY: 300,
+      target: document.body,
+      timeStamp: 200,
+      pointerId: 1,
+      isPrimary: true,
+    });
+
+    expect(probe.navigations).toEqual(["back"]);
+  });
+
+  it("aborts once a second pointer joins mid-gesture", () => {
+    const probe = mountOnBareScreen();
+
+    dispatchPointer("pointerdown", {
+      clientX: 8,
+      clientY: 300,
+      target: document.body,
+      timeStamp: 0,
+      pointerId: 1,
+      isPrimary: true,
+    });
+    dispatchPointer("pointerdown", {
+      clientX: 200,
+      clientY: 300,
+      target: document.body,
+      timeStamp: 50,
+      pointerId: 2,
+      isPrimary: false,
+    });
+    dispatchPointer("pointermove", {
+      clientX: 60,
+      clientY: 300,
+      target: document.body,
+      timeStamp: 100,
+      pointerId: 1,
+      isPrimary: true,
+    });
+
+    expect(probe.navigations).toEqual([]);
+  });
+
+  it("never navigates when the mobile app flag is off", () => {
+    setMobileApp(false);
+    const probe = mountSwipe({ edgesClaimed: NOTHING_CLAIMED });
+
+    swipe({ from: 8, to: 60, target: document.body, dropY: 0 });
+
+    expect(probe.navigations).toEqual([]);
+  });
+
+  // The drawer covers both edges while it is out, and a pointer landing on it
+  // is already inside a drag of its own.
+  it("stands down while the caller says the edges are claimed", () => {
+    setMobileApp(true);
+    const probe = mountSwipe({ edgesClaimed: () => true });
+
+    swipe({ from: 8, to: 60, target: document.body, dropY: 0 });
+
+    expect(probe.navigations).toEqual([]);
+  });
+
+  it("does not navigate on a rail that already pans sideways", () => {
+    const probe = mountOnBareScreen();
+    const rail = document.createElement("div");
+    rail.style.overflowX = "auto";
+    stubHorizontalPan(rail, { scrollWidth: 600, clientWidth: 300 });
+    document.body.appendChild(rail);
+
+    swipe({ from: 8, to: 60, target: rail, dropY: 0 });
+
+    expect(probe.navigations).toEqual([]);
+  });
+
+  // The composer spans the full width, so its own leading edge sits inside the
+  // zone. A horizontal drag there is the caret being dragged through the text,
+  // and it belongs to the field whether or not the field held focus when the
+  // finger came down.
+  it("does not navigate on a drag inside a text entry", () => {
+    const probe = mountOnBareScreen();
+    const composer = document.createElement("textarea");
+    document.body.appendChild(composer);
+
+    swipe({ from: 8, to: 60, target: composer, dropY: 0 });
+
+    expect(probe.navigations).toEqual([]);
+  });
+
+  it("does not navigate on a drag inside a contenteditable", () => {
+    const probe = mountOnBareScreen();
+    const editable = document.createElement("div");
+    editable.setAttribute("contenteditable", "true");
+    document.body.appendChild(editable);
+    const line = document.createElement("span");
+    editable.appendChild(line);
+
+    swipe({ from: 8, to: 60, target: line, dropY: 0 });
+
+    expect(probe.navigations).toEqual([]);
+  });
+
+  /**
+   * The zones are 32px of APP SURFACE, not of screen. In landscape the sensor
+   * housing's inset can be wider than a zone itself, so a recognizer measuring
+   * from raw viewport coordinates puts the whole strip inside the cutout -
+   * reachable by nothing, on the orientation where a navigation gesture is most
+   * useful. These pin the shape of the correction: the inset moves where a zone
+   * begins and does NOT stretch how wide it is.
+   */
+  describe("the zones start where the app surface does", () => {
+    const INSET_PX = 60;
+
+    function withInsets(): SwipeProbe {
+      document.documentElement.style.setProperty(
+        "--safe-area-inset-left",
+        `${INSET_PX}px`,
+      );
+      document.documentElement.style.setProperty(
+        "--safe-area-inset-right",
+        `${INSET_PX}px`,
+      );
+      // The reader caches, and a viewport event is what retires it - the same
+      // signal a real rotation sends.
+      window.dispatchEvent(new Event("resize"));
+      return mountOnBareScreen();
+    }
+
+    it("moves the leading zone inboard by the left inset", () => {
+      const probe = withInsets();
+
+      swipe({ from: INSET_PX + 8, to: 160, target: document.body, dropY: 0 });
+
+      expect(probe.navigations).toEqual(["back"]);
+    });
+
+    it("refuses a pointer that lands before the app surface begins", () => {
+      const probe = withInsets();
+
+      swipe({ from: INSET_PX - 1, to: 160, target: document.body, dropY: 0 });
+
+      expect(probe.navigations).toEqual([]);
+    });
+
+    it("keeps the leading zone 32px wide rather than widening it by the inset", () => {
+      const probe = withInsets();
+
+      // Past 60 + 32. A recognizer that added the inset to the WIDTH instead of
+      // the origin would claim this touch.
+      swipe({ from: INSET_PX + 40, to: 200, target: document.body, dropY: 0 });
+
+      expect(probe.navigations).toEqual([]);
+    });
+
+    it("moves the trailing zone inboard by the right inset", () => {
+      const probe = withInsets();
+
+      swipe({
+        from: VIEWPORT_PX - INSET_PX - 8,
+        to: 200,
+        target: document.body,
+        dropY: 0,
+      });
+
+      expect(probe.navigations).toEqual(["forward"]);
+    });
+
+    it("refuses a pointer that lands past where the app surface ends", () => {
+      const probe = withInsets();
+
+      swipe({
+        from: VIEWPORT_PX - INSET_PX + 1,
+        to: 200,
+        target: document.body,
+        dropY: 0,
+      });
+
+      expect(probe.navigations).toEqual([]);
+    });
   });
 });

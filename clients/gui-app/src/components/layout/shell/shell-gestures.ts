@@ -229,6 +229,35 @@ export function isWithinFocusedTextEntry(target: EventTarget | null): boolean {
   return active === target || active.contains(target);
 }
 
+/**
+ * Whether a touch landed inside a text entry, focused or not.
+ *
+ * Asked of the TARGET rather than of `document.activeElement`, and the
+ * difference is the whole point. A horizontal drag inside a field is a text
+ * selection - the caret being dragged across the line - which is a gesture the
+ * field owns whether or not it held focus when the finger came down. A
+ * recognizer keyed on focus instead would stand down across the entire app
+ * whenever a composer happened to be focused, which on a phone is most screens.
+ *
+ * Rich editors are recognized by the `contenteditable` ATTRIBUTE rather than by
+ * the resolved `isContentEditable` property. The property's whole advantage is
+ * that it resolves inheritance, and this walk already climbs to the ancestor
+ * carrying the attribute - so the attribute answers the same question one level
+ * up, and answers it in terms of what the markup actually declares. An explicit
+ * `contenteditable="false"` is a carve-out inside an editable region and is not
+ * a text entry.
+ */
+export function withinTextEntry(target: EventTarget | null): boolean {
+  let node = asElement(target);
+  while (node !== null) {
+    if (node.tagName === "INPUT" || node.tagName === "TEXTAREA") return true;
+    const editable = node.getAttribute("contenteditable");
+    if (editable !== null && editable !== "false") return true;
+    node = node.parentElement;
+  }
+  return false;
+}
+
 /** Blurs the focused text entry, which is what closes the soft keyboard. */
 export function blurTextEntry(): void {
   const active = document.activeElement;

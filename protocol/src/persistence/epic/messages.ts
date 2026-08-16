@@ -239,11 +239,11 @@ export const messageSchemaPreInReplyTo = z.discriminatedUnion("role", [
 // ── Wire-freeze variant (pre-image) ─────────────────────────────────────────
 // Hand-frozen copy of `assistantMessageSchema` from before image support
 // existed, with `blocks` swapped for the frozen `contentBlockSchemaPreImage`
-// union. Bound to every released `chat.subscribe@1.0-1.6` minor (via the
+// union. Bound to every released `chat.subscribe@1.0-1.5` minor (via the
 // frozen chat-tree schemas) so those lines structurally match the shipped
 // wire and can never observe `imageResults`/the image resolution record.
 // `sender` reuses the LIVE (`inReplyTo`-bearing) shape - `1.4` is the minor
-// that introduced it, and every minor this freeze binds (1.0-1.6) already
+// that introduced it, and every minor this freeze binds (1.0-1.5) already
 // shipped after that point except 1.0-1.3, which bind their own
 // `assistantMessageSchemaPreInReplyTo` above instead. Field-for-field hand
 // copy, NOT `.omit()`, so a future message field cannot silently leak onto a

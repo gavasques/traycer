@@ -728,8 +728,12 @@ const chatSubscribeTurnStateChangedServerFrameSchema = z.object({
  * and the whole surface arrives together or not at all.
  */
 // Parameterised over the command schema for the same reason `blockDelta` is
-// parameterised over its event schema: this frame is shared by the frozen `1.6`
-// bundle and the live one, and the command shape differs between them.
+// parameterised over its event schema: a frozen bundle and the live one can
+// disagree about the command shape. Only the LIVE `1.6` calls it today - the
+// collapse deleted the frozen `1.6` bundle that was the second caller - so the
+// parameter is momentarily single-use. It stays because the freeze discipline
+// above brings the second caller straight back: the moment `1.6` ships, this
+// frame gets a hand-frozen command schema alongside the live one again.
 function managedCommandsChangedServerFrameSchema<
   CommandSchema extends z.ZodType,
 >(commandSchema: CommandSchema) {

@@ -425,7 +425,7 @@ export const toolCallBlockSchema = z.object({
 export type ToolCallBlock = z.infer<typeof toolCallBlockSchema>;
 
 // Wire-freeze copy of `toolCallBlockSchema` from before `imageResults`
-// existed (`chat.subscribe@1.0-1.6`). Bound (via the frozen content-block
+// existed (`chat.subscribe@1.0-1.5`). Bound (via the frozen content-block
 // union below) to every released `chat.subscribe` minor so those lines can
 // never observe image data - see `contentBlockSchemaPreImage`. Hand-frozen,
 // NOT derived from the live shape via `.omit()`, so a future field added to
@@ -1075,7 +1075,7 @@ export type ContentBlock = z.infer<typeof contentBlockSchema>;
 // Wire-freeze copy of `contentBlockSchema` with `tool_call` swapped for its
 // pre-image freeze (`toolCallBlockSchemaPreImage`) - the only member that
 // gains image data. Bound (via the frozen message/chat schemas) to every
-// released `chat.subscribe@1.0-1.6` minor so those lines structurally match
+// released `chat.subscribe@1.0-1.5` minor so those lines structurally match
 // the shipped wire and can never observe `imageResults`. Every other member
 // reuses the live sub-schema (same convention as `messageSchemaPreInReplyTo`).
 export const contentBlockSchemaPreImage = z.discriminatedUnion("type", [

@@ -121,6 +121,13 @@ vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
   useReactiveActiveHostId: () => HOST_ID,
 }));
 
+// The Epic session resolves its host through the selection authority's derived
+// pointer (selection model §1), not the active-host projection above - seed the
+// decider at its own name (the P1.2 convention in epic-shell-usage-entry-point).
+vi.mock("@/hooks/host/use-effective-host-id", () => ({
+  useEffectiveHostId: () => HOST_ID,
+}));
+
 function CoordinatorOnly(props: {
   readonly epicId: string;
   readonly tabId: string;

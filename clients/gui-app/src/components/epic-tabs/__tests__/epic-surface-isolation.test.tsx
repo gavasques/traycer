@@ -98,6 +98,14 @@ vi.mock("@/lib/host/runtime", async (importOriginal) => {
   };
 });
 
+// `EpicSessionProvider` resolves its host through the selection authority's
+// derived pointer (selection model §1), whose store only a mounted kernel
+// bridge writes - no component test mounts one. Seed it with the same id
+// `activeHostClient.getActiveHostId()` answers, so both scopes agree.
+vi.mock("@/hooks/host/use-effective-host-id", () => ({
+  useEffectiveHostId: () => "default-host",
+}));
+
 vi.mock("@/hooks/agent/use-host-reachability", () => ({
   useHostReachability: (hostId: string) => {
     // `UNKNOWN_HOST_PLACEHOLDER` is the sentinel tab-kind-agnostic callers

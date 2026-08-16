@@ -224,6 +224,13 @@ vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
   useReactiveActiveHostId: () => "host-test",
 }));
 
+// The Epic session resolves its host through the selection authority's derived
+// pointer (selection model §1), not the active-host projection above - seed the
+// decider at its own name (the P1.2 convention in epic-shell-usage-entry-point).
+vi.mock("@/hooks/host/use-effective-host-id", () => ({
+  useEffectiveHostId: () => "host-test",
+}));
+
 // This matrix uses a live Y.Doc as the local projection. The deletion row
 // additionally needs an answered cloud plane so doc absence is authoritative
 // under the same two-plane gate production uses.

@@ -24,6 +24,7 @@ import { useAuthStore } from "@/stores/auth/auth-store";
 import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
 import { useAuthService, useHostBinding } from "@/lib/host";
 import { useEffectiveHostId } from "@/hooks/host/use-effective-host-id";
+import { useSelectionAuthorityAttached } from "@/hooks/host/use-selection-authority-attached";
 import { useReactiveOwnerIdentityKey } from "@/hooks/host/use-reactive-owner-identity-key";
 import { updateEpicTitleInCloudTaskCaches } from "@/lib/cloud-epic-tasks-query/cache";
 import {
@@ -76,6 +77,7 @@ export function EpicSessionProvider(
   // provider-driven re-subscribe; a `hostId` CHANGE releases the session below.
   const openTransport = useDurableStreamTransportFactory();
   const effectiveHostId = useEffectiveHostId();
+  const authorityAttached = useSelectionAuthorityAttached();
   // Owner-identity discriminator (R-1): `activeHostId` alone cannot see a
   // same-host remote public-key rotation (re-enrollment / corruption
   // recovery), since the hostId is unchanged. Folded into the rebuild
@@ -175,6 +177,23 @@ export function EpicSessionProvider(
     session?.hostId ?? targetHostId,
   );
 
+  // Presentation writes are IDEMPOTENT by value. The acquire effect re-runs
+  // whenever any of its dependencies churn - `openTransport` is a hook result,
+  // and only the real hook's referential stability keeps that from happening on
+  // every commit - and an effect that unconditionally stores a fresh object is
+  // then an infinite render loop rather than a wasted render. Nothing about
+  // this provider's correctness needs the churn, so it is refused here once
+  // instead of relying on every producer upstream to stay stable.
+  const presentSession = useCallback((next: SessionPresentationState): void => {
+    setPresentation((current) =>
+      current.kind === next.kind &&
+      current.targetHostId === next.targetHostId &&
+      current.originalHostId === next.originalHostId
+        ? current
+        : next,
+    );
+  }, []);
+
   const retryRepoint = useCallback((): void => {
     setRetryGeneration((generation) => generation + 1);
   }, []);
@@ -185,19 +204,57 @@ export function EpicSessionProvider(
     setRetryGeneration((generation) => generation + 1);
   }, []);
 
+  // A selection gap must be visible: the old provider silently bailed and left
+  // the task permanently skeleton-bound. But the authority's `null` carries TWO
+  // meanings and only one of them is a gap - until this window's kernel has
+  // ATTACHED, `effectiveHostId` is null because nobody has answered yet (the
+  // store's DETACHED default), not because nothing is usable. The bridge mounts
+  // in an effect ABOVE this provider and React runs child effects first, so
+  // presenting the failure on sight flashes "couldn't load this task" on every
+  // cold open, before the authority has spoken. Hold `establishing` while
+  // detached - bounded by the same deadline, since invariant 6 does not exempt
+  // a bridge that never attaches - and fail immediately only once the authority
+  // IS attached and still names no usable host.
+  //
+  // Deliberately its own effect: `authorityAttached` must not join the acquire
+  // effect's dependencies, where a detach/reattach would dispose a replacement
+  // handle that is mid-establish.
   useEffect(() => {
     if (!ownershipClaimed) return;
-    if (targetHostId === null) {
-      // A selection gap must be visible. The old provider silently bailed and
-      // left the task permanently skeleton-bound; retain any established
-      // handle but put the shell into an explicit recoverable state.
-      setPresentation({
+    if (targetHostId !== null) return;
+    const presentGap = (): void => {
+      presentSession({
         kind: "failed",
         targetHostId: null,
         originalHostId: originalHostIdRef.current,
       });
+    };
+    if (authorityAttached) {
+      presentGap();
       return;
     }
+    presentSession({
+      kind: "establishing",
+      targetHostId: null,
+      originalHostId: originalHostIdRef.current,
+    });
+    const deadline = window.setTimeout(presentGap, ESTABLISHING_DEADLINE_MS);
+    return () => {
+      window.clearTimeout(deadline);
+    };
+  }, [
+    authorityAttached,
+    ownershipClaimed,
+    presentSession,
+    retryGeneration,
+    targetHostId,
+  ]);
+
+  useEffect(() => {
+    if (!ownershipClaimed) return;
+    // The effect above owns what the shell shows for a null host; acquisition
+    // needs a concrete `hostId` and has nothing to do until one arrives.
+    if (targetHostId === null) return;
     if (originalHostIdRef.current === null) {
       originalHostIdRef.current = targetHostId;
     }
@@ -274,8 +331,19 @@ export function EpicSessionProvider(
         ownerIdentityKey,
       };
       sessionRef.current = nextSession;
-      setSession(nextSession);
-      setPresentation({
+      // PUBLISHED ON A MICROTASK, as this provider has since the stream
+      // rework - not an implementation detail. Consumers gated on the handle
+      // eager-read the projection the instant the gate opens (the initial-chat
+      // handoff coordinator opens its tab there), so handing them the handle in
+      // the SAME commit that acquired it runs them a tick before any snapshot
+      // can apply: the tab opens carrying the placeholder title instead of the
+      // projected one. `sessionRef` still updates synchronously - the re-point
+      // logic below reads it and must never lag the acquisition it describes.
+      queueMicrotask(() => {
+        if (lifecycle.cancelled) return;
+        setSession(nextSession);
+      });
+      presentSession({
         kind: "ready",
         targetHostId,
         originalHostId: originalHostIdRef.current,
@@ -283,7 +351,7 @@ export function EpicSessionProvider(
       return;
     }
     if (current.hostId === targetHostId) {
-      setPresentation({
+      presentSession({
         kind: "ready",
         targetHostId,
         originalHostId: originalHostIdRef.current,
@@ -297,7 +365,7 @@ export function EpicSessionProvider(
     const nextHandle = createHandle();
     handleHostIds.set(nextHandle, targetHostId);
     handleOwnerIdentityKeys.set(nextHandle, ownerIdentityKey);
-    setPresentation({
+    presentSession({
       kind: "establishing",
       targetHostId,
       originalHostId: originalHostIdRef.current,
@@ -349,7 +417,7 @@ export function EpicSessionProvider(
       };
       sessionRef.current = nextSession;
       setSession(nextSession);
-      setPresentation({
+      presentSession({
         kind: "ready",
         targetHostId,
         originalHostId: originalHostIdRef.current,
@@ -359,7 +427,7 @@ export function EpicSessionProvider(
     const deadline = window.setTimeout(() => {
       if (lifecycle.cancelled || settled) return;
       disposePending();
-      setPresentation({
+      presentSession({
         kind: "failed",
         targetHostId,
         originalHostId: originalHostIdRef.current,
@@ -378,6 +446,7 @@ export function EpicSessionProvider(
     openTransport,
     ownerIdentityKey,
     ownershipClaimed,
+    presentSession,
     sessionUserId,
     targetHostId,
     retryGeneration,

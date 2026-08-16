@@ -171,6 +171,13 @@ vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
   useReactiveActiveHostId: () => "host-test",
 }));
 
+// The Epic session resolves its host through the selection authority's derived
+// pointer (selection model §1), not the active-host projection above - seed the
+// decider at its own name (the P1.2 convention in epic-shell-usage-entry-point).
+vi.mock("@/hooks/host/use-effective-host-id", () => ({
+  useEffectiveHostId: () => "host-test",
+}));
+
 // The tile's record gate consults `epic.listCloudChats` for a chat with no
 // local doc record (chat-sync-v2 ticket 49 - post-sweep that is the ordinary
 // state of a healthy owned chat, so the published row is the only local

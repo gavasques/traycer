@@ -15,7 +15,16 @@ import {
   type HostRpcRegistry,
 } from "@traycer/protocol/host/index";
 
-const hostState = vi.hoisted((): { id: string | null } => ({ id: "host-a" }));
+// `attached` is the authority's "has anyone answered yet" flag, and it is a
+// SEPARATE axis from `id`: the pair (attached: false, id: null) is bootstrap,
+// while (attached: true, id: null) is the real ∅. Defaults to attached so every
+// pre-existing case here reads exactly as it did before that axis existed.
+const hostState = vi.hoisted(
+  (): { id: string | null; attached: boolean } => ({
+    id: "host-a",
+    attached: true,
+  }),
+);
 const authServiceStub = vi.hoisted(() => ({
   revalidateCurrentContext: () => Promise.resolve({ kind: "valid" as const }),
 }));
@@ -39,17 +48,23 @@ const sessionHostClient = vi.hoisted(() => ({ request: vi.fn() }));
 // is never invoked is all the provider needs to render in jsdom. The real hook
 // returns a referentially-STABLE opener; the stub mirrors that with a single
 // hoisted instance so the acquire effect's `openTransport` dep never churns.
-const openTransportStub = vi.hoisted(() => () => {
-  throw new Error(
-    "openTransport must not be called when the factory is overridden",
-  );
-});
+const transportState = vi.hoisted((): { opener: () => never } => ({
+  opener: () => {
+    throw new Error(
+      "openTransport must not be called when the factory is overridden",
+    );
+  },
+}));
 vi.mock("@/lib/host/use-durable-stream-transport", () => ({
-  useDurableStreamTransportFactory: () => openTransportStub,
+  useDurableStreamTransportFactory: () => transportState.opener,
 }));
 
 vi.mock("@/hooks/host/use-effective-host-id", () => ({
   useEffectiveHostId: () => hostState.id,
+}));
+
+vi.mock("@/hooks/host/use-selection-authority-attached", () => ({
+  useSelectionAuthorityAttached: () => hostState.attached,
 }));
 
 vi.mock("@/hooks/host/use-host-client-for-host-id", () => ({
@@ -358,6 +373,7 @@ describe("<EpicSessionProvider />", () => {
   beforeEach(() => {
     window.localStorage.clear();
     hostState.id = "host-a";
+    hostState.attached = true;
     hostBindingRef.value = null;
     navigateMock.mockClear();
     resetCanvasStore();
@@ -656,6 +672,139 @@ describe("<EpicSessionProvider />", () => {
         failed?.openOnOriginalHost();
       });
       expect(presentations.at(-1)?.kind).toBe("ready");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("absorbs a churning effect dependency instead of re-presenting", async () => {
+    const presentations: Array<EpicSessionPresentation | null> = [];
+    __setEpicStreamClientFactoryForTests(() => ({
+      applyUpdate: () => undefined,
+      awareness: () => undefined,
+      applyArtifactRoomUpdate: () => undefined,
+      artifactRoomAwareness: () => undefined,
+      retryMigration: () => undefined,
+      close: () => undefined,
+    }));
+    // STABLE callback: `PresentationProbe` re-fires when EITHER its callback or
+    // the presentation changes, so an inline arrow would record a churn of its
+    // own making. A FRESH element per render, though - `rerender` with an
+    // identical element reference lets React bail out of the subtree, and the
+    // provider would never re-read the churned dependency at all. Both mistakes
+    // were made writing this pin; the mutation probe caught the first.
+    const record = (presentation: EpicSessionPresentation | null): void => {
+      presentations.push(presentation);
+    };
+    const tree = () => (
+      <EpicSessionProvider epicId="epic-session-test" tabId="epic-session-test">
+        <PresentationProbe onPresentation={record} />
+      </EpicSessionProvider>
+    );
+    const view = render(tree());
+
+    await act(() => Promise.resolve());
+    const settled = presentations.length;
+
+    // The REAL transport hook returns a referentially stable opener, and the
+    // acquire effect depends on it. Nothing enforces that stability, so the
+    // provider must absorb a churning identity rather than store a fresh
+    // presentation per commit: an unconditional write here re-renders, which
+    // churns the dependency again, which writes again - an infinite render
+    // loop, not a wasted render. `epic-surface-isolation` hung on exactly this.
+    act(() => {
+      transportState.opener = () => {
+        throw new Error("openTransport must not be called after the churn");
+      };
+      view.rerender(tree());
+    });
+
+    expect(presentations).toHaveLength(settled);
+    expect(presentations.at(-1)?.kind).toBe("ready");
+  });
+
+  it("holds a null host in establishing while the selection authority has not attached", async () => {
+    vi.useFakeTimers();
+    try {
+      const presentations: Array<EpicSessionPresentation | null> = [];
+      hostState.id = null;
+      hostState.attached = false;
+      render(
+        <EpicSessionProvider
+          epicId="epic-session-test"
+          tabId="epic-session-test"
+        >
+          <PresentationProbe
+            onPresentation={(presentation) => presentations.push(presentation)}
+          />
+        </EpicSessionProvider>,
+      );
+
+      await act(() => Promise.resolve());
+      expect(presentations.at(-1)?.kind).toBe("establishing");
+      // Short of the deadline it must STILL be establishing. A window whose
+      // kernel has not published yet has not been told anything about hosts,
+      // and "couldn't load this task" is a claim about hosts.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(14_000);
+      });
+      expect(presentations.at(-1)?.kind).toBe("establishing");
+      expect(presentations.some((entry) => entry?.kind === "failed")).toBe(
+        false,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("presents the selection gap at once when the authority IS attached and names no host", async () => {
+    const presentations: Array<EpicSessionPresentation | null> = [];
+    hostState.id = null;
+    hostState.attached = true;
+    render(
+      <EpicSessionProvider epicId="epic-session-test" tabId="epic-session-test">
+        <PresentationProbe
+          onPresentation={(presentation) => presentations.push(presentation)}
+        />
+      </EpicSessionProvider>,
+    );
+
+    // No timer advance anywhere in this case: the authority has spoken, so the
+    // gap is a fact, not something to wait out.
+    await waitFor(() => {
+      expect(presentations.at(-1)?.kind).toBe("failed");
+    });
+    expect(presentations.at(-1)?.targetHostId).toBeNull();
+    expect(__getOpenEpicRegistryForTests().size()).toBe(0);
+  });
+
+  it("bounds an authority that never attaches at the establishing deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const presentations: Array<EpicSessionPresentation | null> = [];
+      hostState.id = null;
+      hostState.attached = false;
+      render(
+        <EpicSessionProvider
+          epicId="epic-session-test"
+          tabId="epic-session-test"
+        >
+          <PresentationProbe
+            onPresentation={(presentation) => presentations.push(presentation)}
+          />
+        </EpicSessionProvider>,
+      );
+
+      await act(() => Promise.resolve());
+      // Invariant 6 does not exempt a bridge that never attaches: an unbounded
+      // hold here is the infinite skeleton this ticket exists to delete.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15_000);
+      });
+      const failed = presentations.at(-1);
+      expect(failed?.kind).toBe("failed");
+      expect(failed?.targetHostId).toBeNull();
+      expect(__getOpenEpicRegistryForTests().size()).toBe(0);
     } finally {
       vi.useRealTimers();
     }

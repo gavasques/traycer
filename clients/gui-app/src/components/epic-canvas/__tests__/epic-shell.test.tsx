@@ -235,7 +235,7 @@ describe("<EpicShell />", () => {
     queryClient.clear();
   });
 
-  it("keeps the connection pill visible without a snapshot while withholding title content", () => {
+  it("keeps the connection pill visible without a snapshot while withholding title content", async () => {
     installControlledFactory();
     const queryClient = new QueryClient({
       defaultOptions: {
@@ -249,9 +249,16 @@ describe("<EpicShell />", () => {
 
     renderShell(queryClient);
 
+    // The session handle publishes on a MICROTASK - `EpicSessionProvider` must
+    // not hand it to consumers inside the commit that acquired it - so the pill
+    // arrives one tick after render rather than synchronously. The title
+    // content, gated on a snapshot that never comes, must never arrive at all;
+    // asserting its absence AFTER the pill settles is the stronger order.
+    await waitFor(() => {
+      expect(screen.getByTestId("epic-connection-pill")).not.toBeNull();
+    });
     expect(screen.queryByTestId("epic-shell-title-skeleton")).toBeNull();
     expect(screen.queryByText(EPIC_ID)).toBeNull();
-    expect(screen.getByTestId("epic-connection-pill")).not.toBeNull();
 
     queryClient.clear();
   });

@@ -795,10 +795,11 @@ describe("RunnerIpcBridge", () => {
         RunnerHostInvoke.zoomStepIn,
         RunnerHostInvoke.zoomStepOut,
         RunnerHostInvoke.zoomReset,
-        // Selection authority (D16 / P1.1).
+        // Selection authority (D16 / P1.1), plus P1.3's fleet-refresh edge.
         RunnerHostInvoke.selectionAttach,
         RunnerHostInvoke.selectionReportEvidence,
         RunnerHostInvoke.selectionActivate,
+        RunnerHostInvoke.selectionRefreshFleet,
       ].sort(),
     );
     bridge.dispose();

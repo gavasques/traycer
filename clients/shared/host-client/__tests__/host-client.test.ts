@@ -1,3 +1,4 @@
+import { NO_TRANSPORT_EVIDENCE } from "@traycer-clients/shared/host-selection/transport-evidence";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
@@ -604,6 +605,7 @@ describe("HostClient", () => {
       dialTimeoutMs: 1000,
       frameTimeoutMs: 1000,
       hostAttestationWindowMs: 0,
+      evidence: NO_TRANSPORT_EVIDENCE,
     });
 
     const client = new HostClient({
@@ -658,6 +660,7 @@ describe("HostClient", () => {
       dialTimeoutMs: 1000,
       frameTimeoutMs: 1000,
       hostAttestationWindowMs: 0,
+      evidence: NO_TRANSPORT_EVIDENCE,
     });
     const client = new HostClient({
       registry,

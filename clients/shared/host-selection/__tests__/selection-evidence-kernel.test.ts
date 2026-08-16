@@ -480,6 +480,12 @@ describe("SelectionEvidenceKernel - closure round: per-slice snapshot merge", ()
       targetHostId: "H",
       effectiveHostId: "H",
       leases: replayedLeases,
+      // The selection slice took the SNAPSHOT, so it reports the snapshot's
+      // revision - not the replayed leases' higher one. Per-slice is the whole
+      // point, and the bridge's narration gate reads exactly this number to
+      // decide whether the window has applied the event it is about to
+      // narrate.
+      selectionRevision: 5,
     });
   });
 
@@ -527,6 +533,9 @@ describe("SelectionEvidenceKernel - closure round: per-slice snapshot merge", ()
       targetHostId: "S-host",
       effectiveHostId: "S-host",
       leases: snapshotLeases,
+      // Mirror of the case above: here the REPLAY won the selection slice, so
+      // the reported revision is the replay's, not the snapshot's.
+      selectionRevision: 6,
     });
   });
 
@@ -560,6 +569,7 @@ describe("SelectionEvidenceKernel - closure round: per-slice snapshot merge", ()
       targetHostId: "A-host",
       effectiveHostId: "A-host",
       leases: leasesA,
+      selectionRevision: 5,
     });
 
     // The identity transition: the client rotates to a fresh generation and
@@ -588,6 +598,9 @@ describe("SelectionEvidenceKernel - closure round: per-slice snapshot merge", ()
       targetHostId: "B-host",
       effectiveHostId: "B-host",
       leases: leasesB,
+      // The re-attach's revision, so nothing of the outgoing identity - not
+      // even the revision the window last narrated against - survives.
+      selectionRevision: 20,
     });
   });
 });

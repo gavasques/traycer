@@ -4,20 +4,27 @@ import {
   type AuthorityIdentitySource,
   type HostLeaseSnapshot,
   type LiveSessionAnnouncement,
+  type LocalHostEnsurePort,
   type LocalHostOutageSignal,
   type SelectionAttachRequest,
+  type SelectionChange,
   type SelectionEvidenceReport,
   type SelectionIncompatibility,
 } from "../selection-authority-contract";
 import {
   CONFIRMED_DEATH_REFUSAL_STREAK,
   SESSION_ORDINAL_WINDOW,
+  FAILOVER_CANDIDATE_STABILITY_MS,
+  LOCAL_ENSURE_RETRY_COOLDOWN_MS,
   LOCAL_EXPECTED_OUTAGE_CEILING_MS,
   RESTART_INTENT_EPISODE_MS,
+  RETURN_TO_TARGET_STABILITY_MS,
   SelectionAuthorityEngineImpl,
   createIncrementingIncarnationIds,
   isUsableForSelection,
   silentAuthorityLog,
+  type PreferredHostSaveResult,
+  type PreferredHostStore,
 } from "../selection-authority-engine";
 import {
   InMemoryHostFleetSource,
@@ -1722,5 +1729,680 @@ describe("SelectionAuthorityEngineImpl - identity wipe (P1.2, G1)", () => {
     expect(engine.snapshot().preferredHostId).toBeNull();
 
     authority.dispose();
+  });
+});
+
+// ------------------------------------------------------- P1.3 owed pins
+// (host-lifecycle redesign, ticket P1.3 test brief).
+
+function attachReporter(
+  engine: SelectionAuthorityEngineImpl,
+  reporterId: string,
+): string {
+  const seq = engine.allocateAttachSeq(reporterId);
+  const attach = engine.attach(reporterId, attachRequest(seq, []));
+  if (!attach.ok) throw new Error(`expected attach ${reporterId} to succeed`);
+  return attach.incarnationId;
+}
+
+function killHostWithRefusals(
+  engine: SelectionAuthorityEngineImpl,
+  reporterId: string,
+  incarnationId: string,
+  hostId: string,
+): void {
+  for (let i = 0; i < CONFIRMED_DEATH_REFUSAL_STREAK; i += 1) {
+    engine.ingestEvidence(
+      reporterId,
+      incarnationId,
+      dialRefusal(hostId, `${hostId}-kill-${i}`, null, i),
+    );
+  }
+}
+
+function lastSelectionChange(
+  events: readonly { kind: string; change?: SelectionChange }[],
+): SelectionChange {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event.kind === "selection" && event.change !== undefined) {
+      return event.change;
+    }
+  }
+  throw new Error("expected a selection event");
+}
+
+interface DeferredEnsure {
+  readonly port: LocalHostEnsurePort;
+  readonly calls: { count: number };
+  resolve(ok: boolean): Promise<void>;
+}
+
+function createDeferredEnsure(): DeferredEnsure {
+  const calls = { count: 0 };
+  const pending: Array<
+    (value: { ok: true } | { ok: false; reason: string }) => void
+  > = [];
+  return {
+    port: {
+      ensureReady: () => {
+        calls.count += 1;
+        return new Promise((resolve) => {
+          pending.push(resolve);
+        });
+      },
+    },
+    calls,
+    resolve: async (ok: boolean) => {
+      const resolve = pending.shift();
+      if (resolve === undefined) throw new Error("no pending ensure");
+      resolve(ok ? { ok: true } : { ok: false, reason: "ensure-failed" });
+      await Promise.resolve();
+    },
+  };
+}
+
+function assertEmptyIff(input: {
+  readonly effectiveHostId: string | null;
+  readonly leases: readonly HostLeaseSnapshot[];
+  readonly ensureUnavailableOrFailed: boolean;
+}): void {
+  const anyUsable = input.leases.some(isUsableForSelection);
+  const isEmpty = input.effectiveHostId === null;
+  const shouldBeEmpty = !anyUsable && input.ensureUnavailableOrFailed;
+  expect(isEmpty).toBe(shouldBeEmpty);
+  expect(shouldBeEmpty).toBe(isEmpty);
+}
+
+class ScriptedPreferredHostStore implements PreferredHostStore {
+  private readonly byIdentity = new Map<string, string>();
+  private failNextWrite = false;
+  writeCount = 0;
+
+  failNext(): void {
+    this.failNextWrite = true;
+  }
+
+  load(identityKey: string | null): string | null {
+    if (identityKey === null) return null;
+    return this.byIdentity.get(identityKey) ?? null;
+  }
+
+  save(
+    identityKey: string | null,
+    hostId: string | null,
+  ): PreferredHostSaveResult {
+    this.writeCount += 1;
+    if (this.failNextWrite) {
+      this.failNextWrite = false;
+      return { ok: false, reason: "disk-full" };
+    }
+    if (identityKey === null) return { ok: true };
+    if (hostId === null) {
+      this.byIdentity.delete(identityKey);
+      return { ok: true };
+    }
+    this.byIdentity.set(identityKey, hostId);
+    return { ok: true };
+  }
+}
+
+describe("SelectionAuthorityEngineImpl - P1.3 failover scenarios", () => {
+  it("A1: preferred remote dies → fallback immediately, no stability window", async () => {
+    const clock = createFakeAuthorityClock(0);
+    const authority = createTestAuthority({
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: "L",
+        hosts: [fleetHost("L", "local"), fleetHost("P", "remote")],
+      },
+      initialIdentityKey: "acct-1",
+      clock,
+    });
+    const { engine } = authority;
+    const incarnation = attachReporter(engine, "A");
+    expect(await engine.activate("A", incarnation, "P")).toEqual({ ok: true });
+    expect(engine.snapshot().effectiveHostId).toBe("P");
+
+    killHostWithRefusals(engine, "A", incarnation, "P");
+    clock.advance(0);
+    expect(findLease(engine.snapshot().leases, "P")?.status).toBe("dead");
+    expect(engine.snapshot().effectiveHostId).toBe("L");
+    expect(lastSelectionChange(authority.events).cause).toBe("failover");
+
+    authority.dispose();
+  });
+
+  it("A2: preferred returns → home only after the 20s stability window, cause recovery", async () => {
+    const clock = createFakeAuthorityClock(0);
+    const authority = createTestAuthority({
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: "L",
+        hosts: [fleetHost("L", "local"), fleetHost("P", "remote")],
+      },
+      initialIdentityKey: "acct-1",
+      clock,
+    });
+    const { engine } = authority;
+    const incarnation = attachReporter(engine, "A");
+    expect(await engine.activate("A", incarnation, "P")).toEqual({ ok: true });
+    killHostWithRefusals(engine, "A", incarnation, "P");
+    expect(engine.snapshot().effectiveHostId).toBe("L");
+
+    engine.ingestEvidence(
+      "A",
+      incarnation,
+      dialOutcome("P", "revive", "success", clock.now()),
+    );
+    expect(engine.snapshot().effectiveHostId).toBe("L");
+
+    clock.advance(RETURN_TO_TARGET_STABILITY_MS - 1);
+    expect(engine.snapshot().effectiveHostId).toBe("L");
+
+    clock.advance(1);
+    expect(engine.snapshot().effectiveHostId).toBe("P");
+    expect(lastSelectionChange(authority.events).cause).toBe("recovery");
+
+    authority.dispose();
+  });
+
+  it("A3: fallback restart while FailedOver → no third-host hop (M6)", async () => {
+    const clock = createFakeAuthorityClock(0);
+    const authority = createTestAuthority({
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: "L",
+        hosts: [
+          fleetHost("L", "local"),
+          fleetHost("P", "remote"),
+          fleetHost("C", "remote"),
+        ],
+      },
+      initialIdentityKey: "acct-1",
+      clock,
+    });
+    const { engine } = authority;
+    const incarnation = attachReporter(engine, "A");
+    expect(await engine.activate("A", incarnation, "P")).toEqual({ ok: true });
+    killHostWithRefusals(engine, "A", incarnation, "P");
+    expect(engine.snapshot().effectiveHostId).toBe("L");
+    expect(findLease(engine.snapshot().leases, "C")?.status).toBe("connecting");
+
+    engine.ingestEvidence(
+      "A",
+      incarnation,
+      restartIntent("L", "tomb-fallback", null, clock.now()),
+    );
+    expect(findLease(engine.snapshot().leases, "L")?.status).toBe(
+      "restarting-expected",
+    );
+    expect(engine.snapshot().effectiveHostId).toBe("L");
+
+    // Advance past BOTH stability windows (failover-candidate and
+    // return-to-target) while the restart episode (60s) is still open. Once
+    // damping alone would admit a hop, the HOLD rule is the only thing that
+    // can still keep the window on L instead of jumping to the third usable
+    // host C.
+    expect(
+      Math.max(FAILOVER_CANDIDATE_STABILITY_MS, RETURN_TO_TARGET_STABILITY_MS) + 5_000,
+    ).toBeLessThan(RESTART_INTENT_EPISODE_MS);
+    clock.advance(
+      Math.max(FAILOVER_CANDIDATE_STABILITY_MS, RETURN_TO_TARGET_STABILITY_MS) + 5_000,
+    );
+    expect(engine.snapshot().effectiveHostId).toBe("L");
+
+    const afterRestart = authority.events.filter(
+      (event) => event.kind === "selection",
+    );
+    for (const event of afterRestart) {
+      if (event.kind !== "selection") continue;
+      expect(event.change.effectiveHostId).not.toBe("C");
+    }
+    expect(engine.snapshot().effectiveHostId).toBe("L");
+
+    authority.dispose();
+  });
+
+  it("A4: Activate mid-FailedOver → immediately OnTarget, cause activate, damping bypassed", async () => {
+    const clock = createFakeAuthorityClock(0);
+    const authority = createTestAuthority({
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: "L",
+        hosts: [
+          fleetHost("L", "local"),
+          fleetHost("P", "remote"),
+          fleetHost("C", "remote"),
+        ],
+      },
+      initialIdentityKey: "acct-1",
+      clock,
+    });
+    const { engine } = authority;
+    const incarnation = attachReporter(engine, "A");
+    expect(await engine.activate("A", incarnation, "P")).toEqual({ ok: true });
+    killHostWithRefusals(engine, "A", incarnation, "P");
+    expect(engine.snapshot().effectiveHostId).toBe("L");
+
+    expect(await engine.activate("A", incarnation, "C")).toEqual({ ok: true });
+    clock.advance(0);
+    expect(engine.snapshot().preferredHostId).toBe("C");
+    expect(engine.snapshot().targetHostId).toBe("C");
+    expect(engine.snapshot().effectiveHostId).toBe("C");
+    expect(lastSelectionChange(authority.events).cause).toBe("activate");
+
+    authority.dispose();
+  });
+
+  it("A5: deregister preferred → preferred null, target local, cause deregister-clear", async () => {
+    const clock = createFakeAuthorityClock(0);
+    const authority = createTestAuthority({
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: "L",
+        hosts: [fleetHost("L", "local"), fleetHost("P", "remote")],
+      },
+      initialIdentityKey: "acct-1",
+      clock,
+    });
+    const { engine, fleet } = authority;
+    const incarnation = attachReporter(engine, "A");
+    expect(await engine.activate("A", incarnation, "P")).toEqual({ ok: true });
+
+    fleet.publish(0, "L", [fleetHost("L", "local")]);
+    expect(engine.snapshot().preferredHostId).toBeNull();
+    expect(engine.snapshot().targetHostId).toBe("L");
+    expect(lastSelectionChange(authority.events).cause).toBe("deregister-clear");
+
+    authority.dispose();
+  });
+
+  it("A6: healthy remote preferred does not ensure local; killing it requests ensure once", async () => {
+    const clock = createFakeAuthorityClock(0);
+    const ensure = createDeferredEnsure();
+    const authority = createTestAuthority({
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: "L",
+        hosts: [fleetHost("L", "local"), fleetHost("P", "remote")],
+      },
+      initialIdentityKey: "acct-1",
+      clock,
+      localHostEnsure: ensure.port,
+      seedPreferred: "P",
+    });
+    const { engine } = authority;
+    const incarnation = attachReporter(engine, "A");
+    expect(engine.snapshot().preferredHostId).toBe("P");
+    expect(engine.snapshot().effectiveHostId).toBe("P");
+
+    killHostWithRefusals(engine, "A", incarnation, "L");
+    expect(findLease(engine.snapshot().leases, "L")?.status).toBe("dead");
+    expect(engine.snapshot().effectiveHostId).toBe("P");
+    expect(ensure.calls.count).toBe(0);
+
+    killHostWithRefusals(engine, "A", incarnation, "P");
+    expect(ensure.calls.count).toBe(1);
+    expect(findLease(engine.snapshot().leases, "L")?.status).toBe("connecting");
+    expect(engine.snapshot().effectiveHostId).toBe("L");
+
+    authority.dispose();
+  });
+});
+
+describe("SelectionAuthorityEngineImpl - P1.3 empty-set unification", () => {
+  it("no local host + all remotes dead → ∅ (ensure unavailable)", () => {
+    const clock = createFakeAuthorityClock(0);
+    const ensure = createDeferredEnsure();
+    const authority = createTestAuthority({
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: null,
+        hosts: [fleetHost("R1", "remote"), fleetHost("R2", "remote")],
+      },
+      initialIdentityKey: "acct-1",
+      clock,
+      localHostEnsure: ensure.port,
+    });
+    const incarnation = attachReporter(authority.engine, "A");
+    killHostWithRefusals(authority.engine, "A", incarnation, "R1");
+    killHostWithRefusals(authority.engine, "A", incarnation, "R2");
+
+    const snapshot = authority.engine.snapshot();
+    expect(snapshot.effectiveHostId).toBeNull();
+    expect(ensure.calls.count).toBe(0);
+    assertEmptyIff({
+      effectiveHostId: snapshot.effectiveHostId,
+      leases: snapshot.leases,
+      ensureUnavailableOrFailed: true,
+    });
+
+    authority.dispose();
+  });
+
+  it("local dead + ensure in flight → NOT ∅ (local lease is connecting)", async () => {
+    const clock = createFakeAuthorityClock(0);
+    const ensure = createDeferredEnsure();
+    const authority = createTestAuthority({
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: "L",
+        hosts: [fleetHost("L", "local")],
+      },
+      initialIdentityKey: "acct-1",
+      clock,
+      localHostEnsure: ensure.port,
+    });
+    const incarnation = attachReporter(authority.engine, "A");
+    killHostWithRefusals(authority.engine, "A", incarnation, "L");
+
+    expect(ensure.calls.count).toBe(1);
+    const snapshot = authority.engine.snapshot();
+    expect(findLease(snapshot.leases, "L")?.status).toBe("connecting");
+    expect(snapshot.effectiveHostId).toBe("L");
+    assertEmptyIff({
+      effectiveHostId: snapshot.effectiveHostId,
+      leases: snapshot.leases,
+      ensureUnavailableOrFailed: false,
+    });
+
+    authority.dispose();
+  });
+
+  it("local dead + ensure failed inside cooldown + remotes dead → ∅", async () => {
+    const clock = createFakeAuthorityClock(0);
+    const ensure = createDeferredEnsure();
+    const authority = createTestAuthority({
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: "L",
+        hosts: [fleetHost("L", "local"), fleetHost("R", "remote")],
+      },
+      initialIdentityKey: "acct-1",
+      clock,
+      localHostEnsure: ensure.port,
+    });
+    const incarnation = attachReporter(authority.engine, "A");
+    killHostWithRefusals(authority.engine, "A", incarnation, "R");
+    killHostWithRefusals(authority.engine, "A", incarnation, "L");
+    await ensure.resolve(false);
+
+    const snapshot = authority.engine.snapshot();
+    expect(findLease(snapshot.leases, "L")?.status).toBe("dead");
+    expect(snapshot.effectiveHostId).toBeNull();
+    assertEmptyIff({
+      effectiveHostId: snapshot.effectiveHostId,
+      leases: snapshot.leases,
+      ensureUnavailableOrFailed: true,
+    });
+
+    authority.dispose();
+  });
+
+  it("after ensure cooldown lapses, ensure is retried", async () => {
+    const clock = createFakeAuthorityClock(0);
+    const ensure = createDeferredEnsure();
+    const authority = createTestAuthority({
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: "L",
+        hosts: [fleetHost("L", "local")],
+      },
+      initialIdentityKey: "acct-1",
+      clock,
+      localHostEnsure: ensure.port,
+    });
+    const incarnation = attachReporter(authority.engine, "A");
+    killHostWithRefusals(authority.engine, "A", incarnation, "L");
+    await ensure.resolve(false);
+    expect(ensure.calls.count).toBe(1);
+    expect(authority.engine.snapshot().effectiveHostId).toBeNull();
+
+    clock.advance(LOCAL_ENSURE_RETRY_COOLDOWN_MS);
+    expect(ensure.calls.count).toBe(2);
+
+    authority.dispose();
+  });
+
+  it("ensure succeeds → local becomes usable and is adopted", async () => {
+    const clock = createFakeAuthorityClock(0);
+    const ensure = createDeferredEnsure();
+    const authority = createTestAuthority({
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: "L",
+        hosts: [fleetHost("L", "local")],
+      },
+      initialIdentityKey: "acct-1",
+      clock,
+      localHostEnsure: ensure.port,
+    });
+    const incarnation = attachReporter(authority.engine, "A");
+    killHostWithRefusals(authority.engine, "A", incarnation, "L");
+    expect(ensure.calls.count).toBe(1);
+    await ensure.resolve(true);
+
+    // Pin the streak-clear as the ONLY explanation for usability: without
+    // it, `stage()` would see local still `dead` after the commit and
+    // re-request ensure, making the lease read `connecting` (also usable)
+    // via a second in-flight call rather than via a proven-alive local.
+    // A re-request here would defeat this assertion, not merely add noise.
+    expect(ensure.calls.count).toBe(1);
+
+    const snapshot = authority.engine.snapshot();
+    const local = findLease(snapshot.leases, "L");
+    if (local === undefined) throw new Error("expected local lease");
+    expect(isUsableForSelection(local)).toBe(true);
+    expect(snapshot.effectiveHostId).toBe("L");
+    assertEmptyIff({
+      effectiveHostId: snapshot.effectiveHostId,
+      leases: snapshot.leases,
+      ensureUnavailableOrFailed: false,
+    });
+
+    authority.dispose();
+  });
+});
+
+describe("SelectionAuthorityEngineImpl - P1.3 same-effective Activate (C1 engine)", () => {
+  it("Activate a third dead host while FailedOver emits selectionChanged with unchanged effective", async () => {
+    const clock = createFakeAuthorityClock(0);
+    const authority = createTestAuthority({
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: null,
+        hosts: [
+          fleetHost("A", "remote"),
+          fleetHost("B", "remote"),
+          fleetHost("C", "remote"),
+        ],
+      },
+      initialIdentityKey: "acct-1",
+      clock,
+    });
+    const { engine, events } = authority;
+    const incarnation = attachReporter(engine, "W");
+    expect(await engine.activate("W", incarnation, "A")).toEqual({ ok: true });
+    killHostWithRefusals(engine, "W", incarnation, "C");
+    killHostWithRefusals(engine, "W", incarnation, "A");
+    expect(engine.snapshot().effectiveHostId).toBe("B");
+    expect(engine.snapshot().targetHostId).toBe("A");
+
+    const previousEffective = engine.snapshot().effectiveHostId;
+    const before = events.filter((event) => event.kind === "selection").length;
+    expect(await engine.activate("W", incarnation, "C")).toEqual({ ok: true });
+    const after = events.filter((event) => event.kind === "selection");
+    expect(after.length).toBe(before + 1);
+    const change = lastSelectionChange(after);
+    expect(change.preferredHostId).toBe("C");
+    expect(change.targetHostId).toBe("C");
+    expect(change.effectiveHostId).toBe(previousEffective);
+    expect(change.previousEffectiveHostId).toBe(previousEffective);
+    expect(change.cause).toBe("activate");
+
+    authority.dispose();
+  });
+});
+
+describe("SelectionAuthorityEngineImpl - P1.3 persist-failed activate (E1/E2 engine)", () => {
+  it("E1: failed write → persist-failed, nothing committed or emitted", async () => {
+    const clock = createFakeAuthorityClock(0);
+    const store = new ScriptedPreferredHostStore();
+    store.failNext();
+    const authority = createTestAuthority({
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: null,
+        hosts: [fleetHost("H", "remote")],
+      },
+      initialIdentityKey: "acct-1",
+      clock,
+      preferredStore: store,
+    });
+    const incarnation = attachReporter(authority.engine, "A");
+    const before = authority.events.filter(
+      (event) => event.kind === "selection",
+    ).length;
+
+    expect(await authority.engine.activate("A", incarnation, "H")).toEqual({
+      ok: false,
+      reason: "persist-failed",
+    });
+    expect(authority.engine.snapshot().preferredHostId).toBeNull();
+    expect(store.load("acct-1")).toBeNull();
+    expect(
+      authority.events.filter((event) => event.kind === "selection").length,
+    ).toBe(before);
+
+    authority.dispose();
+  });
+
+  it("E2: failed write then retry with a succeeding write is durable", async () => {
+    const clock = createFakeAuthorityClock(0);
+    const store = new ScriptedPreferredHostStore();
+    store.failNext();
+    const authority = createTestAuthority({
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: null,
+        hosts: [fleetHost("H", "remote")],
+      },
+      initialIdentityKey: "acct-1",
+      clock,
+      preferredStore: store,
+    });
+    const incarnation = attachReporter(authority.engine, "A");
+    expect(await authority.engine.activate("A", incarnation, "H")).toEqual({
+      ok: false,
+      reason: "persist-failed",
+    });
+    expect(authority.engine.snapshot().preferredHostId).toBeNull();
+
+    expect(await authority.engine.activate("A", incarnation, "H")).toEqual({
+      ok: true,
+    });
+    expect(authority.engine.snapshot().preferredHostId).toBe("H");
+    expect(store.load("acct-1")).toBe("H");
+    expect(lastSelectionChange(authority.events).cause).toBe("activate");
+
+    authority.dispose();
+  });
+});
+
+describe("SelectionAuthorityEngineImpl - P1.3 F14 clear on identity adopt (H)", () => {
+  function buildTransitionPorts(input: {
+    readonly bPreference: string;
+    readonly bFleet: {
+      readonly localHostId: string | null;
+      readonly hosts: readonly { hostId: string; kind: "local" | "remote" }[];
+    };
+  }): {
+    engine: SelectionAuthorityEngineImpl;
+    events: ReturnType<typeof recordEngineEvents>["events"];
+    transition: () => void;
+  } {
+    const store = new InMemoryPreferredHostStore();
+    store.save("acct-B", input.bPreference);
+    const fleet = new InMemoryHostFleetSource({
+      revision: 0,
+      identityGeneration: 0,
+      localHostId: "L-A",
+      hosts: [fleetHost("L-A", "local")],
+    });
+    let identityState = { identityKey: "acct-A", generation: 0 };
+    const identityListeners = new Set<
+      (identity: { identityKey: string | null; generation: number }) => void
+    >();
+    const identity: AuthorityIdentitySource = {
+      current: () => identityState,
+      onChanged: (listener) => {
+        identityListeners.add(listener);
+        return { dispose: () => identityListeners.delete(listener) };
+      },
+    };
+    const engine = new SelectionAuthorityEngineImpl({
+      fleet,
+      identity,
+      localHostEnsure: unavailableLocalHostEnsurePort,
+      localOutage: inertLocalHostOutageSignal,
+      clock: createFakeAuthorityClock(0),
+      newIncarnationId: createIncrementingIncarnationIds(),
+      preferredStore: store,
+      log: silentAuthorityLog,
+    });
+    const { events } = recordEngineEvents(engine);
+    fleet.publish(1, input.bFleet.localHostId, input.bFleet.hosts);
+    return {
+      engine,
+      events,
+      transition: () => {
+        identityState = { identityKey: "acct-B", generation: 1 };
+        for (const listener of Array.from(identityListeners)) {
+          listener(identityState);
+        }
+      },
+    };
+  }
+
+  it("H1: already-available B fleet that omits B's persisted preference clears it as deregister-clear", () => {
+    const ports = buildTransitionPorts({
+      bPreference: "GONE",
+      bFleet: {
+        localHostId: "L-B",
+        hosts: [fleetHost("L-B", "local"), fleetHost("OTHER", "remote")],
+      },
+    });
+    ports.transition();
+    expect(ports.engine.snapshot().preferredHostId).toBeNull();
+    expect(ports.engine.snapshot().targetHostId).toBe("L-B");
+    expect(lastSelectionChange(ports.events).cause).toBe("deregister-clear");
+    ports.engine.dispose();
+  });
+
+  it("H2: already-available B fleet that still holds B's preference keeps it, cause fleet-shift", () => {
+    const ports = buildTransitionPorts({
+      bPreference: "L-B",
+      bFleet: {
+        localHostId: "L-B",
+        hosts: [fleetHost("L-B", "local"), fleetHost("OTHER", "remote")],
+      },
+    });
+    ports.transition();
+    expect(ports.engine.snapshot().preferredHostId).toBe("L-B");
+    expect(ports.engine.snapshot().targetHostId).toBe("L-B");
+    expect(lastSelectionChange(ports.events).cause).toBe("fleet-shift");
+    ports.engine.dispose();
+  });
+
+  it("H3: an empty already-available fleet never clears the persisted preference", () => {
+    const ports = buildTransitionPorts({
+      bPreference: "GONE",
+      bFleet: { localHostId: null, hosts: [] },
+    });
+    ports.transition();
+    expect(ports.engine.snapshot().preferredHostId).toBe("GONE");
+    expect(lastSelectionChange(ports.events).cause).not.toBe("deregister-clear");
+    ports.engine.dispose();
   });
 });

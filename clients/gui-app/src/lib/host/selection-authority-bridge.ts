@@ -1,15 +1,16 @@
 import type {
   SelectionAuthorityClient,
   SelectionChange,
+  SelectionRevisioned,
   SelectionSubscription,
 } from "@traycer-clients/shared/host-selection/selection-authority-contract";
-import {
+import type {
   SelectionEvidenceKernel,
-  type SelectionKernelSnapshot,
+  SelectionKernelSnapshot,
 } from "@traycer-clients/shared/host-selection/selection-evidence-kernel";
-import type { AuthorityLog } from "@traycer-clients/shared/host-selection/selection-authority-engine";
 import { Analytics, AnalyticsEvent } from "@/lib/analytics";
-import { appLogger, type AppLogValue } from "@/lib/logger";
+import { toastSelectionSwitched } from "@/lib/host/selection-switch-toast";
+import { appLogger } from "@/lib/logger";
 import { notifyEffectiveHostChanged } from "@/stores/host/surface-host-selection-store";
 import { useSelectionAuthorityStore } from "@/stores/host/selection-authority-store";
 
@@ -23,15 +24,35 @@ export interface SelectionDirectoryBinding {
   selectById(hostId: string | null): void;
 }
 
+/**
+ * Read-only host labelling for the switch toast. DELIBERATELY separate from
+ * {@link SelectionDirectoryBinding} rather than widening it: that binding is
+ * the app's one sanctioned write path into the selection, and its narrowness
+ * is the property P0.3's lint enforces. Narration needs a name, not a writer.
+ */
+export interface SelectionHostLabels {
+  labelFor(hostId: string): string;
+}
+
 export interface SelectionAuthorityBridge {
   dispose(): void;
 }
 
 export interface SelectionAuthorityBridgeOptions {
   readonly client: SelectionAuthorityClient;
+  /**
+   * This window's kernel, ALREADY CONSTRUCTED AND STARTED by the composition
+   * root (redesign P1.3). It is no longer built here because the transports
+   * must be able to report into it before this bridge mounts: the buffering
+   * client drops evidence produced before the attach begins, and the bridge
+   * mounts only after `auth.start()` and `directory.start()` have resolved -
+   * a window in which the very first dials happen. Owning the kernel one level
+   * up also makes the subscribe-time apply below load-bearing rather than
+   * decorative; see there.
+   */
+  readonly kernel: SelectionEvidenceKernel;
   readonly directory: SelectionDirectoryBinding;
-  /** Stamps evidence reports. Ordering comes from revisions, never this. */
-  readonly now: () => number;
+  readonly hostLabels: SelectionHostLabels;
 }
 
 /**
@@ -81,11 +102,37 @@ export interface SelectionAuthorityBridgeOptions {
 export function mountSelectionAuthorityBridge(
   options: SelectionAuthorityBridgeOptions,
 ): SelectionAuthorityBridge {
-  const kernel = new SelectionEvidenceKernel({
-    client: options.client,
-    now: options.now,
-    log: bridgeAuthorityLog,
-  });
+  const kernel = options.kernel;
+  /**
+   * The newest selection event this bridge has accepted for narration but not
+   * yet narrated, because the kernel has not applied that revision here yet.
+   * See {@link flushNarration}.
+   */
+  let pendingNarration: SelectionRevisioned<SelectionChange> | null = null;
+  let narratedRevision = -1;
+
+  /**
+   * Narration runs only once the window's own state carries the revision being
+   * narrated.
+   *
+   * Both paths call this because neither ordering can be assumed. Registration
+   * order used to decide it: this bridge subscribed to the raw stream before
+   * `kernel.start()` installed the kernel's, and buffered delivery preserves
+   * insertion order, so `notifyEffectiveHostChanged` and the analytics event
+   * both ran while the store and the directory still held the PREVIOUS
+   * revision - a G4 subscriber re-reading either during its own reset saw
+   * pre-move state. Gating on the applied revision instead of on subscription
+   * order makes the invariant (store -> selectById -> fan-out) hold whichever
+   * listener the client happens to call first.
+   */
+  const flushNarration = (appliedSelectionRevision: number): void => {
+    const pending = pendingNarration;
+    if (pending === null || pending.revision > appliedSelectionRevision) {
+      return;
+    }
+    pendingNarration = null;
+    narrate(pending.change, options.hostLabels);
+  };
 
   const apply = (snapshot: SelectionKernelSnapshot): void => {
     // Store BEFORE the bind: the directory fans out to `HostRuntime`
@@ -93,26 +140,34 @@ export function mountSelectionAuthorityBridge(
     // an `effectiveHostId` this window has already superseded.
     useSelectionAuthorityStore.getState().applyKernelSnapshot(snapshot);
     options.directory.selectById(snapshot.effectiveHostId);
+    flushNarration(snapshot.selectionRevision);
   };
 
   const subscriptions: SelectionSubscription[] = [
     kernel.onChange(apply),
-    subscribeNarration(options.client),
+    options.client.onSelectionChanged((event) => {
+      // Its OWN monotonic high-water, the same rule the kernel applies to its
+      // selection slice, so a replayed or reordered event narrates at most
+      // once. The raw stream is subscribed at all because the kernel snapshot
+      // deliberately carries no `cause`: `resolveCause` is not reconstructible
+      // from the tuple (a `fleet-shift` can legally leave `effective !==
+      // target`, which a phase-transition guess would mis-report as a
+      // failover), and hanging the last cause off the snapshot would replay a
+      // stale one on every lease-only publish.
+      if (event.revision <= narratedRevision) {
+        return;
+      }
+      narratedRevision = event.revision;
+      pendingNarration = event;
+      flushNarration(kernel.snapshot().selectionRevision);
+    }),
   ];
 
-  void kernel.start().then((result) => {
-    if (result.ok) {
-      return;
-    }
-    // Terminal for this generation by contract - the kernel has already
-    // published the detached snapshot, which this bridge has already turned
-    // into an unbound directory. Recovery is a fresh load or the next
-    // `reattachRequired`, never a retry here.
-    appLogger.warn("[selection-bridge] authority attach refused", {
-      kind: result.kind,
-    });
-  });
-
+  // The kernel is already started, so its attach may well have settled before
+  // this bridge existed - which makes this the line that delivers the opening
+  // binding, not a defensive no-op. (While the bridge owned construction it
+  // was provably unreachable: every publish path was at least a microtask
+  // away from a kernel built and started in the same tick.)
   apply(kernel.snapshot());
 
   return {
@@ -120,33 +175,12 @@ export function mountSelectionAuthorityBridge(
       for (const subscription of subscriptions) {
         subscription.dispose();
       }
-      kernel.dispose();
       useSelectionAuthorityStore.getState().reset();
     },
   };
 }
 
-/**
- * Narration only - never a selection write. `previousEffectiveHostId` comes
- * from the event rather than from a locally remembered value because the
- * authority is the one that knows what it moved the window off: a preferred
- * or target change that leaves `effective` untouched still emits, and must
- * stay silent here.
- */
-function subscribeNarration(
-  client: SelectionAuthorityClient,
-): SelectionSubscription {
-  let narratedRevision = -1;
-  return client.onSelectionChanged((event) => {
-    if (event.revision <= narratedRevision) {
-      return;
-    }
-    narratedRevision = event.revision;
-    narrate(event.change);
-  });
-}
-
-function narrate(change: SelectionChange): void {
+function narrate(change: SelectionChange, hostLabels: SelectionHostLabels): void {
   if (change.effectiveHostId === change.previousEffectiveHostId) {
     return;
   }
@@ -166,60 +200,21 @@ function narrate(change: SelectionChange): void {
   // "landed back on the target", `failover` is "left it". Intent
   // (`HostSelected`) belongs to Settings ▸ Activate and is not fired from a
   // derivation, which is the conflation this split ends.
+  const effectiveHostId = change.effectiveHostId;
+  if (effectiveHostId !== null) {
+    // ∅ has its own narrator - the global modal (D10) - and a toast saying
+    // the app switched to nothing would compete with it.
+    toastSelectionSwitched({
+      cause: change.cause,
+      previousEffectiveHostId: change.previousEffectiveHostId,
+      hostLabel: hostLabels.labelFor(effectiveHostId),
+    });
+  }
   if (change.cause === "failover") {
     Analytics.getInstance().track(AnalyticsEvent.HostFailover, null);
     return;
   }
   if (change.cause === "recovery") {
     Analytics.getInstance().track(AnalyticsEvent.HostRecovered, null);
-  }
-}
-
-const bridgeAuthorityLog: AuthorityLog = {
-  debug: (message, detail) => {
-    appLogger.debug(message, loggable(detail));
-  },
-  warn: (message, detail) => {
-    appLogger.warn(message, loggable(detail));
-  },
-};
-
-/**
- * The authority's log detail is `Record<string, unknown>`; the app logger
- * takes structured values. Anything outside that vocabulary is JSON-encoded
- * rather than dropped - a diagnostic that silently loses its subject is worse
- * than one that prints a shape. `JSON.stringify`, not `String(...)`: the
- * kernel's details are plain objects, which stringify to `[object Object]`
- * and would take the field's meaning with them.
- */
-function loggable(detail: Record<string, unknown>): Record<string, AppLogValue> {
-  const fields: Record<string, AppLogValue> = {};
-  for (const [key, value] of Object.entries(detail)) {
-    if (
-      typeof value === "string" ||
-      typeof value === "number" ||
-      typeof value === "boolean" ||
-      value === null
-    ) {
-      fields[key] = value;
-      continue;
-    }
-    fields[key] = describeLogValue(value);
-  }
-  return fields;
-}
-
-function describeLogValue(value: unknown): string {
-  // Primitives are already handled by the caller, so what is left is an
-  // object/array (encode it) or a type that has no useful log form at all
-  // (name the type - a `[function]` in a diagnostic is a bug report, and
-  // `JSON.stringify` would answer `undefined` for it).
-  if (typeof value !== "object") {
-    return `[${typeof value}]`;
-  }
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return "unserializable";
   }
 }

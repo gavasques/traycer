@@ -1,4 +1,4 @@
-import { createContext, use, type Context } from "react";
+import { createContext, use, useEffect, useRef, type Context } from "react";
 import {
   HostRequestAbortedError,
   HostTransportFailureError,
@@ -9,6 +9,7 @@ import type { HostRpcRegistry } from "@traycer/protocol/host/index";
 import { useHostQuery } from "@/hooks/host/use-host-query";
 import { useHostClient } from "@/lib/host/runtime";
 import { queryKeys } from "@/lib/query-keys";
+import { transportEvidenceRelay } from "@/lib/host/transport-evidence";
 
 const HOST_STATUS_PROBE = {};
 
@@ -227,6 +228,116 @@ export function useHostCompatibilityProbe(): HostCompatibility {
     };
   }
   return { status: "checking", retry: () => void probe.refetch() };
+}
+
+/**
+ * Feeds the compat probe's verdict to the selection authority (redesign
+ * P1.3), which is what makes D13/C4 real: a host whose probe reports a
+ * blocking version mismatch is `dead("incompatible")` for SELECTION - never a
+ * failover candidate, refused by Activate, and given the ∅ modal's
+ * "update host" variant - even though its socket is alive and Settings can
+ * still drive `host.update.install` over it.
+ *
+ * An EFFECT, not a report from the state machine above, which is a render
+ * function: reporting from render is a side effect React is free to run twice
+ * (StrictMode does), and the double report would be indistinguishable from two
+ * genuine probes. Keyed on the identity of the verdict rather than on mount
+ * count, so a re-render, a remount, or a second StrictMode pass with the same
+ * (host, verdict) reports once.
+ *
+ * `probedOnSessionId` is `null` - a NAMED INTERIM. The probe rides TanStack
+ * through the app-wide `HostClient`, and no session identity surfaces to this
+ * layer; for the local transport a "session" is not even a stable thing to
+ * name (one socket per RPC). While every verdict is null-anchored the
+ * authority's session-generation freshness rule (mechanism 6) degrades to
+ * latest-received-wins, which is behaviourally what this probe already did -
+ * but the downgrade and same-version-restart correctness that rule exists for
+ * is inert until session identity is threaded out of the transport surface.
+ * That is owed to whichever ticket first surfaces it (P4.1's registry
+ * completion is the likely home), not papered over here.
+ */
+export function useHostCompatibilityAuthorityReport(
+  compatibility: HostCompatibility,
+  hostId: string | null,
+): void {
+  const reportedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (hostId === null) {
+      return;
+    }
+    const verdict = describeCompatVerdictForAuthority(compatibility);
+    if (verdict === null) {
+      // `checking`/`failed` are not verdicts about COMPATIBILITY: an
+      // unreachable host says nothing about its protocol, and reporting a
+      // transport failure here would launder it into a `dead("incompatible")`
+      // lease that no reconnection could clear. Liveness is the transports'
+      // job (invariant 5); this producer only ever speaks to compatibility.
+      return;
+    }
+    const key = `${hostId}\u0000${verdict.code ?? "compatible"}\u0000${
+      verdict.hostVersion ?? ""
+    }`;
+    if (reportedRef.current === key) {
+      return;
+    }
+    reportedRef.current = key;
+    transportEvidenceRelay.reportCompatVerdict({
+      hostId,
+      probedOnSessionId: null,
+      hostVersion: verdict.hostVersion,
+      incompatibility:
+        verdict.code === null
+          ? null
+          : {
+              code: verdict.code,
+              hostVersion: verdict.hostVersion,
+              minSupportedVersion: verdict.minSupportedVersion,
+            },
+    });
+  }, [compatibility, hostId]);
+}
+
+/**
+ * The two probe states that ARE compat verdicts, flattened to what the
+ * authority takes. `code: null` means compatible. Everything else answers
+ * `null` - see the caller.
+ */
+function describeCompatVerdictForAuthority(
+  compatibility: HostCompatibility,
+): {
+  readonly code: string | null;
+  readonly hostVersion: string | null;
+  readonly minSupportedVersion: string | null;
+} | null {
+  if (compatibility.status === "incompatible") {
+    const blocking =
+      compatibility.error.fatalDetails?.incompatibleMethods?.[0]?.blocking ??
+      null;
+    return {
+      // The fatal's own code, refined by WHY the handshake broke when the
+      // frame said. This is the machine code the ∅ modal's update-host variant
+      // and Settings render from.
+      code:
+        blocking === null
+          ? compatibility.error.code
+          : `${compatibility.error.code}:${blocking}`,
+      // Deliberately null. A fatal error frame carries method CANONICALS
+      // ({major, minor} per method), not host version strings, and the
+      // contract is explicit that these two fields are descriptive only and
+      // never an ordering key - so inventing a version from a canonical would
+      // put a number in front of the user that names nothing they can act on.
+      hostVersion: null,
+      minSupportedVersion: null,
+    };
+  }
+  if (compatibility.status === "compatible") {
+    return {
+      code: null,
+      hostVersion: compatibility.hostStatus.hostVersion,
+      minSupportedVersion: null,
+    };
+  }
+  return null;
 }
 
 /**

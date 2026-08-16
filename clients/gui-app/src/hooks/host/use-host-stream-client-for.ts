@@ -24,6 +24,7 @@ import type { HostRpcRegistry } from "@traycer/protocol/host/index";
 import { appHostCredentialMintFlow } from "@/lib/auth/host-credential-provisioning";
 import { useHostClient } from "@/lib/host/runtime";
 import { createStreamRebuildBackoff } from "@/lib/host/stream-rebuild-backoff";
+import { transportEvidenceRelay } from "@/lib/host/transport-evidence";
 import { appLogger } from "@/lib/logger";
 import { useRunnerHost } from "@/providers/use-runner-host";
 import {
@@ -240,6 +241,7 @@ export function buildHostStreamClient(params: {
       streamRegistry: hostStreamRpcRegistry,
       webSocketFactory: browserStreamWebSocketFactory,
       requestId: uuidv4,
+      evidence: transportEvidenceRelay,
     });
     if (remoteTransport === null) return null;
     if (params.autoStart) {

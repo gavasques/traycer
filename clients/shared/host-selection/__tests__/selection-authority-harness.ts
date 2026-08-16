@@ -7,6 +7,7 @@
 import {
   type HostFleetEntry,
   type HostLeaseSnapshot,
+  type LocalHostEnsurePort,
   type SelectionAuthorityEngine,
   type SelectionChange,
   type SelectionReattachRequired,
@@ -18,6 +19,7 @@ import {
   silentAuthorityLog,
   SelectionAuthorityEngineImpl,
   type AuthorityClock,
+  type PreferredHostStore,
 } from "../selection-authority-engine";
 import {
   InMemoryAuthorityIdentitySource,
@@ -133,7 +135,7 @@ export interface TestAuthority {
   readonly engine: SelectionAuthorityEngineImpl;
   readonly fleet: InMemoryHostFleetSource;
   readonly identity: InMemoryAuthorityIdentitySource;
-  readonly preferredStore: InMemoryPreferredHostStore;
+  readonly preferredStore: PreferredHostStore;
   readonly clock: FakeAuthorityClock;
   readonly events: RecordedEngineEvent[];
   dispose(): void;
@@ -153,6 +155,9 @@ export function createTestAuthority(input: {
   };
   readonly initialIdentityKey: string | null;
   readonly clock: FakeAuthorityClock;
+  readonly localHostEnsure?: LocalHostEnsurePort;
+  readonly preferredStore?: PreferredHostStore;
+  readonly seedPreferred?: string | null;
 }): TestAuthority {
   const fleet = new InMemoryHostFleetSource({
     revision: 0,
@@ -163,11 +168,16 @@ export function createTestAuthority(input: {
   const identity = new InMemoryAuthorityIdentitySource(
     input.initialIdentityKey,
   );
-  const preferredStore = new InMemoryPreferredHostStore();
+  const preferredStore =
+    input.preferredStore ?? new InMemoryPreferredHostStore();
+  const seedPreferred = input.seedPreferred;
+  if (seedPreferred !== undefined && seedPreferred !== null) {
+    preferredStore.save(input.initialIdentityKey, seedPreferred);
+  }
   const engine = new SelectionAuthorityEngineImpl({
     fleet,
     identity,
-    localHostEnsure: unavailableLocalHostEnsurePort,
+    localHostEnsure: input.localHostEnsure ?? unavailableLocalHostEnsurePort,
     localOutage: inertLocalHostOutageSignal,
     preferredStore,
     clock: input.clock,

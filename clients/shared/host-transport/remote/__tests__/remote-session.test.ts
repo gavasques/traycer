@@ -1,3 +1,4 @@
+import { NO_TRANSPORT_EVIDENCE } from "@traycer-clients/shared/host-selection/transport-evidence";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import {
@@ -576,6 +577,7 @@ function buildSessionOptions(
     streamRegistry: emptyStreamRegistry,
     webSocketFactory: relay.factory,
     requestId: () => `req-${(nextRequestId += 1)}`,
+    evidence: NO_TRANSPORT_EVIDENCE,
   };
 }
 
@@ -848,6 +850,7 @@ describe("RemoteSession plan-restricted entitlement denial", () => {
         streamRegistry: emptyStreamRegistry,
         webSocketFactory: relay.factory,
         requestId: () => `req-${(nextRequestId += 1)}`,
+        evidence: NO_TRANSPORT_EVIDENCE,
       });
       const streamClient = new RemoteStreamClient(session);
       let closedEvents = 0;

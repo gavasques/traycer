@@ -160,6 +160,43 @@ class BoundedIdSet {
 }
 
 /**
+ * How long the TARGET must have been continuously usable before the engine
+ * returns to it (connection registry §4's "~15-30 s of confirmed stability").
+ *
+ * Measured as a DURATION THE HOST HAS ALREADY SERVED, not as a delay counted
+ * from the moment the move becomes attractive. That distinction is the whole
+ * damping design: a fallback that has been healthy for ten minutes satisfies
+ * every window instantly, so the engine never sits on a dead host waiting out
+ * a timer, while a host that flaps back up for a second satisfies none.
+ */
+export const RETURN_TO_TARGET_STABILITY_MS = 20_000;
+
+/**
+ * The minimal window on a candidate switch made WHILE already failed over
+ * (M6). Short by design - it is not protecting a working arrangement, only
+ * bounding a hop cascade: when a network drop makes several remotes report
+ * death within the same second, this keeps the engine from walking A -> B ->
+ * C -> ∅, emitting a toast and re-pointing every tab at each step, instead of
+ * making one move once the dust settles.
+ *
+ * It costs nothing in the common case, because a warm fallback has already
+ * been usable for far longer than this.
+ */
+export const FAILOVER_CANDIDATE_STABILITY_MS = 5_000;
+
+/**
+ * How long a FAILED local `ensure` holds the local lease `dead` before the
+ * engine may ask again.
+ *
+ * It is doing two jobs, and they are the same job: it is the retry cooldown
+ * that stops a provisioning failure from becoming a request storm, AND it is
+ * how "the ensure path has failed" surfaces as lease state (registry §5) so
+ * the ∅ modal can honestly say nothing is available. When it lapses the lease
+ * returns to ordinary evidence and the next derivation may try again.
+ */
+export const LOCAL_ENSURE_RETRY_COOLDOWN_MS = 30_000;
+
+/**
  * The engine's own clock and timer source (mechanism 7: "authority deadlines
  * come from its own ceilings, never renderer or host clocks"). A composition
  * input, not wire surface - tests inject a fake.
@@ -222,9 +259,28 @@ export function createIncrementingIncarnationIds(): () => string {
  * `identityKey: null` (signed out) has no bucket to read or write: there is
  * no account whose choice could be remembered.
  */
+export type PreferredHostSaveResult =
+  | { ok: true }
+  | { ok: false; reason: string };
+
 export interface PreferredHostStore {
+  /**
+   * A failed READ is genuinely "no preference": derivation degrades to the
+   * local host, which is the same safe answer a first run gets, and a read
+   * cannot corrupt anything. So this stays total.
+   */
   load(identityKey: string | null): string | null;
-  save(identityKey: string | null, hostId: string | null): void;
+  /**
+   * A DISCRIMINATED result rather than a throw, because the identity
+   * transition must complete regardless of disk state - unwinding a
+   * half-applied account switch because a file would not write is worse than
+   * carrying a stale file. Callers that CAN refuse (Activate) do; the
+   * transition proceeds and lets the store own durable honesty.
+   */
+  save(
+    identityKey: string | null,
+    hostId: string | null,
+  ): PreferredHostSaveResult;
 }
 
 export interface SelectionAuthorityEngineOptions {
@@ -510,6 +566,28 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
 
   /** Start of the current local expected outage, or null when the lane is idle. */
   private localOutageStartedAt: number | null = null;
+  /**
+   * Per host, when its lease became CONTINUOUSLY usable, or absent while it is
+   * not. This is the "confirmed stability" the damping windows measure
+   * against; it is cleared the instant a host stops being usable, so a flap
+   * restarts the clock rather than accumulating credit.
+   */
+  private readonly usableSince = new Map<string, number>();
+  /**
+   * When a damped move would become admissible with no new evidence, or null
+   * when nothing is being held back. Recorded at derivation time (where the
+   * candidate is already known) rather than recomputed by the timer, so the
+   * two can never disagree about which move is waiting.
+   */
+  private pendingDampingDeadline: number | null = null;
+  /** True while the engine's one sanctioned process action is in flight (D14). */
+  private localEnsureInFlight = false;
+  /**
+   * End of the cooldown after a FAILED ensure, or null. While it runs the
+   * local lease is `dead` - which is exactly what registry §5 means by "the
+   * ensure path is unavailable or has failed".
+   */
+  private localEnsureFailedUntil: number | null = null;
   private cancelDeadlineTimer: (() => void) | null = null;
   private scheduledDeadline: number | null = null;
 
@@ -714,11 +792,24 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
     // Deliberately NOT refused: a registered host that is merely offline.
     // Preferred is intent, not liveness (D1/D5).
     if (this.preferredHostId !== hostId) {
+      // PERSIST FIRST, and only then touch state or emit. The contract
+      // promises `ok: true` only after validate, persist AND re-derivation -
+      // so a durable write that failed must not have moved the app: reporting
+      // success there tells the user their choice is remembered, and the next
+      // launch quietly contradicts it. Ordering makes a partial commit
+      // impossible rather than merely unlikely.
+      const persisted = this.options.preferredStore.save(
+        this.identityKey,
+        hostId,
+      );
+      if (!persisted.ok) {
+        this.options.log.warn("[selection-authority] preference write failed", {
+          hostId,
+          reason: persisted.reason,
+        });
+        return Promise.resolve({ ok: false, reason: "persist-failed" });
+      }
       this.preferredHostId = hostId;
-      this.options.preferredStore.save(this.identityKey, hostId);
-      // Commit before resolving: the contract promises `ok: true` only after
-      // validate, persist AND re-derivation, so the selection event has
-      // already been emitted when the caller sees success.
       this.commit("activate");
     }
     return Promise.resolve({ ok: true });
@@ -1154,10 +1245,24 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
     if (this.fleet.revision > this.appliedFleetRevision) {
       this.appliedFleetRevision = this.fleet.revision;
     }
+    // F14 ALSO APPLIES HERE, and used to be missed. The clear rule only ran on
+    // the fleet-callback path, so a transition that adopted an ALREADY
+    // -AVAILABLE matching-generation fleet loaded the incoming account's
+    // persisted preference and staged without ever validating it against that
+    // fleet: account B with a stale persisted id and a fleet snapshot already
+    // in hand kept a removed host as preferred and target indefinitely, since
+    // no later fleet event was owed. The rule is one rule - "the preferred
+    // host is not in the account's fleet" - so it runs wherever the fleet is
+    // adopted.
+    const cleared = this.clearPreferredOutsideFleet();
+    // The engine's damping state describes the OUTGOING account's hosts.
+    this.usableSince.clear();
+    this.pendingDampingDeadline = null;
+    this.localEnsureFailedUntil = null;
     // One transaction: the state batch is staged first and the trigger after
     // it, so the trigger's revision is strictly above every event of the
     // commit it follows - then both are delivered in that order.
-    this.stage("fleet-shift");
+    this.stage(cleared ? "deregister-clear" : "fleet-shift");
     this.stageReattachRequired();
     this.drain();
   }
@@ -1192,33 +1297,173 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
    */
   private deriveSelection(
     leases: readonly HostLeaseSnapshot[],
+    cause: SelectionChangeCause,
+    now: number,
   ): SelectionState {
     const preferredHostId = this.preferredHostId;
     // M5: the target is the preference, or the local host when there is none.
     const localHostId = this.fleet.localHostId;
+    const targetHostId = preferredHostId ?? localHostId;
+    const desired = this.deriveDesiredEffective(
+      targetHostId,
+      localHostId,
+      leases,
+    );
     return {
       preferredHostId,
-      targetHostId: preferredHostId ?? localHostId,
-      effectiveHostId: this.deriveEffective(
-        preferredHostId,
-        localHostId,
+      targetHostId,
+      effectiveHostId: this.applyDamping(
+        desired,
+        targetHostId,
         leases,
+        cause,
+        now,
       ),
     };
   }
 
-  private deriveEffective(
-    preferredHostId: string | null,
+  /**
+   * Where derivation WANTS to be, before damping decides whether it may move
+   * there yet. Candidate order is D8's: the target, then the local host, then
+   * the most-recently-effective usable remote.
+   */
+  private deriveDesiredEffective(
+    targetHostId: string | null,
     localHostId: string | null,
     leases: readonly HostLeaseSnapshot[],
   ): string | null {
-    if (preferredHostId !== null && this.isUsable(preferredHostId, leases)) {
-      return preferredHostId;
+    // THE D5/M6 HOLD, and the reason derivation is no longer a pure function
+    // of the leases alone. A host that is deliberately cycling keeps serving:
+    // `usable()` excludes `restarting-expected` so such a host is never newly
+    // SELECTED, but the engine must not move OFF one either, or a user
+    // restarting whichever host is currently effective would be thrown onto a
+    // third machine and dragged back 15-30s later. The exemption is a property
+    // of the CURRENT EFFECTIVE lease, not of the preferred host - that is
+    // exactly what M6 corrected.
+    const effectiveHostId = this.selection.effectiveHostId;
+    if (
+      effectiveHostId !== null &&
+      this.leaseFor(effectiveHostId, leases)?.status === "restarting-expected"
+    ) {
+      return effectiveHostId;
+    }
+    if (targetHostId !== null && this.isUsable(targetHostId, leases)) {
+      return targetHostId;
     }
     if (localHostId !== null && this.isUsable(localHostId, leases)) {
       return localHostId;
     }
     return this.mostRecentlyEffectiveUsableRemote(localHostId, leases);
+  }
+
+  /**
+   * M6. Whether the engine may adopt `desired` now, or must keep serving what
+   * it has until that candidate has proved itself.
+   *
+   * Which window applies is decided by the phase the engine is IN when the
+   * switch comes up, which is what the registry's "every candidate switch
+   * while `FailedOver`" means:
+   *
+   *  - OnTarget -> anything: NO window. This is failover itself, and it is
+   *    supposed to be fast - the target is confirmed dead and the user wants
+   *    to keep working.
+   *  - NoHost -> anything: NO window. There is nothing to protect, and making
+   *    a user sit in the ∅ modal for a further 20s to prove a host is really
+   *    back would be damping for its own sake.
+   *  - FailedOver -> ∅: NO window. ∅ is not a stability judgement; it is the
+   *    honest answer when nothing is usable.
+   *  - FailedOver -> the target: the full return window.
+   *  - FailedOver -> another fallback: the minimal window.
+   *
+   * Explicit writes bypass all of it. Activate is valid from any state (M5)
+   * and must land immediately - a user who picks a host in Settings and waits
+   * 20s for the app to obey has been told a window is a bug. Same for the
+   * deregister-clear: the old target is gone from the fleet for good, so
+   * waiting cannot improve the answer.
+   */
+  private applyDamping(
+    desired: string | null,
+    targetHostId: string | null,
+    leases: readonly HostLeaseSnapshot[],
+    cause: SelectionChangeCause,
+    now: number,
+  ): string | null {
+    const effectiveHostId = this.selection.effectiveHostId;
+    if (desired === effectiveHostId) {
+      this.pendingDampingDeadline = null;
+      return desired;
+    }
+    if (
+      cause === "activate" ||
+      cause === "deregister-clear" ||
+      effectiveHostId === null ||
+      effectiveHostId === targetHostId ||
+      desired === null
+    ) {
+      this.pendingDampingDeadline = null;
+      return desired;
+    }
+    // `desired` came out of candidate enumeration over USABLE hosts, so it has
+    // a stability mark; `now` only stands in for the impossible case, where it
+    // reads as "became usable this instant" and holds the move.
+    const usableSince = this.usableSince.get(desired) ?? now;
+    const window =
+      desired === targetHostId
+        ? RETURN_TO_TARGET_STABILITY_MS
+        : FAILOVER_CANDIDATE_STABILITY_MS;
+    const admissibleAt = usableSince + window;
+    if (now >= admissibleAt) {
+      this.pendingDampingDeadline = null;
+      return desired;
+    }
+    // Held back. Recorded so the deadline timer can bring the move in with no
+    // further evidence - without it a target that came back and then went
+    // quiet would never be returned to.
+    this.pendingDampingDeadline = admissibleAt;
+    void leases;
+    return effectiveHostId;
+  }
+
+  private leaseFor(
+    hostId: string,
+    leases: readonly HostLeaseSnapshot[],
+  ): HostLeaseSnapshot | null {
+    return leases.find((entry) => entry.hostId === hostId) ?? null;
+  }
+
+  /**
+   * Maintains {@link usableSince}. Called on every transaction, before
+   * derivation reads it.
+   */
+  private trackUsability(
+    leases: readonly HostLeaseSnapshot[],
+    now: number,
+  ): void {
+    const usable = new Set<string>();
+    for (const lease of leases) {
+      if (!isUsableForSelection(lease)) continue;
+      usable.add(lease.hostId);
+      if (
+        lease.hostId === this.fleet.localHostId &&
+        this.localEnsureInFlight
+      ) {
+        // The local host reads `connecting` right now BECAUSE the engine asked
+        // for it, not because anything observed it - so it accrues no
+        // stability while that request is outstanding. Keeping the mark at
+        // `now` is what makes "ensure never blocks serving a usable candidate"
+        // true: a window already serving a remote cannot have its return
+        // window elapse against a host that is still booting, however long the
+        // boot takes. The clock starts when the provisioning answer does.
+        this.usableSince.set(lease.hostId, now);
+        continue;
+      }
+      if (!this.usableSince.has(lease.hostId)) {
+        this.usableSince.set(lease.hostId, now);
+      }
+    }
+    for (const hostId of Array.from(this.usableSince.keys())) {
+      if (!usable.has(hostId)) this.usableSince.delete(hostId);
+    }
   }
 
   /** A host is usable only if the fleet holds it AND its lease says so. */
@@ -1260,11 +1505,111 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
     this.mruEffectiveHostIds.unshift(hostId);
   }
 
-  private deriveLeases(): readonly HostLeaseSnapshot[] {
-    const now = this.options.clock.now();
+  private deriveLeases(now: number): readonly HostLeaseSnapshot[] {
     return this.fleet.hosts.map((entry) =>
       this.deriveLease(entry.hostId, entry.kind === "local", now),
     );
+  }
+
+  /**
+   * THE ONE SANCTIONED PROCESS ACTION (D14/C5), and the causal fix for the
+   * audit's F4.
+   *
+   * Local provisioning used to be gated on the local host being the SELECTED
+   * target (`canProvision`, `resolveLocalBootIntent`), so with a remote
+   * preferred the local host was deliberately never booted - which made D8's
+   * "local first" candidate systematically absent at exactly the moment
+   * failover needed it. Nothing in the app would boot a deselected local host,
+   * so ∅ was reachable with a perfectly working machine sitting idle. The
+   * engine may now ask for it, and only for it: the registry still never
+   * drives processes, and the rejected alternative (keeping the local host
+   * booted whenever signed in) would charge every deliberate remote user for
+   * an idle host.
+   *
+   * Requested only when derivation genuinely WANTS the local host - it is the
+   * target, or the target cannot serve so local is the next candidate. A
+   * healthy preferred remote leaves the local host alone.
+   *
+   * Returns whether a request was started, because the caller must re-derive:
+   * the request itself changes the local lease.
+   */
+  private requestLocalEnsureIfWanted(
+    leases: readonly HostLeaseSnapshot[],
+    now: number,
+  ): boolean {
+    if (this.localEnsureInFlight) return false;
+    const localHostId = this.fleet.localHostId;
+    if (localHostId === null) return false;
+    const local = this.leaseFor(localHostId, leases);
+    // Only for a host that is actually DOWN. `restarting-expected` already
+    // means a deliberate cycle is under way - the mutation lane, or a restart
+    // tombstone - and a second converge request would fight it.
+    if (local === null || local.status !== "dead") return false;
+    // Provisioning cannot fix a version mismatch; D13 says update, not boot.
+    if (local.dead.reason === "incompatible") return false;
+    const targetHostId = this.preferredHostId ?? localHostId;
+    if (targetHostId !== localHostId && this.isUsable(targetHostId, leases)) {
+      return false;
+    }
+    const cooldownUntil = this.localEnsureFailedUntil;
+    if (cooldownUntil !== null && now < cooldownUntil) return false;
+    this.localEnsureInFlight = true;
+    this.localEnsureFailedUntil = null;
+    // Stamped with the identity that wanted it: a completion arriving after an
+    // account switch describes a fleet this engine no longer has.
+    const generation = this.identityGeneration;
+    void this.options.localHostEnsure.ensureReady().then(
+      (outcome) => {
+        this.completeLocalEnsure(
+          generation,
+          localHostId,
+          outcome.ok,
+          outcome.ok ? "" : outcome.reason,
+        );
+      },
+      (error: unknown) => {
+        this.completeLocalEnsure(generation, localHostId, false, String(error));
+      },
+    );
+    return true;
+  }
+
+  /**
+   * The ensure outcome, surfaced ONLY as the local lease's state (registry
+   * §5) - the port itself carries no state anyone can read, so no surface can
+   * grow a second opinion about provisioning.
+   */
+  private completeLocalEnsure(
+    generation: number,
+    localHostId: string,
+    ok: boolean,
+    reason: string,
+  ): void {
+    if (this.disposed) return;
+    if (generation !== this.identityGeneration) {
+      // The account changed while provisioning ran. Its evidence was wiped
+      // with everything else; adopting this answer now would speak for a fleet
+      // that no longer exists.
+      this.localEnsureInFlight = false;
+      return;
+    }
+    this.localEnsureInFlight = false;
+    if (ok) {
+      // FIRSTHAND proof of life, and legitimately so under invariant 5: this
+      // is not a cloud DTO but the desktop's own provisioning controller
+      // reporting that it converged the host to ready, in-process. Without it
+      // the stale refusal streak would keep the lease `dead` until something
+      // happened to dial the host - and while a remote is serving, nothing
+      // would.
+      this.onHostProvedAlive(localHostId);
+    } else {
+      this.localEnsureFailedUntil =
+        this.options.clock.now() + LOCAL_ENSURE_RETRY_COOLDOWN_MS;
+      this.options.log.warn("[selection-authority] local ensure failed", {
+        reason,
+      });
+    }
+    this.commit("failover");
   }
 
   /**
@@ -1304,11 +1649,29 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
         dead: { reason: "incompatible", detail: compat.incompatibility },
       };
     }
+    if (isLocal && this.localEnsureInFlight) {
+      // The engine's own provisioning request is in flight (D14). It outranks
+      // the expected-outage arm below deliberately: that arm's signal is the
+      // HostController mutation lane, which THIS request drives, so deferring
+      // to it would render the local host `restarting-expected` - unusable -
+      // and put the ∅ modal in front of a user whose host is being started
+      // for them. `connecting` is the honest non-committal answer, and it is
+      // what registry §5 names. A restart the engine did NOT ask for still
+      // reaches the arm below and still holds.
+      return { hostId, status: "connecting", dead: null };
+    }
     if (this.inExpectedOutage(hostId, isLocal, now)) {
       return { hostId, status: "restarting-expected", dead: null };
     }
     if (this.hasLiveSession(hostId)) {
       return { hostId, status: "ready", dead: null };
+    }
+    if (isLocal && this.localEnsureFailedAt(now)) {
+      // "The ensure path is unavailable or has failed" (registry §5), as lease
+      // state - which is what makes the ∅ definitions one. Below the
+      // live-session arm on purpose: if a session exists the host is alive
+      // whatever an earlier provisioning attempt concluded.
+      return { hostId, status: "dead", dead: { reason: "offline" } };
     }
     if (
       evidence !== null &&
@@ -1326,6 +1689,12 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
       };
     }
     return { hostId, status: "connecting", dead: null };
+  }
+
+  /** Whether a failed ensure is still holding the local lease dead. */
+  private localEnsureFailedAt(now: number): boolean {
+    const until = this.localEnsureFailedUntil;
+    return until !== null && now < until;
   }
 
   private inExpectedOutage(
@@ -1361,6 +1730,17 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
         consider(this.localOutageStartedAt + LOCAL_EXPECTED_OUTAGE_CEILING_MS);
       }
     }
+    // A damped move completes on TIME, not on evidence: the target came back
+    // and then went quiet, which is the normal shape of a recovery. Without
+    // this the return-to-target window would only ever be checked when some
+    // unrelated report happened to arrive.
+    const damping = this.pendingDampingDeadline;
+    if (damping !== null) consider(damping);
+    // A failed ensure holds the local lease dead for a cooldown; the lapse is
+    // a lease change with no new evidence behind it, and it is what lets the
+    // engine ask again.
+    const ensureCooldown = this.localEnsureFailedUntil;
+    if (ensureCooldown !== null) consider(ensureCooldown);
     return earliest;
   }
 
@@ -1433,8 +1813,20 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
     // late. Emission order is still selection-then-leases (consecutive
     // revisions), so a client never sees leases for a selection it has not
     // been told about.
-    const leases = this.deriveLeases();
-    const selection = this.deriveSelection(leases);
+    const now = this.options.clock.now();
+    // TWO PASSES, because the two answers depend on each other: the ensure
+    // decision needs the leases to know whether the local host is down and
+    // whether the target can serve, and the leases then need to reflect that a
+    // request is in flight. Deriving twice is cheap (a map over the fleet) and
+    // keeps both answers from the same instant; the alternative - deciding
+    // ensure from raw evidence - would duplicate the arm order that IS the
+    // evidence hierarchy.
+    const initialLeases = this.deriveLeases(now);
+    const leases = this.requestLocalEnsureIfWanted(initialLeases, now)
+      ? this.deriveLeases(now)
+      : initialLeases;
+    this.trackUsability(leases, now);
+    const selection = this.deriveSelection(leases, cause, now);
     if (!selectionEquals(selection, this.selection)) {
       const previousEffectiveHostId = this.selection.effectiveHostId;
       this.selection = selection;
@@ -1460,7 +1852,7 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
         event: { revision: this.nextRevision(), change: leases },
       });
     }
-    this.armDeadlineTimer(this.options.clock.now());
+    this.armDeadlineTimer(now);
   }
 
   /**

@@ -33,15 +33,19 @@
  * detail from the transport error it just handled. There is no argument you
  * can pass that turns a directory verdict into a refusal.
  *
- * ## Producers (wired by later tickets)
+ * ## Producers
  *
- * P1.1 lands the kernel, its inventory and its attach choreography. The call
- * sites that will feed it are named here so the wiring is a matter of record:
- * the remote session's connect loop (`host-transport/remote/remote-session.ts`
- * - one `reportDial*` per attempt generation, `sessionEstablished` at its
- * ready boundary, `sessionLost` when a connection drops), the local WS dial,
- * the compat probe (`reportCompatVerdict`), and P1.4's liveness-plane
- * tombstone observer (`reportRestartIntent`).
+ * P1.1 landed the kernel, its inventory and its attach choreography with the
+ * producers deliberately unwired; P1.3 wired them through
+ * {@link TransportEvidenceReporter}, which this class declares `implements`
+ * against so a signature drift fails the build rather than silently orphaning
+ * a producer. The transports feeding it are the remote session's connect loop
+ * (`host-transport/remote/remote-session.ts` - one `reportDial*` per connect
+ * generation, `sessionEstablished` at its ready boundary, `sessionLost` at its
+ * teardown funnel), the local WS transport's refcounted per-host connectivity
+ * (`host-transport/ws-rpc-client.ts`), and the compat probe
+ * (`reportCompatVerdict`). `reportRestartIntent` still has no producer until
+ * P1.4's liveness-plane tombstone observer.
  */
 import {
   SELECTION_AUTHORITY_CONTRACT_VERSION,
@@ -56,6 +60,7 @@ import {
   type SelectionTransportKind,
 } from "./selection-authority-contract";
 import { type AuthorityLog } from "./selection-authority-engine";
+import { type TransportEvidenceReporter } from "./transport-evidence";
 
 /**
  * What the window renders from. `selection` is null until the first attach
@@ -68,6 +73,15 @@ export interface SelectionKernelSnapshot {
   readonly targetHostId: string | null;
   readonly effectiveHostId: string | null;
   readonly leases: readonly HostLeaseSnapshot[];
+  /**
+   * The authority revision this window's SELECTION slice reflects, or -1 while
+   * detached. Published because a consumer that also watches the raw event
+   * stream (the bridge does, for `cause`, which no snapshot carries) otherwise
+   * has no way to tell whether the kernel has already adopted the revision it
+   * is holding - and acting on an event the window has not applied yet
+   * narrates a move against stale state.
+   */
+  readonly selectionRevision: number;
 }
 
 const DETACHED_SNAPSHOT: SelectionKernelSnapshot = {
@@ -76,6 +90,7 @@ const DETACHED_SNAPSHOT: SelectionKernelSnapshot = {
   targetHostId: null,
   effectiveHostId: null,
   leases: [],
+  selectionRevision: -1,
 };
 
 export interface SelectionEvidenceKernelOptions {
@@ -98,7 +113,7 @@ interface KernelSessionRecord {
  * the authority subscriptions and performs the attach that carries the
  * window's complete live-session inventory.
  */
-export class SelectionEvidenceKernel {
+export class SelectionEvidenceKernel implements TransportEvidenceReporter {
   private readonly options: SelectionEvidenceKernelOptions;
   /**
    * The window's live sessions, keyed by the reporter-generated sessionId.
@@ -424,6 +439,7 @@ export class SelectionEvidenceKernel {
       targetHostId: change.targetHostId,
       effectiveHostId: change.effectiveHostId,
       leases: this.current.leases,
+      selectionRevision: revision,
     });
   }
 
@@ -460,6 +476,7 @@ export class SelectionEvidenceKernel {
         ? snapshot.effectiveHostId
         : this.current.effectiveHostId,
       leases: leasesAreFresher ? snapshot.leases : this.current.leases,
+      selectionRevision: this.appliedSelectionRevision,
     });
   }
 

@@ -2,7 +2,10 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { config } from "../../config";
-import type { PreferredHostStore } from "@traycer-clients/shared/host-selection/selection-authority-engine";
+import type {
+  PreferredHostSaveResult,
+  PreferredHostStore,
+} from "@traycer-clients/shared/host-selection/selection-authority-engine";
 import { environmentSubdir } from "../host/host-paths";
 
 const PREFERRED_HOST_STATE_VERSION = 1;
@@ -45,6 +48,12 @@ export class DesktopPreferredHostStore implements PreferredHostStore {
   private readonly logger: PreferredHostStoreLogger;
   /** Lazily read once, then authoritative: this process is the only writer. */
   private byIdentity: Map<string, string> | null = null;
+  /**
+   * Identity keys whose sign-out wipe could not be written. `load` refuses to
+   * serve them and every call re-attempts, so a bucket promised wiped is never
+   * handed back even while the disk lags behind the promise.
+   */
+  private readonly pendingWipes = new Set<string>();
 
   constructor(filePath: string, logger: PreferredHostStoreLogger) {
     this.filePath = filePath;
@@ -53,19 +62,84 @@ export class DesktopPreferredHostStore implements PreferredHostStore {
 
   load(identityKey: string | null): string | null {
     if (identityKey === null) return null;
+    this.drainPendingWipes();
+    if (this.pendingWipes.has(identityKey)) {
+      // Promised wiped, disk still lagging. Serving the stale value would make
+      // the sign-out wipe a lie for exactly as long as the disk stays broken -
+      // and G1's whole point is that the next user never sees the previous
+      // one's choice. `drainPendingWipes` above has already re-attempted the
+      // write; this answer holds whether or not it succeeded.
+      return null;
+    }
     return this.read().get(identityKey) ?? null;
   }
 
-  save(identityKey: string | null, hostId: string | null): void {
-    if (identityKey === null) return;
-    const entries = this.read();
-    if (hostId === null) {
-      if (!entries.delete(identityKey)) return;
-    } else {
-      if (entries.get(identityKey) === hostId) return;
-      entries.set(identityKey, hostId);
+  /**
+   * COPY, PERSIST, SWAP - in that order, and the order is the fix.
+   *
+   * `read()` hands back the LIVE cache (this process is the only writer, so it
+   * is authoritative), so mutating it before writing published the new
+   * preference to the authority whether or not the disk agreed. Worse, the
+   * no-op fast paths then read that mutated cache: an identical retry after a
+   * failed write short-circuited on memory that already "had" the value, so
+   * the user's second attempt wrote nothing and the failure latched until
+   * restart. Building a copy leaves the cache at the last DURABLE state, which
+   * is what makes the retry a real retry.
+   */
+  save(
+    identityKey: string | null,
+    hostId: string | null,
+  ): PreferredHostSaveResult {
+    if (identityKey === null) {
+      // Signed out: there is no account whose choice could be remembered, so
+      // there is nothing to fail at.
+      return { ok: true };
     }
-    this.write(entries);
+    this.drainPendingWipes();
+    const current = this.read();
+    const next = new Map(current);
+    if (hostId === null) {
+      if (!next.delete(identityKey)) return { ok: true };
+    } else {
+      if (next.get(identityKey) === hostId) return { ok: true };
+      next.set(identityKey, hostId);
+    }
+    const written = this.write(next);
+    if (!written.ok) {
+      if (hostId === null) {
+        // A wipe that did not reach the disk. Remember it so `load` refuses to
+        // serve the bucket meanwhile and every later call re-attempts.
+        this.pendingWipes.add(identityKey);
+      }
+      return written;
+    }
+    this.pendingWipes.delete(identityKey);
+    this.byIdentity = next;
+    return { ok: true };
+  }
+
+  /**
+   * Best-effort retry of wipes whose write failed, run at the top of every
+   * store call. No timer and no backoff: the store has no lifecycle of its
+   * own, and the calls that matter (a load during the next transition, the
+   * next Activate) are exactly the moments the answer is about to be used.
+   */
+  private drainPendingWipes(): void {
+    if (this.pendingWipes.size === 0) return;
+    const current = this.read();
+    const next = new Map(current);
+    let changed = false;
+    for (const key of this.pendingWipes) {
+      if (next.delete(key)) changed = true;
+    }
+    if (!changed) {
+      // Already absent from the durable set - the wipe is honoured.
+      this.pendingWipes.clear();
+      return;
+    }
+    if (!this.write(next).ok) return;
+    this.byIdentity = next;
+    this.pendingWipes.clear();
   }
 
   private read(): Map<string, string> {
@@ -103,22 +177,31 @@ export class DesktopPreferredHostStore implements PreferredHostStore {
     return entries;
   }
 
-  private write(entries: Map<string, string>): void {
+  /**
+   * Write-then-rename, and the failure is REPORTED rather than swallowed. No
+   * `fsync`: the fault this defends against is a write that could not happen
+   * at all (a full or read-only disk, a permissions change) being reported as
+   * success - not power loss, whose window the rename already narrows.
+   */
+  private write(entries: Map<string, string>): PreferredHostSaveResult {
     const payload = JSON.stringify({
       version: PREFERRED_HOST_STATE_VERSION,
       byIdentity: Object.fromEntries(entries),
     });
     try {
       mkdirSync(dirname(this.filePath), { recursive: true });
-      // Write-then-rename: a crash mid-write must not leave a truncated file
-      // that reads as "no preference" on the next launch.
+      // A crash mid-write must not leave a truncated file that reads as "no
+      // preference" on the next launch.
       const temporaryPath = `${this.filePath}.tmp`;
       writeFileSync(temporaryPath, payload, "utf8");
       renameSync(temporaryPath, this.filePath);
+      return { ok: true };
     } catch (error: unknown) {
+      const reason = String(error);
       this.logger.warn("[selection-preferred] state write failed", {
-        error: String(error),
+        error: reason,
       });
+      return { ok: false, reason };
     }
   }
 }

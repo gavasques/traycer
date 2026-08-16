@@ -35,6 +35,7 @@ import {
 import {
   SelectionAuthorityEngineImpl,
   type AuthorityLog,
+  type PreferredHostSaveResult,
   type PreferredHostStore,
   type SelectionAuthorityEngineOptions,
 } from "./selection-authority-engine";
@@ -210,13 +211,17 @@ export class InMemoryPreferredHostStore implements PreferredHostStore {
     return this.byIdentity.get(identityKey) ?? null;
   }
 
-  save(identityKey: string | null, hostId: string | null): void {
-    if (identityKey === null) return;
+  save(
+    identityKey: string | null,
+    hostId: string | null,
+  ): PreferredHostSaveResult {
+    if (identityKey === null) return { ok: true };
     if (hostId === null) {
       this.byIdentity.delete(identityKey);
-      return;
+      return { ok: true };
     }
     this.byIdentity.set(identityKey, hostId);
+    return { ok: true };
   }
 }
 

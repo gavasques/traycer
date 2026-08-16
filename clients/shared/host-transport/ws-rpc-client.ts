@@ -14,6 +14,7 @@ import {
 import { RELEASED_FLOOR_METHOD_NAMES } from "@traycer/protocol/host/released-floor";
 import { CredentialLeaseReleasedError } from "@traycer/protocol/auth/request-context";
 import type { OpenFrameBearerSource } from "@traycer-clients/shared/auth/bearer-source";
+import type { TransportEvidenceReporter } from "@traycer-clients/shared/host-selection/transport-evidence";
 import {
   HostRequestAbortedError,
   HostRpcError,
@@ -133,6 +134,13 @@ export interface WsRpcClientOptions<Registry extends VersionedRpcRegistry> {
   readonly dialTimeoutMs: number;
   readonly frameTimeoutMs: number;
   /**
+   * Where this transport's dial outcomes and per-host connectivity go
+   * (redesign P1.3). See {@link LocalHostLiveness} for why sessions here are
+   * refcounted connectivity episodes rather than one per RPC. Shells with no
+   * selection authority to feed pass `NO_TRANSPORT_EVIDENCE`.
+   */
+  readonly evidence: TransportEvidenceReporter;
+  /**
    * How long after `openAck` this deployment's hosts are still expected to be
    * sitting in `awaitingRequest`, and therefore still able to emit their
    * no-dispatch attestation. Production clients pass
@@ -243,6 +251,8 @@ export class WsRpcClient<
   private readonly dialTimeoutMs: number;
   private readonly frameTimeoutMs: number;
   private readonly hostAttestationWindowMs: number;
+  private readonly evidence: TransportEvidenceReporter;
+  private readonly liveness: LocalHostLiveness;
 
   constructor(options: WsRpcClientOptions<Registry>) {
     this.registry = options.registry;
@@ -251,6 +261,8 @@ export class WsRpcClient<
     this.dialTimeoutMs = options.dialTimeoutMs;
     this.frameTimeoutMs = options.frameTimeoutMs;
     this.hostAttestationWindowMs = options.hostAttestationWindowMs;
+    this.evidence = options.evidence;
+    this.liveness = new LocalHostLiveness(options.evidence);
   }
 
   async request<Method extends keyof Registry & string>(
@@ -300,6 +312,9 @@ export class WsRpcClient<
       hostAttestationWindowMs: this.hostAttestationWindowMs,
       requestId,
       method,
+      hostId: selected.hostId,
+      evidence: this.evidence,
+      liveness: this.liveness,
     });
     const onAbort = (): void => {
       session.abort();
@@ -852,6 +867,69 @@ interface SessionOptions {
   readonly hostAttestationWindowMs: number;
   readonly requestId: string;
   readonly method: string;
+  /** The host this socket is dialing, for the selection authority's evidence. */
+  readonly hostId: string;
+  readonly evidence: TransportEvidenceReporter;
+  /** Per-host connectivity bookkeeping shared across this client's sockets. */
+  readonly liveness: LocalHostLiveness;
+}
+
+/**
+ * The local transport's connectivity, as the selection authority needs to see
+ * it (redesign P1.3, Q3 ruling (c)).
+ *
+ * This transport opens a FRESH socket per RPC, so a naive per-socket
+ * announcement would make the authority's session inventory flicker once per
+ * request. That is not merely noisy - a live session is the authority's
+ * strongest evidence class and suppresses death accumulation entirely, so
+ * announcing and retracting it thousands of times a day would make death
+ * suppression a race against RPC timing, at exactly the moments evidence
+ * matters most.
+ *
+ * So sessions here track CONNECTIVITY, not requests: the client refcounts the
+ * host's open sockets, announcing one logical session on the 0 -> 1 edge and
+ * retracting it on 1 -> 0. Between those edges an idle gap of a few
+ * milliseconds between two RPCs no longer reads as the host dying and coming
+ * back. Dial ATTEMPTS stay per-socket - they are genuine per-attempt evidence,
+ * and each carries the call's own request id.
+ */
+class LocalHostLiveness {
+  private readonly evidence: TransportEvidenceReporter;
+  private readonly openSocketsByHost = new Map<string, number>();
+  private readonly announcedByHost = new Map<string, string>();
+  private nextSessionSeq = 0;
+
+  constructor(evidence: TransportEvidenceReporter) {
+    this.evidence = evidence;
+  }
+
+  socketOpened(hostId: string): void {
+    const next = (this.openSocketsByHost.get(hostId) ?? 0) + 1;
+    this.openSocketsByHost.set(hostId, next);
+    if (next > 1) return;
+    this.nextSessionSeq += 1;
+    // Scoped to this client instance's counter rather than to the request id,
+    // so the id names the CONNECTIVITY episode it belongs to and not whichever
+    // RPC happened to open the first socket of it.
+    const sessionId = `local-ws:s${this.nextSessionSeq}`;
+    this.announcedByHost.set(hostId, sessionId);
+    this.evidence.sessionEstablished(hostId, sessionId, "local-ws");
+  }
+
+  socketClosed(hostId: string): void {
+    const current = this.openSocketsByHost.get(hostId);
+    if (current === undefined) return;
+    const next = current - 1;
+    if (next > 0) {
+      this.openSocketsByHost.set(hostId, next);
+      return;
+    }
+    this.openSocketsByHost.delete(hostId);
+    const sessionId = this.announcedByHost.get(hostId);
+    if (sessionId === undefined) return;
+    this.announcedByHost.delete(hostId);
+    this.evidence.sessionLost(hostId, sessionId, "local-ws");
+  }
 }
 
 interface Session {
@@ -882,11 +960,60 @@ interface Session {
  * channel.
  */
 function openSession(options: SessionOptions): Session {
-  const { socket, dialTimeoutMs, hostAttestationWindowMs, requestId, method } =
-    options;
+  const {
+    socket,
+    dialTimeoutMs,
+    hostAttestationWindowMs,
+    requestId,
+    method,
+    hostId,
+    evidence,
+    liveness,
+  } = options;
 
   let opened = false;
   let closed = false;
+  /**
+   * Exactly-once bookkeeping for the two evidence duties this socket owes the
+   * selection authority. `livenessEnded` guards the refcount decrement, which
+   * must pair with its increment no matter which of the three teardown paths
+   * runs (`onclose`, the caller's `close()`, an authority `abort()`) - a
+   * missed decrement pins a phantom live session that suppresses every later
+   * death verdict for this host.
+   */
+  let livenessStarted = false;
+  let livenessEnded = false;
+
+  const endLiveness = (): void => {
+    if (!livenessStarted || livenessEnded) return;
+    livenessEnded = true;
+    liveness.socketClosed(hostId);
+  };
+
+  /**
+   * One dial outcome per socket, whichever event decides it first. The
+   * authority deduplicates by attempt id anyway, but reporting once keeps the
+   * call sites honest about what an ATTEMPT is: `onerror` is normally followed
+   * by `onclose`, and both describe the same failed dial.
+   */
+  let dialOutcomeReported = false;
+  const reportDialOutcome = (outcome: "success" | "refusal" | "timeout"): void => {
+    if (dialOutcomeReported) return;
+    dialOutcomeReported = true;
+    if (outcome === "success") {
+      evidence.reportDialSuccess(hostId, requestId, "local-ws");
+      return;
+    }
+    if (outcome === "timeout") {
+      evidence.reportDialTimeout(hostId, requestId, "local-ws");
+      return;
+    }
+    // A close before the socket ever opened IS host-plane evidence: the
+    // connection was refused, or something answered and hung up before the
+    // handshake. `refusalDetail` is null - `plan-restricted` is a remote
+    // entitlement verdict with a single provenance and cannot arise here.
+    evidence.reportDialRefusal(hostId, requestId, "local-ws", null);
+  };
   // Flipped the instant the `request` frame is handed to `send`. Before this
   // point every transient failure is provably pre-send (the host never saw the
   // call), so it surfaces as a `RetryableTransportError`; after it, the same
@@ -1083,6 +1210,12 @@ function openSession(options: SessionOptions): Session {
 
   socket.onopen = () => {
     opened = true;
+    livenessStarted = true;
+    // Success first, then the announcement: the success clears this host's
+    // death streak, and the live session then makes later failures inert until
+    // it is retracted.
+    reportDialOutcome("success");
+    liveness.socketOpened(hostId);
     if (dialResolver !== null) {
       const resolver = dialResolver;
       dialResolver = null;
@@ -1151,7 +1284,9 @@ function openSession(options: SessionOptions): Session {
 
   socket.onclose = (event: WebSocketCloseEvent) => {
     closed = true;
+    endLiveness();
     if (!opened) {
+      reportDialOutcome("refusal");
       failAll(
         transientFailure(
           `WebSocket closed before open (code=${event.code}, reason='${event.reason}')`,
@@ -1178,6 +1313,7 @@ function openSession(options: SessionOptions): Session {
       }
       return new Promise<void>((resolve, reject) => {
         const timer = setTimeout(() => {
+          reportDialOutcome("timeout");
           failAll(
             transientFailure(
               `WebSocket dial timed out after ${dialTimeoutMs}ms`,
@@ -1243,6 +1379,9 @@ function openSession(options: SessionOptions): Session {
         return;
       }
       closed = true;
+      // Not left to `onclose`: a socket torn down this way may never deliver
+      // one, and the refcount must fall for every socket that raised it.
+      endLiveness();
       try {
         socket.close(1000, "authority-aborted");
       } catch (cause) {
@@ -1255,6 +1394,7 @@ function openSession(options: SessionOptions): Session {
         return;
       }
       closed = true;
+      endLiveness();
       try {
         socket.close(code, reason);
       } catch (cause) {

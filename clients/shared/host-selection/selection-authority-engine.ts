@@ -191,6 +191,13 @@ interface AttachmentRecord {
   readonly tombstonedSessionIds: Set<string>;
   /** Dial dedup within the incarnation (mechanism 5). */
   readonly seenAttemptIds: Set<string>;
+  /**
+   * hostId -> sessionId -> the authority's observation ordinal, scoped to
+   * THIS incarnation because that is the scope in which `sessionId` is unique.
+   * The ordinals are drawn from one global counter, so ranks remain
+   * comparable across incarnations.
+   */
+  readonly sessionOrdinals: Map<string, Map<string, number>>;
 }
 
 /**
@@ -241,6 +248,18 @@ function emptyHostEvidence(): HostEvidence {
   };
 }
 
+/** One staged event, awaiting delivery in the engine's FIFO drain. */
+type QueuedAuthorityEvent =
+  | {
+      readonly kind: "selection";
+      readonly event: SelectionRevisioned<SelectionChange>;
+    }
+  | {
+      readonly kind: "leases";
+      readonly event: SelectionRevisioned<readonly HostLeaseSnapshot[]>;
+    }
+  | { readonly kind: "reattach"; readonly event: SelectionReattachRequired };
+
 /** The selection tuple the engine currently holds. */
 interface SelectionState {
   readonly preferredHostId: string | null;
@@ -276,10 +295,6 @@ const UNSET_IDENTITY_GENERATION = -1;
  */
 export function isUsableForSelection(lease: HostLeaseSnapshot): boolean {
   return lease.status !== "dead" && lease.status !== "restarting-expected";
-}
-
-function sessionKey(hostId: string, sessionId: string): string {
-  return `${hostId}#${sessionId}`;
 }
 
 function attemptKey(incarnationId: string, attemptId: string): string {
@@ -360,8 +375,12 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
 
   private readonly reporters = new Map<string, ReporterRecord>();
   private readonly evidence = new Map<string, HostEvidence>();
-  /** (hostId, sessionId) -> the authority's own observation ordinal. */
-  private readonly sessionOrdinals = new Map<string, number>();
+  /**
+   * The next observation ordinal to hand out. The ordinals themselves live on
+   * the ATTACHMENT that observed them (see {@link AttachmentRecord}); this
+   * counter is global so ranks stay comparable across incarnations, which is
+   * what lets a newer window's verdict supersede an older window's.
+   */
   private nextSessionOrdinal = 0;
   /**
    * Every (hostId, tombstoneId) ever observed, retained for the authority
@@ -387,6 +406,13 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
   >();
 
   private readonly portSubscriptions: SelectionSubscription[] = [];
+  /**
+   * Staged-but-undelivered events, in revision order. Listeners run consumer
+   * code synchronously and may re-enter the engine, so delivery is a separate
+   * FIFO drain rather than an inline call - see {@link commit}.
+   */
+  private readonly eventQueue: QueuedAuthorityEvent[] = [];
+  private draining = false;
   private disposed = false;
 
   constructor(options: SelectionAuthorityEngineOptions) {
@@ -458,15 +484,29 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
       };
     }
     const incarnationId = this.options.newIncarnationId();
-    record.attachment = {
+    const attachment: AttachmentRecord = {
       incarnationId,
       attachSeq: request.attachSeq,
-      sessions: this.inventoryFrom(request.liveSessions),
+      sessions: new Map<string, LiveSessionRecord>(),
       tombstonedSessionIds: new Set<string>(),
       seenAttemptIds: new Set<string>(),
+      sessionOrdinals: new Map<string, Map<string, number>>(),
     };
-    this.commit("failover");
-    return { ok: true, incarnationId, snapshot: this.snapshot() };
+    record.attachment = attachment;
+    this.installInventory(attachment, request.liveSessions);
+    // SEAL BEFORE DELIVERY. The result is captured between staging and
+    // draining, so a listener that re-enters (an identity transition driven
+    // from a lease callback, say) mints its `reattachRequired` at a revision
+    // ABOVE this snapshot - which is what lets the client keep the trigger
+    // instead of discarding it as already covered.
+    this.stage("failover");
+    const result: SelectionAttachResult = {
+      ok: true,
+      incarnationId,
+      snapshot: this.snapshot(),
+    };
+    this.drain();
+    return result;
   }
 
   refuseMalformedAttach(reporterId: string, attachSeq: number): boolean {
@@ -512,7 +552,7 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
         this.ingestSession(attachment, report);
         break;
       case "compat":
-        this.ingestCompat(report);
+        this.ingestCompat(attachment, report);
         break;
       case "restart-intent":
         this.ingestRestartIntent(report);
@@ -645,35 +685,52 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
     return true;
   }
 
-  private inventoryFrom(
+  private installInventory(
+    attachment: AttachmentRecord,
     liveSessions: readonly LiveSessionAnnouncement[],
-  ): Map<string, LiveSessionRecord> {
-    const sessions = new Map<string, LiveSessionRecord>();
+  ): void {
     for (const announcement of liveSessions) {
-      sessions.set(announcement.sessionId, {
+      attachment.sessions.set(announcement.sessionId, {
         hostId: announcement.hostId,
         transportKind: announcement.transportKind,
       });
-      this.observeSession(announcement.hostId, announcement.sessionId);
+      this.observeSession(
+        attachment,
+        announcement.hostId,
+        announcement.sessionId,
+      );
       this.onHostProvedAlive(announcement.hostId);
     }
-    return sessions;
   }
 
   /**
    * Assigns a host's session its observation ordinal the first time the
-   * authority hears of it - from an attach inventory, a session transition,
-   * or a compat verdict naming it. This ordering, not any version string, is
-   * what makes compat freshness survive downgrades and same-version restarts
-   * (mechanism 6).
+   * REPORTING INCARNATION names it - from an attach inventory, a session
+   * transition, or a compat verdict naming it. This ordering, not any version
+   * string, is what makes compat freshness survive downgrades and
+   * same-version restarts (mechanism 6).
+   *
+   * Scoped to the attachment because `sessionId` is only unique WITHIN an
+   * incarnation (contract, {@link SelectionSessionEvidence}). Keyed globally,
+   * two windows that both call their connection `"s1"` shared one ordinal, so
+   * a delayed incompatibility probed on window A's long-dead `s1` tied window
+   * B's verdict on its own live `s1` and - latest-received wins on a tie -
+   * flipped B's lease to dead. Nesting the map also removes the last place a
+   * delimiter inside an id could forge a collision.
    */
-  private observeSession(hostId: string, sessionId: string): number {
-    const key = sessionKey(hostId, sessionId);
-    const existing = this.sessionOrdinals.get(key);
+  private observeSession(
+    attachment: AttachmentRecord,
+    hostId: string,
+    sessionId: string,
+  ): number {
+    const perHost =
+      attachment.sessionOrdinals.get(hostId) ?? new Map<string, number>();
+    attachment.sessionOrdinals.set(hostId, perHost);
+    const existing = perHost.get(sessionId);
     if (existing !== undefined) return existing;
     const ordinal = this.nextSessionOrdinal;
     this.nextSessionOrdinal += 1;
-    this.sessionOrdinals.set(key, ordinal);
+    perHost.set(sessionId, ordinal);
     return ordinal;
   }
 
@@ -758,17 +815,22 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
       hostId: report.hostId,
       transportKind: report.transportKind,
     });
-    this.observeSession(report.hostId, report.sessionId);
+    this.observeSession(attachment, report.hostId, report.sessionId);
     this.onHostProvedAlive(report.hostId);
   }
 
   private ingestCompat(
+    attachment: AttachmentRecord,
     report: Extract<SelectionEvidenceReport, { kind: "compat" }>,
   ): void {
     const rank =
       report.probedOnSessionId === null
         ? -1
-        : this.observeSession(report.hostId, report.probedOnSessionId);
+        : this.observeSession(
+            attachment,
+            report.hostId,
+            report.probedOnSessionId,
+          );
     const evidence = this.hostEvidence(report.hostId);
     const current = evidence.compat;
     // A verdict probed on a session the authority observed later supersedes
@@ -865,9 +927,17 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
     }
     this.evidence.clear();
     this.seenTombstoneIds.clear();
-    this.sessionOrdinals.clear();
     this.nextSessionOrdinal = 0;
-    this.localOutageStartedAt = null;
+    // The local expected-outage hold is PORT STATE, not evidence: the
+    // HostController mutation lane does not stop being in flight because the
+    // signed-in user changed. Clearing it blindly used to drop the hold with
+    // no edge left to restore it, so a deliberate local restart spanning a
+    // sign-out would derive as connecting/dead and P1.3 would fail over off a
+    // host that is coming back. Re-sample instead, keeping the original start
+    // so the ceiling still counts from when the lane actually went busy.
+    this.localOutageStartedAt = this.options.localOutage.inExpectedOutage()
+      ? (this.localOutageStartedAt ?? this.options.clock.now())
+      : null;
     const available = this.options.fleet.snapshot();
     this.fleet =
       available.identityGeneration === this.identityGeneration
@@ -879,8 +949,12 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
     if (this.fleet.revision > this.appliedFleetRevision) {
       this.appliedFleetRevision = this.fleet.revision;
     }
-    this.commit("fleet-shift");
-    this.emitReattachRequired();
+    // One transaction: the state batch is staged first and the trigger after
+    // it, so the trigger's revision is strictly above every event of the
+    // commit it follows - then both are delivered in that order.
+    this.stage("fleet-shift");
+    this.stageReattachRequired();
+    this.drain();
   }
 
   private applyLocalOutage(inExpectedOutage: boolean): void {
@@ -1050,70 +1124,117 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
   // -------------------------------------------------------------- emission
 
   /**
-   * Derives and emits one transaction's events. A transaction that moves both
-   * slices commits at CONSECUTIVE revisions (mechanism 1) - the selection
-   * event first, so a client applying them in revision order never sees
-   * leases for a selection it has not been told about.
+   * Stages one transaction and then delivers whatever is queued.
    *
-   * `cause` rides the selection event only. Sites that cannot move the
-   * selection tuple pass `"failover"`: in P1.1 the selection depends solely
-   * on preferred + fleet, so evidence-driven emissions are structurally
-   * impossible, and when P1.3 makes `effective` evidence-derived, a move
-   * caused by evidence IS a failover (P1.3 refines the recovery arm).
+   * COMMIT AND DELIVERY ARE SEPARATE STEPS, and that separation is
+   * load-bearing rather than stylistic. Listeners run arbitrary consumer code
+   * synchronously - in the browser/dev topology the in-process client hands
+   * events straight to the renderer - so a listener can re-enter the engine
+   * (drive the identity source, publish a fleet snapshot) in the middle of a
+   * delivery. When emission happened inline, that re-entrancy could:
+   *
+   *  - interleave a nested transaction's revisions BETWEEN the parent's
+   *    selection and leases events, breaking the contract's consecutive
+   *    sibling pair; and
+   *  - mint the identity transition's `reattachRequired` BEFORE `attach`
+   *    captured its result snapshot, so the snapshot's revision already
+   *    covered the trigger and the buffering client discarded it as
+   *    stale - leaving that client holding a voided incarnation with no
+   *    re-attach ever to follow.
+   *
+   * Staging allocates every revision for the transaction up front and appends
+   * the events to one FIFO queue; the drain delivers them in that order, and a
+   * nested commit appends AFTER the batch in flight instead of splitting it.
    */
   private commit(cause: SelectionChangeCause): void {
+    this.stage(cause);
+    this.drain();
+  }
+
+  /**
+   * Mutates state and QUEUES the transaction's events. Delivers nothing, so a
+   * caller that must seal a result against re-entrancy (see `attach`) can read
+   * its snapshot between staging and draining.
+   */
+  private stage(cause: SelectionChangeCause): void {
     const selection = this.deriveSelection();
     if (!selectionEquals(selection, this.selection)) {
       const previousEffectiveHostId = this.selection.effectiveHostId;
       this.selection = selection;
-      this.emitSelection({
-        revision: this.nextRevision(),
-        change: {
-          preferredHostId: selection.preferredHostId,
-          targetHostId: selection.targetHostId,
-          effectiveHostId: selection.effectiveHostId,
-          previousEffectiveHostId,
-          cause,
+      this.eventQueue.push({
+        kind: "selection",
+        event: {
+          revision: this.nextRevision(),
+          change: {
+            preferredHostId: selection.preferredHostId,
+            targetHostId: selection.targetHostId,
+            effectiveHostId: selection.effectiveHostId,
+            previousEffectiveHostId,
+            cause,
+          },
         },
       });
     }
     const leases = this.deriveLeases();
     if (!leasesEqual(leases, this.leases)) {
       this.leases = leases;
-      this.emitLeases({ revision: this.nextRevision(), change: leases });
+      this.eventQueue.push({
+        kind: "leases",
+        event: { revision: this.nextRevision(), change: leases },
+      });
     }
     this.armDeadlineTimer(this.options.clock.now());
+  }
+
+  /**
+   * The MANDATORY post-transition re-attach trigger, staged at its OWN fresh
+   * unique revision after its transaction's state events (§3b) so one client
+   * high-water mark still orders all three event kinds and no state sibling
+   * can shadow it.
+   */
+  private stageReattachRequired(): void {
+    this.eventQueue.push({
+      kind: "reattach",
+      event: { revision: this.nextRevision() },
+    });
+  }
+
+  /** Delivers the queue in FIFO order; re-entrant calls are absorbed. */
+  private drain(): void {
+    if (this.draining) return;
+    this.draining = true;
+    try {
+      for (;;) {
+        const queued = this.eventQueue.shift();
+        if (queued === undefined) return;
+        this.deliverQueued(queued);
+      }
+    } finally {
+      this.draining = false;
+    }
+  }
+
+  private deliverQueued(queued: QueuedAuthorityEvent): void {
+    if (queued.kind === "selection") {
+      for (const listener of Array.from(this.selectionListeners)) {
+        this.deliver(() => listener(queued.event), "selectionChanged");
+      }
+      return;
+    }
+    if (queued.kind === "leases") {
+      for (const listener of Array.from(this.leaseListeners)) {
+        this.deliver(() => listener(queued.event), "leasesChanged");
+      }
+      return;
+    }
+    for (const listener of Array.from(this.reattachListeners)) {
+      this.deliver(() => listener(queued.event), "reattachRequired");
+    }
   }
 
   private nextRevision(): number {
     this.revision += 1;
     return this.revision;
-  }
-
-  private emitSelection(event: SelectionRevisioned<SelectionChange>): void {
-    for (const listener of Array.from(this.selectionListeners)) {
-      this.deliver(() => listener(event), "selectionChanged");
-    }
-  }
-
-  private emitLeases(
-    event: SelectionRevisioned<readonly HostLeaseSnapshot[]>,
-  ): void {
-    for (const listener of Array.from(this.leaseListeners)) {
-      this.deliver(() => listener(event), "leasesChanged");
-    }
-  }
-
-  /**
-   * The MANDATORY post-transition re-attach trigger, at its own fresh unique
-   * revision so one client high-water mark still orders all three event kinds
-   * and no state sibling can shadow it (§3b).
-   */
-  private emitReattachRequired(): void {
-    const event: SelectionReattachRequired = { revision: this.nextRevision() };
-    for (const listener of Array.from(this.reattachListeners)) {
-      this.deliver(() => listener(event), "reattachRequired");
-    }
   }
 
   /** One window's throwing listener must not cost another window its event. */

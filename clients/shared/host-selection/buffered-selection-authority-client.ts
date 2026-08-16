@@ -114,6 +114,8 @@ export class BufferedSelectionAuthorityClient implements SelectionAuthorityClien
    */
   private highWaterRevision = -1;
   private buffer: BufferedEvent[] = [];
+  /** Evidence produced while the attach claim is in flight; see reportEvidence. */
+  private pendingEvidence: SelectionEvidenceReport[] = [];
 
   private readonly subscriptions: SelectionSubscription[] = [];
   private readonly selectionListeners = new Set<
@@ -176,6 +178,20 @@ export class BufferedSelectionAuthorityClient implements SelectionAuthorityClien
         liveSessions,
       })
       .then((result) => {
+        if (this.phase === "disposed") {
+          // Retired while the claim was in flight (the consumer tore down, or
+          // a rotation replaced this generation). The completion belongs to a
+          // generation nobody owns any more, so it is never installed and
+          // never reported as a success - `superseded` is the truthful arm.
+          this.log.debug("[selection-client] attach completed after retire", {
+            ok: result.ok,
+          });
+          const retired: SelectionAttachResult = {
+            ok: false,
+            kind: "superseded",
+          };
+          return retired;
+        }
         if (!result.ok) {
           this.log.debug("[selection-client] attach refused", {
             kind: result.kind,
@@ -205,9 +221,35 @@ export class BufferedSelectionAuthorityClient implements SelectionAuthorityClien
       });
   }
 
+  /**
+   * Reports evidence under the accepted incarnation, QUEUEING it while the
+   * attach claim is still in flight.
+   *
+   * The queue is not a nicety. Attach carries a session inventory captured
+   * when the request was built, and the kernel keeps observing its transports
+   * while the claim travels. Dropping reports in that window loses both
+   * directions: a session announced in the inventory but LOST before the claim
+   * landed would stay live in the authority forever - phantom liveness that
+   * suppresses the death counter for that host indefinitely - and a session
+   * ESTABLISHED after capture would be absent from both the inventory and the
+   * dropped report, so refusals would count against a socket that is up.
+   * Queueing in order and flushing after the inventory is installed makes the
+   * window a delay rather than a hole.
+   */
   reportEvidence(report: SelectionEvidenceReport): Promise<void> {
+    if (this.phase === "disposed") return Promise.resolve();
     const incarnationId = this.incarnationId;
-    if (incarnationId === null) return Promise.resolve();
+    if (incarnationId === null) {
+      if (this.attachStarted) this.pendingEvidence.push(report);
+      return Promise.resolve();
+    }
+    return this.send(incarnationId, report);
+  }
+
+  private send(
+    incarnationId: string,
+    report: SelectionEvidenceReport,
+  ): Promise<void> {
     // Rejections are contained here (decision 3): a report racing teardown
     // must never surface as an unhandled rejection in the renderer.
     return this.transport
@@ -217,6 +259,19 @@ export class BufferedSelectionAuthorityClient implements SelectionAuthorityClien
           error: String(error),
         });
       });
+  }
+
+  /**
+   * Flushes the deferred reports in arrival order, under the incarnation the
+   * engine just accepted. Order is preserved by the transport (one channel,
+   * FIFO), which is what keeps an established/lost pair from inverting.
+   */
+  private flushPendingEvidence(incarnationId: string): void {
+    const queued = this.pendingEvidence;
+    this.pendingEvidence = [];
+    for (const report of queued) {
+      void this.send(incarnationId, report);
+    }
   }
 
   activate(hostId: string): Promise<ActivateResult> {
@@ -279,6 +334,10 @@ export class BufferedSelectionAuthorityClient implements SelectionAuthorityClien
     }
     this.subscriptions.length = 0;
     this.buffer = [];
+    // Deferred reports die with the generation that produced them: they carry
+    // no incarnation yet, and the next generation re-announces its own
+    // inventory from the kernel's live state.
+    this.pendingEvidence = [];
   }
 
   private receive(entry: BufferedEvent): void {
@@ -306,6 +365,7 @@ export class BufferedSelectionAuthorityClient implements SelectionAuthorityClien
   private install(incarnationId: string, snapshotRevision: number): void {
     this.incarnationId = incarnationId;
     this.highWaterRevision = snapshotRevision;
+    this.flushPendingEvidence(incarnationId);
     let pending = this.takePending();
     while (pending.length > 0) {
       for (const entry of pending) {
@@ -315,6 +375,11 @@ export class BufferedSelectionAuthorityClient implements SelectionAuthorityClien
       }
       pending = this.takePending();
     }
+    // A replayed event can retire this instance from under us: the rotating
+    // layer disposes it the moment a `reattachRequired` reaches the consumer.
+    // Going live afterwards would resurrect a retired generation - listeners
+    // re-armed on an instance nobody owns.
+    if (this.phase === "disposed") return;
     this.phase = "live";
   }
 
@@ -393,11 +458,31 @@ export class RotatingSelectionAuthorityClient implements SelectionAuthorityClien
     this.bindInstance();
   }
 
+  /**
+   * Delegates to the CURRENT instance and refuses a completion that arrives
+   * for a generation this layer has since rotated away from. Without that
+   * check, an identity transition landing mid-claim would resolve a
+   * `ok: true` carrying the OUTGOING account's snapshot and incarnation -
+   * observable state from before the wipe, handed to the consumer after it.
+   */
   attach(
     callerContractVersion: number,
     liveSessions: readonly LiveSessionAnnouncement[],
   ): Promise<SelectionAttachResult> {
-    return this.instance.attach(callerContractVersion, liveSessions);
+    const delegate = this.instance;
+    return delegate
+      .attach(callerContractVersion, liveSessions)
+      .then((result) => {
+        if (this.instance === delegate) return result;
+        this.log.debug("[selection-client] attach completed on a retired generation", {
+          ok: result.ok,
+        });
+        const superseded: SelectionAttachResult = {
+          ok: false,
+          kind: "superseded",
+        };
+        return superseded;
+      });
   }
 
   reportEvidence(report: SelectionEvidenceReport): Promise<void> {

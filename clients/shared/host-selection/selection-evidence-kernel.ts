@@ -110,6 +110,24 @@ export class SelectionEvidenceKernel {
   private readonly sessions = new Map<string, KernelSessionRecord>();
 
   private current: SelectionKernelSnapshot = DETACHED_SNAPSHOT;
+  /**
+   * The highest authority revision this kernel has APPLIED.
+   *
+   * The client installs its snapshot and replays the events above it before
+   * the attach promise settles, so the continuation below runs LAST and would
+   * otherwise write snapshot R over already-applied state at R+1 - the newer
+   * leases replaced by the ones the snapshot was captured with. Ordering by
+   * revision makes the late write a no-op instead, which is the same
+   * observable guarantee as holding the replay back, without adding a
+   * hand-shake to the client surface.
+   */
+  private appliedRevision = -1;
+  /**
+   * Which attach attempt is current. A rotation (identity transition) starts a
+   * new one while the previous claim may still be in flight; only the latest
+   * attempt may publish, and none may publish after dispose.
+   */
+  private attachAttempt = 0;
   private started = false;
   private disposed = false;
   private readonly subscriptions: SelectionSubscription[] = [];
@@ -135,10 +153,10 @@ export class SelectionEvidenceKernel {
     const client = this.options.client;
     this.subscriptions.push(
       client.onSelectionChanged((event) => {
-        this.applySelection(event.change);
+        this.applySelection(event.revision, event.change);
       }),
       client.onLeasesChanged((event) => {
-        this.applyLeases(event.change);
+        this.applyLeases(event.revision, event.change);
       }),
       client.onReattachRequired(() => {
         // The MANDATORY trigger: the client has already rotated to a fresh
@@ -358,9 +376,20 @@ export class SelectionEvidenceKernel {
   }
 
   private attach(): Promise<SelectionAttachResult> {
+    this.attachAttempt += 1;
+    const attempt = this.attachAttempt;
     return this.options.client
       .attach(SELECTION_AUTHORITY_CONTRACT_VERSION, this.inventory())
       .then((result) => {
+        if (this.disposed || attempt !== this.attachAttempt) {
+          // A superseded attempt (a re-attach already started) or a kernel
+          // that has since been torn down. Publishing here would put the
+          // OUTGOING account's snapshot on screen after its wipe.
+          this.options.log.debug("[selection-kernel] stale attach ignored", {
+            ok: result.ok,
+          });
+          return result;
+        }
         if (!result.ok) {
           // Every failure arm is terminal for that generation: `superseded`
           // means a newer load already owns the reporter, and
@@ -370,10 +399,11 @@ export class SelectionEvidenceKernel {
           this.options.log.warn("[selection-kernel] attach refused", {
             kind: result.kind,
           });
+          this.appliedRevision = -1;
           this.publish(DETACHED_SNAPSHOT);
           return result;
         }
-        this.publish({
+        this.publishAt(result.snapshot.revision, {
           attached: true,
           preferredHostId: result.snapshot.preferredHostId,
           targetHostId: result.snapshot.targetHostId,
@@ -384,8 +414,8 @@ export class SelectionEvidenceKernel {
       });
   }
 
-  private applySelection(change: SelectionChange): void {
-    this.publish({
+  private applySelection(revision: number, change: SelectionChange): void {
+    this.publishAt(revision, {
       attached: true,
       preferredHostId: change.preferredHostId,
       targetHostId: change.targetHostId,
@@ -394,8 +424,28 @@ export class SelectionEvidenceKernel {
     });
   }
 
-  private applyLeases(leases: readonly HostLeaseSnapshot[]): void {
-    this.publish({ ...this.current, leases });
+  private applyLeases(
+    revision: number,
+    leases: readonly HostLeaseSnapshot[],
+  ): void {
+    this.publishAt(revision, { ...this.current, leases });
+  }
+
+  /**
+   * Applies state carried at `revision`, ignoring anything the kernel has
+   * already moved past. `attached` is not revision-ordered - it is a fact
+   * about THIS kernel's claim, not about authority state - so a stale
+   * snapshot still marks the kernel attached without rolling its leases back.
+   */
+  private publishAt(revision: number, snapshot: SelectionKernelSnapshot): void {
+    if (revision < this.appliedRevision) {
+      if (snapshot.attached && !this.current.attached) {
+        this.publish({ ...this.current, attached: true });
+      }
+      return;
+    }
+    this.appliedRevision = revision;
+    this.publish(snapshot);
   }
 
   private publish(snapshot: SelectionKernelSnapshot): void {

@@ -46,6 +46,14 @@ function dialReportStub(hostId: string, attemptId: string): SelectionEvidenceRep
   return { kind: "dial", hostId, attemptId, outcome: "success", transportKind: "remote-relay", at: 0 };
 }
 
+function sessionReportStub(
+  hostId: string,
+  sessionId: string,
+  transition: "established" | "lost",
+): SelectionEvidenceReport {
+  return { kind: "session", hostId, sessionId, transition, transportKind: "remote-relay", at: 0 };
+}
+
 interface Deferred<T> {
   readonly promise: Promise<T>;
   resolve(value: T): void;
@@ -409,5 +417,188 @@ describe("RotatingSelectionAuthorityClient - rotation ordering", () => {
 
     secondTransport.emitLeases({ revision: 1, change: [] });
     expect(received).toEqual([1]);
+  });
+});
+
+// --------------------------------------------------- P1.1 fixup round (cold
+// review blockers B1-B6).
+
+describe("BufferedSelectionAuthorityClient - B1: quiescent drain with a listener-injected event", () => {
+  it("an event a listener injects mid-replay is delivered LAST, never interleaved ahead of the already-buffered batch", async () => {
+    const transport = new FakeTransport([1]);
+    const client = new BufferedSelectionAuthorityClient(transport, silentAuthorityLog);
+    const attachPromise = client.attach(SELECTION_AUTHORITY_CONTRACT_VERSION, []);
+
+    const received: string[] = [];
+    let injected = false;
+    client.onSelectionChanged((event) => {
+      received.push(`selection:${event.revision}`);
+      if (!injected) {
+        injected = true;
+        // Injected synchronously from inside delivery of the first buffered
+        // event - a higher revision than everything else already queued.
+        transport.emitLeases({ revision: 10, change: [] });
+      }
+    });
+    client.onLeasesChanged((event) => received.push(`leases:${event.revision}`));
+
+    transport.emitSelection({ revision: 1, change: selectionChangeStub() });
+    transport.emitSelection({ revision: 2, change: selectionChangeStub() });
+
+    transport.resolveLastAttach({ ok: true, incarnationId: "inc-1", snapshot: snapshotAt(0) });
+    await attachPromise;
+
+    expect(received).toEqual(["selection:1", "selection:2", "leases:10"]);
+  });
+});
+
+describe("BufferedSelectionAuthorityClient - B2/B3: deferred evidence while attach is in flight", () => {
+  it("a session-established report queued mid-claim makes no transport call until attach resolves, then sends exactly once under the accepted incarnation", async () => {
+    const transport = new FakeTransport([1]);
+    const client = new BufferedSelectionAuthorityClient(transport, silentAuthorityLog);
+    const attachPromise = client.attach(SELECTION_AUTHORITY_CONTRACT_VERSION, []);
+
+    void client.reportEvidence(sessionReportStub("H", "s1", "established"));
+    expect(transport.reportEvidenceCalls.length).toBe(0);
+
+    transport.resolveLastAttach({ ok: true, incarnationId: "inc-9", snapshot: snapshotAt(0) });
+    await attachPromise;
+
+    expect(transport.reportEvidenceCalls).toEqual([
+      { incarnationId: "inc-9", report: sessionReportStub("H", "s1", "established") },
+    ]);
+  });
+
+  it("a session-lost report queued mid-claim (the phantom-liveness case) makes no transport call until attach resolves, then sends exactly once", async () => {
+    const transport = new FakeTransport([1]);
+    const client = new BufferedSelectionAuthorityClient(transport, silentAuthorityLog);
+    const attachPromise = client.attach(SELECTION_AUTHORITY_CONTRACT_VERSION, []);
+
+    void client.reportEvidence(sessionReportStub("H", "s1", "lost"));
+    expect(transport.reportEvidenceCalls.length).toBe(0);
+
+    transport.resolveLastAttach({ ok: true, incarnationId: "inc-9", snapshot: snapshotAt(0) });
+    await attachPromise;
+
+    expect(transport.reportEvidenceCalls).toEqual([
+      { incarnationId: "inc-9", report: sessionReportStub("H", "s1", "lost") },
+    ]);
+  });
+
+  it("an established-then-lost pair queued mid-claim flushes in that order after attach resolves", async () => {
+    const transport = new FakeTransport([1]);
+    const client = new BufferedSelectionAuthorityClient(transport, silentAuthorityLog);
+    const attachPromise = client.attach(SELECTION_AUTHORITY_CONTRACT_VERSION, []);
+
+    void client.reportEvidence(sessionReportStub("H", "s1", "established"));
+    void client.reportEvidence(sessionReportStub("H", "s1", "lost"));
+    expect(transport.reportEvidenceCalls.length).toBe(0);
+
+    transport.resolveLastAttach({ ok: true, incarnationId: "inc-9", snapshot: snapshotAt(0) });
+    await attachPromise;
+
+    expect(transport.reportEvidenceCalls).toEqual([
+      { incarnationId: "inc-9", report: sessionReportStub("H", "s1", "established") },
+      { incarnationId: "inc-9", report: sessionReportStub("H", "s1", "lost") },
+    ]);
+  });
+});
+
+describe("BufferedSelectionAuthorityClient - B4: the queue dies with its generation", () => {
+  it("a report queued while attach is pending is never sent when the attach fails", async () => {
+    const transport = new FakeTransport([1]);
+    const client = new BufferedSelectionAuthorityClient(transport, silentAuthorityLog);
+    const attachPromise = client.attach(SELECTION_AUTHORITY_CONTRACT_VERSION, []);
+    void client.reportEvidence(sessionReportStub("H", "s1", "established"));
+
+    transport.resolveLastAttach({ ok: false, kind: "superseded" });
+    await attachPromise;
+
+    expect(transport.reportEvidenceCalls.length).toBe(0);
+  });
+
+  it("a report queued while attach is pending is never sent when the instance is disposed before attach resolves", async () => {
+    const transport = new FakeTransport([1]);
+    const client = new BufferedSelectionAuthorityClient(transport, silentAuthorityLog);
+    const attachPromise = client.attach(SELECTION_AUTHORITY_CONTRACT_VERSION, []);
+    void client.reportEvidence(sessionReportStub("H", "s1", "established"));
+
+    client.dispose();
+    transport.resolveLastAttach({ ok: true, incarnationId: "inc-9", snapshot: snapshotAt(0) });
+    await attachPromise;
+
+    expect(transport.reportEvidenceCalls.length).toBe(0);
+  });
+});
+
+describe("RotatingSelectionAuthorityClient - B5/B6: a retired instance is never installed or propagated", () => {
+  it("a reattachRequired replayed mid-install rotates before the consumer's attach promise settles: resolves superseded, instance #1 never goes live, instance #2 gets a fresh seq", async () => {
+    const transports: FakeTransport[] = [];
+    const seqQueues = [[1], [2]];
+    let instanceIndex = 0;
+    const instances: BufferedSelectionAuthorityClient[] = [];
+    const createInstance = (): BufferedSelectionAuthorityClient => {
+      const queue = seqQueues[instanceIndex];
+      if (queue === undefined) throw new Error("ran out of seq queues");
+      const transport = new FakeTransport(queue);
+      transports.push(transport);
+      instanceIndex += 1;
+      const instance = new BufferedSelectionAuthorityClient(
+        transport,
+        silentAuthorityLog,
+      );
+      instances.push(instance);
+      return instance;
+    };
+    const rotating = new RotatingSelectionAuthorityClient(createInstance, silentAuthorityLog);
+    const firstTransport = transports[0];
+    const instanceOne = instances[0];
+    if (instanceOne === undefined) throw new Error("expected instance #1");
+
+    const consumerAttach = rotating.attach(SELECTION_AUTHORITY_CONTRACT_VERSION, []);
+
+    // A reattachRequired at R+1 is already buffered by the time attach resolves.
+    firstTransport.emitReattach({ revision: 6 });
+
+    const received: number[] = [];
+    rotating.onLeasesChanged((event) => received.push(event.revision));
+
+    let secondAttachPromise: Promise<SelectionAttachResult> | null = null;
+    rotating.onReattachRequired(() => {
+      secondAttachPromise = rotating.attach(SELECTION_AUTHORITY_CONTRACT_VERSION, []);
+    });
+
+    // Resolving with snapshot revision 5 (< 6) makes install() replay the
+    // buffered reattachRequired, which rotates and disposes instance #1
+    // BEFORE the outer attach() call below ever settles.
+    firstTransport.resolveLastAttach({ ok: true, incarnationId: "inc-1", snapshot: snapshotAt(5) });
+    const result = await consumerAttach;
+
+    // The consumer's own attach() promise resolves superseded, never the
+    // stale ok:true that landed on a generation this layer already rotated
+    // away from.
+    expect(result).toEqual({ ok: false, kind: "superseded" });
+
+    expect(transports.length).toBe(2);
+    if (secondAttachPromise === null) throw new Error("expected the reattach handler to have fired");
+    const secondTransport = transports[1];
+    expect(secondTransport.attachRequests[0]?.attachSeq).toBe(2);
+
+    // Instance #1 never went live: a later event on its transport delivers
+    // nothing through it.
+    firstTransport.emitLeases({ revision: 999, change: [] });
+    expect(received).toEqual([]);
+
+    // ...and it is still DISPOSED, not merely unsubscribed. The distinction
+    // is observable exactly here: a retired instance that had been flipped to
+    // `live` would hold an installed incarnation and would still forward
+    // evidence under it - the outgoing generation reporting as if it owned
+    // the reporter. Dropped events alone cannot show that, because dispose
+    // already tore down the transport subscriptions.
+    await instanceOne.reportEvidence(dialReportStub("H", "after-retire"));
+    expect(firstTransport.reportEvidenceCalls.length).toBe(0);
+
+    secondTransport.resolveLastAttach({ ok: true, incarnationId: "inc-2", snapshot: snapshotAt(0) });
+    await secondAttachPromise;
   });
 });

@@ -333,3 +333,113 @@ describe("SelectionEvidenceKernel - render surface", () => {
     expect(client.attachCalls.length).toBe(1);
   });
 });
+
+// --------------------------------------------------- P1.1 fixup round (cold
+// review blockers C1-C3).
+
+function okAttachWithTarget(revision: number, targetHostId: string): SelectionAttachResult {
+  return {
+    ok: true,
+    incarnationId: `inc-${targetHostId}`,
+    snapshot: {
+      contractVersion: 1,
+      revision,
+      preferredHostId: null,
+      targetHostId,
+      effectiveHostId: null,
+      leases: [],
+    },
+  };
+}
+
+describe("SelectionEvidenceKernel - C1: applied-revision ordering", () => {
+  it("a leases event at R+1 delivered before the pending attach resolves with snapshot R is never overwritten by R", async () => {
+    const client = new FakeAuthorityClient();
+    let resolveAttach: (result: SelectionAttachResult) => void = () => undefined;
+    client.attachImpl = () =>
+      new Promise<SelectionAttachResult>((resolve) => {
+        resolveAttach = resolve;
+      });
+    const kernel = new SelectionEvidenceKernel({ client, now: () => 0, log: silentAuthorityLog });
+
+    const startPromise = kernel.start();
+
+    // Exactly the real order: the client replays buffered events before its
+    // attach promise settles.
+    const laterLeases: readonly HostLeaseSnapshot[] = [{ hostId: "H", status: "ready", dead: null }];
+    client.emitLeases({ revision: 6, change: laterLeases });
+
+    resolveAttach({
+      ok: true,
+      incarnationId: "inc-1",
+      snapshot: {
+        contractVersion: 1,
+        revision: 5,
+        preferredHostId: null,
+        targetHostId: null,
+        effectiveHostId: null,
+        leases: [{ hostId: "H", status: "connecting", dead: null }],
+      },
+    });
+    await startPromise;
+
+    expect(kernel.snapshot().attached).toBe(true);
+    expect(kernel.snapshot().leases).toEqual(laterLeases);
+  });
+});
+
+describe("SelectionEvidenceKernel - C2: only the latest attach attempt may publish", () => {
+  it("an older attempt resolving after a newer one never flips the published state back", async () => {
+    const client = new FakeAuthorityClient();
+    const resolvers: Array<(result: SelectionAttachResult) => void> = [];
+    client.attachImpl = () =>
+      new Promise<SelectionAttachResult>((resolve) => {
+        resolvers.push(resolve);
+      });
+    const kernel = new SelectionEvidenceKernel({ client, now: () => 0, log: silentAuthorityLog });
+
+    const startPromise = kernel.start(); // attempt #1, left pending
+    client.emitReattach({ revision: 1 }); // starts attempt #2, also pending
+    expect(resolvers.length).toBe(2);
+
+    // #2 (the latest) resolves first with account B's state; #1 (stale)
+    // resolves after with account A's state, at a HIGHER revision than B's -
+    // so a pure revision-ordering guard alone would let it through. Only the
+    // attempt gate (not the revision) is what must reject it.
+    const resolveAttempt1 = resolvers[0];
+    const resolveAttempt2 = resolvers[1];
+    resolveAttempt2(okAttachWithTarget(5, "B-host"));
+    resolveAttempt1(okAttachWithTarget(10, "A-host"));
+    await startPromise;
+
+    expect(kernel.snapshot().targetHostId).toBe("B-host");
+
+    // Letting further microtask ticks pass does not resurrect A's state.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(kernel.snapshot().targetHostId).toBe("B-host");
+  });
+});
+
+describe("SelectionEvidenceKernel - C3: nothing publishes after dispose", () => {
+  it("an attach that resolves ok:true after dispose triggers no onChange notification and leaves the snapshot detached", async () => {
+    const client = new FakeAuthorityClient();
+    let resolveAttach: (result: SelectionAttachResult) => void = () => undefined;
+    client.attachImpl = () =>
+      new Promise<SelectionAttachResult>((resolve) => {
+        resolveAttach = resolve;
+      });
+    const kernel = new SelectionEvidenceKernel({ client, now: () => 0, log: silentAuthorityLog });
+    const changes: SelectionKernelSnapshot[] = [];
+    kernel.onChange((snapshot) => changes.push(snapshot));
+
+    const startPromise = kernel.start();
+    kernel.dispose();
+
+    resolveAttach(okAttachWithTarget(5, "H"));
+    await startPromise;
+
+    expect(changes).toEqual([]);
+    expect(kernel.snapshot().attached).toBe(false);
+  });
+});

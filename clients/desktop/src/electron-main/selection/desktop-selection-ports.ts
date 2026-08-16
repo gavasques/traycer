@@ -242,13 +242,31 @@ export class DesktopHostFleetSource implements HostFleetSource {
     this.listeners.clear();
   }
 
-  /** pid.json moved: re-resolve local identity, keep the known rows. */
+  /**
+   * pid.json moved: re-resolve local identity, keep the known rows.
+   *
+   * The generation is captured BEFORE the disk read for the same reason
+   * `refresh` captures it before the fetch. Without it, a read that started
+   * under account A and completed after a sign-out wrote A's local host into
+   * the cache and published it stamped with the CURRENT generation - so the
+   * engine's identity guard, which only inspects the stamp, admitted account
+   * A's machine into account B's fleet. That also contradicted the signed-out
+   * branch of `refresh`, which publishes `localHostId: null`.
+   */
   private async refreshLocalIdentity(): Promise<void> {
     if (this.disposed) return;
+    const generation = this.options.identity.current().generation;
     const localHostId = await this.readLocalHostId();
+    if (this.disposed) return;
+    if (generation !== this.options.identity.current().generation) {
+      this.options.log.debug("[selection-fleet] stale local identity read", {
+        generation,
+      });
+      return;
+    }
     if (localHostId === this.localHostId) return;
     this.localHostId = localHostId;
-    this.publish();
+    this.publishAt(generation);
   }
 
   private readLocalHostId(): Promise<string | null> {
@@ -366,17 +384,28 @@ export interface DesktopLocalHostOutageSignalOptions {
 export class DesktopLocalHostOutageSignal implements LocalHostOutageSignal {
   private readonly options: DesktopLocalHostOutageSignalOptions;
   private busy = false;
+  /**
+   * Whether a live broadcast tick has landed. The initial `readStatus()` is a
+   * READ racing a SUBSCRIPTION: a mutation that starts while that read is in
+   * flight arrives on the broadcast first, and letting the older read answer
+   * afterwards would clear the exemption for an outage that is genuinely
+   * under way - a false negative at exactly the wrong moment (P1.3 would fail
+   * over off a host the shell itself is restarting).
+   */
+  private observedBroadcast = false;
   private readonly listeners = new Set<(inExpectedOutage: boolean) => void>();
   private readonly unsubscribe: () => void;
 
   constructor(options: DesktopLocalHostOutageSignalOptions) {
     this.options = options;
     this.unsubscribe = options.subscribe((status) => {
+      this.observedBroadcast = true;
       this.apply(status.mutation !== null);
     });
     void options
       .readStatus()
       .then((status) => {
+        if (this.observedBroadcast) return;
         this.apply(status.mutation !== null);
       })
       .catch((error: unknown) => {

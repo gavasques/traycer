@@ -80,6 +80,27 @@ const ipcMainState = {
   syncListeners: new Map<string, Set<SyncHandler>>(),
 };
 
+type AppEventListener = (event: unknown, contents: { id: number }) => void;
+
+/**
+ * B1: the `render-process-gone` subscription lives on `app`, not `ipcMain`.
+ * Captured here (unlike the inert double in `runner-ipc.test.ts`) so this
+ * suite can fire the handler and assert `app.off` on teardown.
+ */
+const appState = {
+  listeners: new Map<string, Set<AppEventListener>>(),
+};
+
+function fireRenderProcessGone(webContentsId: number): void {
+  const listeners = appState.listeners.get("render-process-gone");
+  if (listeners === undefined || listeners.size === 0) {
+    throw new Error("no render-process-gone listener registered");
+  }
+  for (const listener of listeners) {
+    listener(undefined, { id: webContentsId });
+  }
+}
+
 interface SentMessage {
   readonly channel: string;
   readonly payload: unknown;
@@ -101,8 +122,17 @@ vi.mock("electron", () => ({
   app: {
     getVersion: (): string => "1.0.0",
     getPath: (_key: string): string => "/tmp/traycer-desktop-test",
-    on: (_event: string, _listener: unknown): void => undefined,
-    off: (_event: string, _listener: unknown): void => undefined,
+    on: (event: string, listener: AppEventListener): void => {
+      let set = appState.listeners.get(event);
+      if (set === undefined) {
+        set = new Set();
+        appState.listeners.set(event, set);
+      }
+      set.add(listener);
+    },
+    off: (event: string, listener: AppEventListener): void => {
+      appState.listeners.get(event)?.delete(listener);
+    },
   },
   safeStorage: {
     isEncryptionAvailable: (): boolean => false,
@@ -487,6 +517,7 @@ async function attachOk(
 beforeEach(() => {
   ipcMainState.handlers.clear();
   ipcMainState.syncListeners.clear();
+  appState.listeners.clear();
   sentMessages.length = 0;
   fetchRegisteredHostsMock.mockReset();
   fetchRegisteredHostsMock.mockResolvedValue({ kind: "network-error" });
@@ -1025,5 +1056,196 @@ describe("selection authority IPC binding", () => {
     authSession.set(signedInSnapshot("user-b", "token-2"));
     await flushIo();
     expect(windowA.sentMessages).toEqual([]);
+  });
+
+  // ---------------------------------------------------------------------
+  // P1.1 fixup round: reviewer-named coverage gaps (B1-B3).
+  // ---------------------------------------------------------------------
+
+  describe("render-process-gone detachment (B1)", () => {
+    it("detaches the reporter on render-process-gone: its announced session no longer suppresses the other window's death counter", async () => {
+      fetchRegisteredHostsMock.mockResolvedValue({
+        kind: "ok",
+        response: { hosts: [buildHostListItem("crash-host")] },
+      });
+      const { bridge, registry } = await buildBridge({
+        signedIn: { userId: "user-a", token: "token-1" },
+      });
+      const windowA = buildWindow();
+      const windowB = buildWindow();
+      registry.add("window-a", 101, windowA);
+      registry.add("window-b", 202, windowB);
+      bridge.install();
+      await flushIo();
+
+      const attach = attachHandler();
+      const seqA = invokeSyncWithSender(RunnerHostSync.selectionAttachSeq, 101);
+      await attachOk(attach, 101, seqA, [
+        { hostId: "crash-host", sessionId: "sess-a", transportKind: "local-ws" },
+      ]);
+
+      const seqB = invokeSyncWithSender(RunnerHostSync.selectionAttachSeq, 202);
+      const { incarnationId: incarnationB } = await attachOk(attach, 202, seqB, []);
+
+      const evidence = evidenceHandler();
+      // Window A's live session suppresses B's refusals while it is announced.
+      for (let i = 0; i < 2; i += 1) {
+        await evidence(sender(202), incarnationB, {
+          kind: "dial",
+          hostId: "crash-host",
+          attemptId: `suppressed-${i}`,
+          outcome: "confirmed-refusal",
+          refusalDetail: null,
+          transportKind: "local-ws",
+          at: i,
+        });
+      }
+      windowB.sentMessages.length = 0;
+
+      // Window A's renderer crashes but the WINDOW survives (stays in the
+      // registry) - only `render-process-gone` reports the detach.
+      fireRenderProcessGone(101);
+      expect(registry.getRecordById("window-a")).not.toBeNull();
+
+      for (let i = 0; i < 3; i += 1) {
+        await evidence(sender(202), incarnationB, {
+          kind: "dial",
+          hostId: "crash-host",
+          attemptId: `after-crash-${i}`,
+          outcome: "confirmed-refusal",
+          refusalDetail: null,
+          transportKind: "local-ws",
+          at: i,
+        });
+      }
+
+      const leaseMessages = windowB.sentMessages.filter(
+        (message) => message.channel === RunnerHostEvent.selectionLeasesChanged,
+      );
+      const deadMessage = leaseMessages.at(-1);
+      expect(deadMessage).toBeDefined();
+      expect(deadMessage?.payload).toMatchObject({
+        change: [{ hostId: "crash-host", status: "dead" }],
+      });
+
+      bridge.dispose();
+    });
+
+    it("subscribes exactly once to app's render-process-gone and calls app.off on bridge.dispose()", async () => {
+      const { bridge, registry } = await buildBridge({});
+      const windowA = buildWindow();
+      registry.add("window-a", 101, windowA);
+      bridge.install();
+
+      expect(appState.listeners.get("render-process-gone")?.size).toBe(1);
+
+      bridge.dispose();
+
+      expect(appState.listeners.get("render-process-gone")?.size ?? 0).toBe(0);
+    });
+  });
+
+  describe("selectionAttachSeq sync allocator (B2)", () => {
+    it("a dying sender (unknown webContents id) answers null and does not disturb a known window's generation", async () => {
+      const { bridge, registry } = await buildBridge({});
+      const windowA = buildWindow();
+      registry.add("window-a", 101, windowA);
+      bridge.install();
+      const attach = attachHandler();
+
+      // An unknown sender BEFORE any known-window allocation.
+      expect(invokeSyncWithSender(RunnerHostSync.selectionAttachSeq, 999)).toBeNull();
+
+      const seq1 = invokeSyncWithSender(RunnerHostSync.selectionAttachSeq, 101);
+      expect(seq1).toBe(1);
+
+      // Another unknown-sender call interleaved between two known
+      // allocations must not consume a slot of window-a's counter.
+      expect(invokeSyncWithSender(RunnerHostSync.selectionAttachSeq, 999)).toBeNull();
+
+      const seq2 = invokeSyncWithSender(RunnerHostSync.selectionAttachSeq, 101);
+      expect(seq2).toBe(2);
+
+      // The known window's fresh seq still attaches successfully.
+      const result = await attachOk(attach, 101, seq2, []);
+      expect(typeof result.incarnationId).toBe("string");
+
+      bridge.dispose();
+    });
+  });
+
+  describe("detach during/after attach (B3)", () => {
+    it("a reportEvidence call stamped with a since-closed window's incarnation is dropped, not adopted as live suppression", async () => {
+      fetchRegisteredHostsMock.mockResolvedValue({
+        kind: "ok",
+        response: { hosts: [buildHostListItem("detach-host")] },
+      });
+      const { bridge, registry } = await buildBridge({
+        signedIn: { userId: "user-a", token: "token-1" },
+      });
+      const windowA = buildWindow();
+      const windowB = buildWindow();
+      registry.add("window-a", 101, windowA);
+      registry.add("window-b", 202, windowB);
+      bridge.install();
+      await flushIo();
+
+      const attach = attachHandler();
+      const seqA = invokeSyncWithSender(RunnerHostSync.selectionAttachSeq, 101);
+      const { incarnationId: incarnationA } = await attachOk(attach, 101, seqA, [
+        { hostId: "detach-host", sessionId: "sess-a", transportKind: "local-ws" },
+      ]);
+
+      const seqB = invokeSyncWithSender(RunnerHostSync.selectionAttachSeq, 202);
+      const { incarnationId: incarnationB } = await attachOk(attach, 202, seqB, []);
+
+      // Close window A: drop it from the registry and fire the registry
+      // change - the engine retires A's incarnation via reporterDetached.
+      registry.remove("window-a");
+
+      // A report stamped with A's now-void incarnation is dropped: it never
+      // reaches the engine at all, because the same registry removal that
+      // triggers `reporterDetached` also makes window-a's webContents id
+      // untrusted for every subsequent invoke (defense-in-depth check
+      // shared by all IPC invokes, `isTrustedIpcSender`). The invoke
+      // rejects rather than silently resolving - which is itself proof A's
+      // incarnation cannot be replayed post-close.
+      const evidence = evidenceHandler();
+      expect(() =>
+        evidence(sender(101), incarnationA, {
+          kind: "dial",
+          hostId: "detach-host",
+          attemptId: "post-close-a",
+          outcome: "success",
+          transportKind: "local-ws",
+          at: 0,
+        }),
+      ).toThrow(/not trusted/);
+
+      windowB.sentMessages.length = 0;
+
+      for (let i = 0; i < 3; i += 1) {
+        await evidence(sender(202), incarnationB, {
+          kind: "dial",
+          hostId: "detach-host",
+          attemptId: `b-refusal-${i}`,
+          outcome: "confirmed-refusal",
+          refusalDetail: null,
+          transportKind: "local-ws",
+          at: i,
+        });
+      }
+
+      const leaseMessages = windowB.sentMessages.filter(
+        (message) => message.channel === RunnerHostEvent.selectionLeasesChanged,
+      );
+      const deadMessage = leaseMessages.at(-1);
+      expect(deadMessage).toBeDefined();
+      expect(deadMessage?.payload).toMatchObject({
+        change: [{ hostId: "detach-host", status: "dead" }],
+      });
+
+      bridge.dispose();
+    });
   });
 });

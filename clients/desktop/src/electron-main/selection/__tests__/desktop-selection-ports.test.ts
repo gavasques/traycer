@@ -727,6 +727,90 @@ describe("DesktopHostFleetSource", () => {
     fleet.dispose();
   });
 
+  it("captures the generation at read START: a late enrollment read for a RETIRED account is never adopted under the CURRENT generation (A1)", async () => {
+    const dir = await makeTempDir();
+    const enrollmentFile = join(dir, "enrollment.json");
+    await writeFile(enrollmentFile, JSON.stringify({ hostId: "local-a" }), "utf8");
+    const authSession = new DesktopAuthSession();
+    // Signed out throughout: this isolates `refreshLocalIdentity` from
+    // `refresh()`'s own auto-triggered fetch (which would need a bearer
+    // token to reach `listRegisteredHosts` at all), so the only thing that
+    // can publish a snapshot here is the local-identity re-read this test is
+    // pinning.
+    const identity = new FakeIdentitySource(null, 0);
+    const host = new FakeHostLifecycle();
+    host.identityEnrollmentFile = enrollmentFile;
+    const fleet = buildFleetSource({
+      identity,
+      authSession,
+      host,
+      listRegisteredHosts: async () => {
+        throw new Error("must not be called - signed out throughout");
+      },
+    });
+
+    const snapshots: HostFleetSnapshot[] = [];
+    fleet.onChanged((snapshot) => snapshots.push(snapshot));
+
+    // Fire the `host` change: `refreshLocalIdentity` captures generation 0
+    // and starts its (real, libuv-backed) enrollment read. `fs.readFile`
+    // cannot resolve before this synchronous block finishes, so switching
+    // the identity here lands strictly BEFORE the read completes - the
+    // exact race the fix closes.
+    host.emitChange();
+    identity.set("user-b", 1);
+
+    // The identity switch publishes the generation-1 shape synchronously
+    // (the empty-fleet publish plus the signed-out `refresh()` it triggers,
+    // both before the stale read has any chance to land).
+    expect(snapshots.length).toBeGreaterThanOrEqual(1);
+    for (const snapshot of snapshots) {
+      expect(snapshot).toMatchObject({
+        identityGeneration: 1,
+        localHostId: null,
+        hosts: [],
+      });
+    }
+
+    // Let the stale enrollment read (account A, generation 0) resolve.
+    await flushIo();
+
+    // No snapshot carrying A's local host id was published under
+    // identityGeneration: 1 - the stale read must not be stamped with
+    // whatever generation happens to be current when it completes.
+    const contaminatedUnderCurrentGeneration = snapshots.some(
+      (snapshot) =>
+        snapshot.identityGeneration === 1 &&
+        (snapshot.localHostId === "local-a" ||
+          snapshot.hosts.some((entry) => entry.hostId === "local-a")),
+    );
+    expect(contaminatedUnderCurrentGeneration).toBe(false);
+
+    // The port's latest snapshot still has the generation-1 shape the
+    // identity change published: no A rows, no A local host id.
+    expect(fleet.snapshot()).toMatchObject({
+      identityGeneration: 1,
+      localHostId: null,
+      hosts: [],
+    });
+
+    // ANTI-VACUITY ANCHOR. The negative assertions above are only meaningful
+    // if the enrollment read actually had time to complete inside `flushIo`;
+    // a read still in flight would satisfy them for the wrong reason. So
+    // drive one more local-host change - no race this time - and require the
+    // legitimate generation-1 re-read to land. If the read pipeline were
+    // slower than this test's flush, THIS assertion fails loudly instead of
+    // the ones above passing silently.
+    host.emitChange();
+    await flushIo();
+    expect(fleet.snapshot()).toMatchObject({
+      identityGeneration: 1,
+      localHostId: "local-a",
+    });
+
+    fleet.dispose();
+  });
+
   it("re-resolves the local identity and republishes on a local-host change; a no-op id change publishes nothing", async () => {
     const dir = await makeTempDir();
     const enrollmentFile = join(dir, "enrollment.json");
@@ -865,6 +949,74 @@ describe("DesktopLocalHostOutageSignal", () => {
 
     for (const listener of tickListeners) listener(buildControllerStatus(activeMutation));
     expect(signal.inExpectedOutage()).toBe(true);
+
+    signal.dispose();
+  });
+
+  it("ignores a STALE initial read that answers AFTER a live broadcast tick has already landed (A2)", async () => {
+    const readStatus = deferred<HostControllerStatus>();
+    const tickListeners = new Set<(status: HostControllerStatus) => void>();
+    const subscribe = (listener: (status: HostControllerStatus) => void) => {
+      tickListeners.add(listener);
+      return () => tickListeners.delete(listener);
+    };
+
+    const signal = new DesktopLocalHostOutageSignal({
+      subscribe,
+      readStatus: () => readStatus.promise,
+      log: silentLog,
+    });
+
+    const seen: boolean[] = [];
+    signal.onChanged((next) => seen.push(next));
+
+    // A live broadcast tick lands first, carrying a non-null mutation lane.
+    for (const listener of tickListeners) {
+      listener(buildControllerStatus(activeMutation));
+    }
+    expect(signal.inExpectedOutage()).toBe(true);
+    expect(seen).toEqual([true]);
+
+    // THEN the initial `readStatus()` resolves - answering `mutation: null`,
+    // i.e. stale by the time it lands.
+    readStatus.resolve(buildControllerStatus(null));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // The exemption for a genuinely-under-way outage must survive: the
+    // older read must not clear it, and no onChanged(false) is delivered.
+    expect(signal.inExpectedOutage()).toBe(true);
+    expect(seen).toEqual([true]);
+
+    signal.dispose();
+  });
+
+  it("with no broadcast at all, the initial read still establishes the value (A2 mirror)", async () => {
+    const readStatus = deferred<HostControllerStatus>();
+    const tickListeners = new Set<(status: HostControllerStatus) => void>();
+    const subscribe = (listener: (status: HostControllerStatus) => void) => {
+      tickListeners.add(listener);
+      return () => tickListeners.delete(listener);
+    };
+
+    const signal = new DesktopLocalHostOutageSignal({
+      subscribe,
+      readStatus: () => readStatus.promise,
+      log: silentLog,
+    });
+
+    const seen: boolean[] = [];
+    signal.onChanged((next) => seen.push(next));
+
+    expect(signal.inExpectedOutage()).toBe(false);
+    expect(tickListeners.size).toBe(1); // subscribed, but never ticked.
+
+    readStatus.resolve(buildControllerStatus(activeMutation));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(signal.inExpectedOutage()).toBe(true);
+    expect(seen).toEqual([true]);
 
     signal.dispose();
   });

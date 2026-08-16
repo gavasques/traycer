@@ -1,4 +1,11 @@
-import { NO_TRANSPORT_EVIDENCE } from "@traycer-clients/shared/host-selection/transport-evidence";
+import {
+  NO_TRANSPORT_EVIDENCE,
+  type TransportEvidenceReporter,
+} from "@traycer-clients/shared/host-selection/transport-evidence";
+import type {
+  SelectionIncompatibility,
+  SelectionTransportKind,
+} from "@traycer-clients/shared/host-selection/selection-authority-contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import {
@@ -363,6 +370,158 @@ function openAckWithOnlyOptionalHostEcho(version: {
   };
 }
 
+/** One recorded call to a `TransportEvidenceReporter` method, keyed by name. */
+type RecordedEvidenceCall =
+  | {
+      readonly method: "sessionEstablished";
+      readonly hostId: string;
+      readonly sessionId: string;
+      readonly transportKind: SelectionTransportKind;
+    }
+  | {
+      readonly method: "sessionLost";
+      readonly hostId: string;
+      readonly sessionId: string;
+      readonly transportKind: SelectionTransportKind;
+    }
+  | {
+      readonly method: "reportDialSuccess";
+      readonly hostId: string;
+      readonly attemptId: string;
+      readonly transportKind: SelectionTransportKind;
+    }
+  | {
+      readonly method: "reportDialRefusal";
+      readonly hostId: string;
+      readonly attemptId: string;
+      readonly transportKind: SelectionTransportKind;
+      readonly refusalDetail: "plan-restricted" | null;
+    }
+  | {
+      readonly method: "reportDialTimeout";
+      readonly hostId: string;
+      readonly attemptId: string;
+      readonly transportKind: SelectionTransportKind;
+    }
+  | {
+      readonly method: "reportDialIndeterminate";
+      readonly hostId: string;
+      readonly attemptId: string;
+      readonly transportKind: SelectionTransportKind;
+    }
+  | {
+      readonly method: "reportCompatVerdict";
+      readonly input: {
+        readonly hostId: string;
+        readonly probedOnSessionId: string | null;
+        readonly hostVersion: string | null;
+        readonly incompatibility: SelectionIncompatibility | null;
+      };
+    };
+
+/**
+ * Records every call a transport makes into a `TransportEvidenceReporter`, in
+ * arrival order, so a test can assert on sequences and per-method counts
+ * rather than only on the latest call (the shape a plain `vi.fn` gives).
+ */
+class RecordingEvidence implements TransportEvidenceReporter {
+  readonly calls: RecordedEvidenceCall[] = [];
+
+  sessionEstablished(
+    hostId: string,
+    sessionId: string,
+    transportKind: SelectionTransportKind,
+  ): void {
+    this.calls.push({
+      method: "sessionEstablished",
+      hostId,
+      sessionId,
+      transportKind,
+    });
+  }
+
+  sessionLost(
+    hostId: string,
+    sessionId: string,
+    transportKind: SelectionTransportKind,
+  ): void {
+    this.calls.push({ method: "sessionLost", hostId, sessionId, transportKind });
+  }
+
+  reportDialSuccess(
+    hostId: string,
+    attemptId: string,
+    transportKind: SelectionTransportKind,
+  ): void {
+    this.calls.push({
+      method: "reportDialSuccess",
+      hostId,
+      attemptId,
+      transportKind,
+    });
+  }
+
+  reportDialRefusal(
+    hostId: string,
+    attemptId: string,
+    transportKind: SelectionTransportKind,
+    refusalDetail: "plan-restricted" | null,
+  ): void {
+    this.calls.push({
+      method: "reportDialRefusal",
+      hostId,
+      attemptId,
+      transportKind,
+      refusalDetail,
+    });
+  }
+
+  reportDialTimeout(
+    hostId: string,
+    attemptId: string,
+    transportKind: SelectionTransportKind,
+  ): void {
+    this.calls.push({
+      method: "reportDialTimeout",
+      hostId,
+      attemptId,
+      transportKind,
+    });
+  }
+
+  reportDialIndeterminate(
+    hostId: string,
+    attemptId: string,
+    transportKind: SelectionTransportKind,
+  ): void {
+    this.calls.push({
+      method: "reportDialIndeterminate",
+      hostId,
+      attemptId,
+      transportKind,
+    });
+  }
+
+  reportCompatVerdict(input: {
+    readonly hostId: string;
+    readonly probedOnSessionId: string | null;
+    readonly hostVersion: string | null;
+    readonly incompatibility: SelectionIncompatibility | null;
+  }): void {
+    this.calls.push({ method: "reportCompatVerdict", input });
+  }
+
+  /** Every recorded call for one method name, narrowed to its own shape. */
+  callsNamed<Method extends RecordedEvidenceCall["method"]>(
+    method: Method,
+  ): (RecordedEvidenceCall & { readonly method: Method })[] {
+    return this.calls.filter(
+      (call): call is RecordedEvidenceCall & { readonly method: Method } =>
+        call.method === method,
+    );
+  }
+}
+
 describe("WsRpcClient", () => {
   it("walks dial → open → openAck → request → response → close on the happy path", async () => {
     const { factory, sockets } = makeFactory();
@@ -456,6 +615,149 @@ describe("WsRpcClient", () => {
       code: 1000,
       reason: "authority-aborted",
     });
+  });
+
+  it("refcounts the local logical session to one host: overlapping RPCs announce and retract exactly once, on the 0->1 and 1->0 edges only", async () => {
+    const { factory, sockets } = makeFactory();
+    const recorder = new RecordingEvidence();
+    let nextRequestId = 0;
+    const client = new WsRpcClient<typeof testRegistry>({
+      registry: testRegistry,
+      requestId: () => `req-${(nextRequestId += 1)}`,
+      webSocketFactory: factory,
+      dialTimeoutMs: 1000,
+      frameTimeoutMs: 1000,
+      hostAttestationWindowMs: 0,
+      evidence: recorder,
+    });
+    const authority = authorityForToken("token-abc");
+
+    // Fire two overlapping RPCs to the SAME host - neither awaited before the
+    // next is started, so both sockets are open at once.
+    const pending1 = client.request("host.echo", { message: "one" }, authority);
+    await flush();
+    const pending2 = client.request("host.echo", { message: "two" }, authority);
+    await flush();
+    expect(sockets).toHaveLength(2);
+
+    sockets[0].socket.fireOpen();
+    await flush();
+    sockets[1].socket.fireOpen();
+    await flush();
+
+    // Only the 0 -> 1 refcount edge (the first socket's open) announces - the
+    // second socket opening while one is already live must NOT re-announce.
+    expect(recorder.callsNamed("sessionEstablished")).toHaveLength(1);
+    expect(recorder.callsNamed("sessionLost")).toHaveLength(0);
+
+    sockets[0].socket.fireMessage(
+      openAckWithOptionalHostEcho({ major: 1, minor: 0 }),
+    );
+    await flush();
+    const req0 = expectRequestFrame(sockets[0].sent[1]);
+    sockets[0].socket.fireMessage({
+      kind: "response",
+      requestId: req0.requestId,
+      method: req0.method,
+      schemaVersion: req0.schemaVersion,
+      result: { echoed: "ONE" },
+      error: null,
+    });
+    await expect(pending1).resolves.toEqual({ echoed: "ONE" });
+
+    // The other socket is still open (refcount 1 -> 0 has not happened yet) -
+    // no retraction on the first completion.
+    expect(recorder.callsNamed("sessionLost")).toHaveLength(0);
+
+    sockets[1].socket.fireMessage(
+      openAckWithOptionalHostEcho({ major: 1, minor: 0 }),
+    );
+    await flush();
+    const req1 = expectRequestFrame(sockets[1].sent[1]);
+    sockets[1].socket.fireMessage({
+      kind: "response",
+      requestId: req1.requestId,
+      method: req1.method,
+      schemaVersion: req1.schemaVersion,
+      result: { echoed: "TWO" },
+      error: null,
+    });
+    await expect(pending2).resolves.toEqual({ echoed: "TWO" });
+
+    // Only the 1 -> 0 edge (the LAST open socket closing) retracts - one pair
+    // total across both RPCs, not one pair per RPC.
+    expect(recorder.callsNamed("sessionEstablished")).toHaveLength(1);
+    expect(recorder.callsNamed("sessionLost")).toHaveLength(1);
+  });
+
+  it("a socket aborted after opening decrements the refcount without leaking it - the next RPC to the same host still gets a fresh 0->1 announcement", async () => {
+    const { factory, sockets } = makeFactory();
+    const recorder = new RecordingEvidence();
+    let nextRequestId = 0;
+    const client = new WsRpcClient<typeof testRegistry>({
+      registry: testRegistry,
+      requestId: () => `req-${(nextRequestId += 1)}`,
+      webSocketFactory: factory,
+      dialTimeoutMs: 1000,
+      frameTimeoutMs: 1000,
+      hostAttestationWindowMs: 0,
+      evidence: recorder,
+    });
+    const lifetime = new AbortController();
+    const pending = client.request(
+      "host.echo",
+      { message: "hi" },
+      {
+        endpoint: {
+          hostId: mockLocalHostEntry.hostId,
+          websocketUrl: mockLocalHostEntry.websocketUrl,
+        },
+        bearer: new MutableBearerLease("token-abc", "test-user"),
+        abortSignal: lifetime.signal,
+      },
+    );
+    await flush();
+    expect(sockets).toHaveLength(1);
+    sockets[0].socket.fireOpen();
+    await flush();
+    expect(recorder.callsNamed("sessionEstablished")).toHaveLength(1);
+
+    lifetime.abort("host-replaced");
+    await expect(pending).rejects.toBeInstanceOf(HostRequestAbortedError);
+
+    // The socket had genuinely opened (raised the refcount) before the abort
+    // closed it - the abort path must still decrement it, or the count would
+    // stay stuck at 1 and no later RPC would ever re-announce.
+    expect(recorder.callsNamed("sessionLost")).toHaveLength(1);
+
+    const pending2 = client.request(
+      "host.echo",
+      { message: "hi again" },
+      authorityForToken("token-abc"),
+    );
+    await flush();
+    expect(sockets).toHaveLength(2);
+    sockets[1].socket.fireOpen();
+    await flush();
+
+    // A fresh 0 -> 1 edge, not a no-op on an already-nonzero count.
+    expect(recorder.callsNamed("sessionEstablished")).toHaveLength(2);
+
+    sockets[1].socket.fireMessage(
+      openAckWithOptionalHostEcho({ major: 1, minor: 0 }),
+    );
+    await flush();
+    const req1 = expectRequestFrame(sockets[1].sent[1]);
+    sockets[1].socket.fireMessage({
+      kind: "response",
+      requestId: req1.requestId,
+      method: req1.method,
+      schemaVersion: req1.schemaVersion,
+      result: { echoed: "HI AGAIN" },
+      error: null,
+    });
+    await expect(pending2).resolves.toEqual({ echoed: "HI AGAIN" });
+    expect(recorder.callsNamed("sessionLost")).toHaveLength(2);
   });
 
   it("rejects before dialing when no authenticated request context is available", async () => {

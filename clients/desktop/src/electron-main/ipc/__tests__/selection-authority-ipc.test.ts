@@ -172,11 +172,12 @@ vi.mock("electron", () => ({
   },
 }));
 
+const electronLogWarnMock = vi.hoisted(() => vi.fn());
 vi.mock("electron-log", () => ({
   default: {
     transports: { file: { level: "info" }, console: { level: "info" } },
     info: vi.fn(),
-    warn: vi.fn(),
+    warn: electronLogWarnMock,
     error: vi.fn(),
     debug: vi.fn(),
   },
@@ -573,6 +574,13 @@ function activateHandler(): InvokeHandler {
     SelectionAuthorityChannels.invoke.activate,
   );
   if (handler === undefined) throw new Error("activate handler missing");
+  return handler;
+}
+function refreshFleetHandler(): InvokeHandler {
+  const handler = ipcMainState.handlers.get(
+    SelectionAuthorityChannels.invoke.refreshFleet,
+  );
+  if (handler === undefined) throw new Error("refreshFleet handler missing");
   return handler;
 }
 
@@ -1298,6 +1306,114 @@ describe("selection authority IPC binding", () => {
       expect(deadMessage?.payload).toMatchObject({
         change: [{ hostId: "detach-host", status: "dead" }],
       });
+
+      bridge.dispose();
+    });
+  });
+
+  // ---------------------------------------------------------------------
+  // F6 main-side fleet-refresh edge (Suite G). The renderer's own caller
+  // for this channel does not exist yet, so only the main-side contract is
+  // testable here: invoking `refreshFleet` calls `DesktopHostFleetSource
+  // .refresh()`, and calling it never turns a transient registry blip into
+  // a rejected invoke. `fetchRegisteredHostsMock` is the only observable
+  // proxy for "refresh() ran" available to this suite (per the file header,
+  // `fetchRegisteredHostsViaHttp` is main's hard-wired registry fetcher),
+  // so call counts on it stand in for refresh() call counts.
+  // ---------------------------------------------------------------------
+
+  describe("refreshFleet invoke (F6 main-side fleet-refresh edge)", () => {
+    it("G1: invoking the channel calls refresh() on the fleet source exactly once", async () => {
+      fetchRegisteredHostsMock.mockResolvedValue({
+        kind: "ok",
+        response: { hosts: [] },
+      });
+      const { bridge, registry } = await buildBridge({
+        signedIn: { userId: "user-a", token: "token-1" },
+      });
+      const windowA = buildWindow();
+      registry.add("window-a", 101, windowA);
+      bridge.install();
+      await flushIo();
+
+      // Baseline absorbs the seed refresh() the module already fires on
+      // registration (module header: "Seed real membership").
+      const baselineCalls = fetchRegisteredHostsMock.mock.calls.length;
+
+      const refreshFleet = refreshFleetHandler();
+      await refreshFleet(sender(101));
+
+      expect(fetchRegisteredHostsMock.mock.calls.length).toBe(
+        baselineCalls + 1,
+      );
+
+      bridge.dispose();
+    });
+
+    it("G2: invoking the channel twice produces exactly two refresh() calls (idempotent, unscoped - no membership assertion)", async () => {
+      fetchRegisteredHostsMock.mockResolvedValue({
+        kind: "ok",
+        response: { hosts: [] },
+      });
+      const { bridge, registry } = await buildBridge({
+        signedIn: { userId: "user-a", token: "token-1" },
+      });
+      const windowA = buildWindow();
+      registry.add("window-a", 101, windowA);
+      bridge.install();
+      await flushIo();
+
+      const baselineCalls = fetchRegisteredHostsMock.mock.calls.length;
+
+      const refreshFleet = refreshFleetHandler();
+      await refreshFleet(sender(101));
+      await refreshFleet(sender(101));
+
+      // Exactly two calls - nothing here asserts fleet membership; the
+      // renderer only says "your copy is stale", main re-reads on its own
+      // terms.
+      expect(fetchRegisteredHostsMock.mock.calls.length).toBe(
+        baselineCalls + 2,
+      );
+
+      bridge.dispose();
+    });
+
+    it("G3: a rejecting refresh() is CONTAINED at the invoke handler - the invoke resolves, and the failure is not silent (a warn is logged)", async () => {
+      // `registerFleetRefresh`'s doc comment says failures are swallowed into
+      // the fleet source's own logging. `DesktopHostFleetSource.refresh()`
+      // only does that for a RESOLVED non-ok `HostListFetchResult`; a genuine
+      // REJECTION from `listRegisteredHosts` used to propagate straight
+      // through the un-wrapped handler into `bridge.handleInvoke`'s generic
+      // wrapper, which re-throws - reaching the caller as a rejected invoke
+      // on an operation (e.g. a deregistration) that had already succeeded.
+      // The handler now wraps `fleet.refresh()` in its own try/catch, so
+      // containment lives at the one seam that owns this promise, rather
+      // than relying on every future caller remembering to `.catch()`.
+      electronLogWarnMock.mockClear();
+
+      fetchRegisteredHostsMock.mockResolvedValue({
+        kind: "ok",
+        response: { hosts: [] },
+      });
+      const { bridge, registry } = await buildBridge({
+        signedIn: { userId: "user-a", token: "token-1" },
+      });
+      const windowA = buildWindow();
+      registry.add("window-a", 101, windowA);
+      bridge.install();
+      await flushIo();
+
+      fetchRegisteredHostsMock.mockRejectedValueOnce(
+        new Error("registry blip"),
+      );
+
+      const refreshFleet = refreshFleetHandler();
+      // Contained: the invoke resolves rather than rejecting on a caller
+      // that already completed a real operation (e.g. a deregistration).
+      await expect(refreshFleet(sender(101))).resolves.toBeUndefined();
+      // Not silently swallowed into nothing: the warn path ran.
+      expect(electronLogWarnMock).toHaveBeenCalledTimes(1);
 
       bridge.dispose();
     });

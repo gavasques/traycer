@@ -8,10 +8,12 @@ import {
 } from "@traycer-clients/shared/host-selection/selection-authority-contract";
 import {
   CONFIRMED_DEATH_REFUSAL_STREAK,
+  RETURN_TO_TARGET_STABILITY_MS,
   SelectionAuthorityEngineImpl,
   createIncrementingIncarnationIds,
   silentAuthorityLog,
 } from "@traycer-clients/shared/host-selection/selection-authority-engine";
+import { SelectionEvidenceKernel } from "@traycer-clients/shared/host-selection/selection-evidence-kernel";
 import {
   InMemoryAuthorityIdentitySource,
   InMemoryHostFleetSource,
@@ -20,9 +22,14 @@ import {
   inertLocalHostOutageSignal,
   unavailableLocalHostEnsurePort,
 } from "@traycer-clients/shared/host-selection/in-process-selection-authority";
+import {
+  createFakeAuthorityClock,
+  type FakeAuthorityClock,
+} from "@traycer-clients/shared/host-selection/__tests__/selection-authority-harness";
 import { Analytics, AnalyticsEvent } from "@/lib/analytics";
 import {
   mountSelectionAuthorityBridge,
+  type SelectionAuthorityBridge,
   type SelectionDirectoryBinding,
 } from "@/lib/host/selection-authority-bridge";
 import {
@@ -45,12 +52,17 @@ class RecordingDirectory implements SelectionDirectoryBinding {
   }
 }
 
+const HOST_LABELS = {
+  labelFor: (hostId: string): string => hostId,
+};
+
 interface TestAuthority {
   readonly engine: SelectionAuthorityEngineImpl;
   readonly fleet: InMemoryHostFleetSource;
   readonly identity: InMemoryAuthorityIdentitySource;
   readonly preferredStore: InMemoryPreferredHostStore;
   readonly client: SelectionAuthorityClient;
+  readonly clock: FakeAuthorityClock;
   dispose(): void;
 }
 
@@ -72,13 +84,14 @@ function buildAuthority(input: {
     hosts: input.hosts,
   });
   const identity = new InMemoryAuthorityIdentitySource(input.identityKey);
+  const clock = createFakeAuthorityClock(0);
   const engine = new SelectionAuthorityEngineImpl({
     fleet,
     identity,
     localHostEnsure: unavailableLocalHostEnsurePort,
     localOutage: inertLocalHostOutageSignal,
     preferredStore,
-    clock: { now: () => 0, schedule: () => () => undefined },
+    clock,
     newIncarnationId: createIncrementingIncarnationIds(),
     log: silentAuthorityLog,
   });
@@ -89,11 +102,37 @@ function buildAuthority(input: {
     identity,
     preferredStore,
     client,
+    clock,
     dispose: () => {
       client.dispose();
       engine.dispose();
     },
   };
+}
+
+async function startKernel(
+  client: SelectionAuthorityClient,
+): Promise<SelectionEvidenceKernel> {
+  const kernel = new SelectionEvidenceKernel({
+    client,
+    now: () => 0,
+    log: silentAuthorityLog,
+  });
+  await kernel.start();
+  return kernel;
+}
+
+function mountBridge(input: {
+  readonly client: SelectionAuthorityClient;
+  readonly kernel: SelectionEvidenceKernel;
+  readonly directory: SelectionDirectoryBinding;
+}): SelectionAuthorityBridge {
+  return mountSelectionAuthorityBridge({
+    client: input.client,
+    kernel: input.kernel,
+    directory: input.directory,
+    hostLabels: HOST_LABELS,
+  });
 }
 
 /** Feeds `CONFIRMED_DEATH_REFUSAL_STREAK` refusals from a second, synthetic window. */
@@ -154,20 +193,26 @@ describe("mountSelectionAuthorityBridge", () => {
       identityKey: "acct-1",
     });
     const directory = new RecordingDirectory();
-    const bridge = mountSelectionAuthorityBridge({
+    const kernel = await startKernel(authority.client);
+    expect(kernel.snapshot().effectiveHostId).toBe("L");
+    const callsBeforeMount = directory.calls.length;
+    const bridge = mountBridge({
       client: authority.client,
+      kernel,
       directory,
-      now: () => 0,
     });
-    await flushMicrotasks();
 
-    // With no preference, M5 derives the local host as both target and
-    // effective the moment this window's attach installs the current state.
+    // C2: kernel already started; the opening bind is subscribe-time
+    // apply(kernel.snapshot()), not a later change event.
+    expect(directory.calls.length).toBe(callsBeforeMount + 1);
     expect(directory.calls.at(-1)).toBe("L");
     expect(useSelectionAuthorityStore.getState().effectiveHostId).toBe("L");
     expect(useSelectionAuthorityStore.getState().attached).toBe(true);
+    await flushMicrotasks();
+    expect(directory.calls.length).toBe(callsBeforeMount + 1);
 
     bridge.dispose();
+    kernel.dispose();
     authority.dispose();
   });
 
@@ -189,17 +234,23 @@ describe("mountSelectionAuthorityBridge", () => {
     });
     expect(authority.engine.snapshot().preferredHostId).toBe("P");
     const directory = new RecordingDirectory();
-    const bridge = mountSelectionAuthorityBridge({
+    const kernel = await startKernel(authority.client);
+    expect(kernel.snapshot().effectiveHostId).toBe("P");
+    const callsBeforeMount = directory.calls.length;
+    const bridge = mountBridge({
       client: authority.client,
+      kernel,
       directory,
-      now: () => 0,
     });
-    await flushMicrotasks();
 
+    expect(directory.calls.length).toBe(callsBeforeMount + 1);
     expect(directory.calls.at(-1)).toBe("P");
     expect(useSelectionAuthorityStore.getState().effectiveHostId).toBe("P");
+    await flushMicrotasks();
+    expect(directory.calls.length).toBe(callsBeforeMount + 1);
 
     bridge.dispose();
+    kernel.dispose();
     authority.dispose();
   });
 
@@ -222,10 +273,11 @@ describe("mountSelectionAuthorityBridge", () => {
       g4Events.push(event);
     };
     const unsubscribeG4 = subscribeFollowingSurfaceReset(g4Listener);
-    const bridge = mountSelectionAuthorityBridge({
+    const kernel = await startKernel(authority.client);
+    const bridge = mountBridge({
       client: authority.client,
+      kernel,
       directory,
-      now: () => 0,
     });
     await flushMicrotasks();
     // Settled on L (M5, no preference yet).
@@ -276,6 +328,7 @@ describe("mountSelectionAuthorityBridge", () => {
     // effective lands back ON the target, which the engine names "recovery".
     trackSpy.mockClear();
     reviveHost(authority.engine, "P");
+    authority.clock.advance(RETURN_TO_TARGET_STABILITY_MS);
     await flushMicrotasks();
     expect(directory.calls.at(-1)).toBe("P");
     expect(g4Events.at(-1)).toEqual({
@@ -305,10 +358,82 @@ describe("mountSelectionAuthorityBridge", () => {
 
     unsubscribeG4();
     bridge.dispose();
+    kernel.dispose();
     authority.dispose();
   });
 
-  it("(d) an event whose effectiveHostId equals its previousEffectiveHostId narrates nothing, even when its cause is failover/recovery", () => {
+  it("(d1) Suite D - F7: a G4 subscriber reading BOTH the store and the directory during its notification observes the NEW revision in both, and narration actually fires", async () => {
+    // The mutation this pins: `applySelection` publishing a STALE
+    // `selectionRevision` (the kernel's OWN pre-fixed value rather than the
+    // incoming `revision`) makes `pending.revision > applied` permanently
+    // true - narration would never flush AT ALL, silently, forever. A test
+    // that only asserts "if narration fired, the state it saw was fresh"
+    // passes vacuously against that mutation, because narration never fires
+    // and the conditional body never runs. So this test asserts BOTH halves:
+    // narration FIRED, and what it observed was already fresh.
+    const authority = buildAuthority({
+      localHostId: "L",
+      hosts: [
+        { hostId: "L", kind: "local" },
+        { hostId: "P", kind: "remote" },
+      ],
+      identityKey: "acct-1",
+    });
+    const directory = new RecordingDirectory();
+    const kernel = await startKernel(authority.client);
+    const bridge = mountBridge({
+      client: authority.client,
+      kernel,
+      directory,
+    });
+    await flushMicrotasks();
+    expect(useSelectionAuthorityStore.getState().effectiveHostId).toBe("L");
+
+    // Land on P first (M5: no preference yet means target=local), the same
+    // way test (c) does, so P is actually the target/preferred and killing
+    // it is a real failover rather than a no-op on an unselected host.
+    expect(await authority.client.activate("P")).toEqual({ ok: true });
+    await flushMicrotasks();
+    expect(directory.calls.at(-1)).toBe("P");
+
+    let g4FireCount = 0;
+    const observedAtNotification: Array<{
+      storeEffectiveHostId: string | null;
+      directoryLastSelected: string | null;
+    }> = [];
+    const unsubscribeG4 = subscribeFollowingSurfaceReset(() => {
+      g4FireCount += 1;
+      // Read BOTH seams from INSIDE the notification, the way a real G4
+      // subscriber (following-surface reset) would - it must see the same
+      // new host on both, not the store updated with the directory still
+      // lagging or vice versa.
+      observedAtNotification.push({
+        storeEffectiveHostId: useSelectionAuthorityStore.getState().effectiveHostId,
+        directoryLastSelected: directory.calls.at(-1) ?? null,
+      });
+    });
+
+    // cause: failover - P (preferred, target) dies; effective moves back to L.
+    killHost(authority.engine, "P");
+    await flushMicrotasks();
+
+    // The positive assertion the vacuity probe defeats if narration never
+    // flushes: it must have fired, not merely be consistent IF it fired.
+    expect(g4FireCount).toBeGreaterThanOrEqual(1);
+    expect(useSelectionAuthorityStore.getState().effectiveHostId).toBe("L");
+    expect(directory.calls.at(-1)).toBe("L");
+    for (const observed of observedAtNotification) {
+      expect(observed.storeEffectiveHostId).toBe("L");
+      expect(observed.directoryLastSelected).toBe("L");
+    }
+
+    unsubscribeG4();
+    bridge.dispose();
+    kernel.dispose();
+    authority.dispose();
+  });
+
+  it("(d) an event whose effectiveHostId equals its previousEffectiveHostId narrates nothing, even when its cause is failover/recovery", async () => {
     // A REAL engine cannot currently produce this shape: on every path that
     // tags a commit "failover" (ingestEvidence/attach/detach/local-outage/
     // the deadline timer), `effectiveHostId` is the only field of the
@@ -352,12 +477,13 @@ describe("mountSelectionAuthorityBridge", () => {
     const unsubscribeG4 = subscribeFollowingSurfaceReset((event) => {
       g4Events.push(event);
     });
-    const bridge = mountSelectionAuthorityBridge({
+    const kernel = await startKernel(fakeClient);
+    const bridge = mountBridge({
       client: fakeClient,
+      kernel,
       directory,
-      now: () => 0,
     });
-    expect(selectionListeners.length).toBe(2);
+    expect(selectionListeners.length).toBeGreaterThanOrEqual(2);
     const emit = (event: SelectionRevisioned<SelectionChange>): void => {
       for (const listener of selectionListeners) listener(event);
     };
@@ -393,9 +519,10 @@ describe("mountSelectionAuthorityBridge", () => {
 
     unsubscribeG4();
     bridge.dispose();
+    kernel.dispose();
   });
 
-  it("(e) a replayed/stale revision narrates at most once", () => {
+  it("(e) a replayed/stale revision narrates at most once", async () => {
     // Isolated at the SelectionAuthorityClient contract boundary: a real
     // engine never redelivers a revision, so the guard this pins
     // (`subscribeNarration`'s own monotonic high-water mark) can only be
@@ -436,10 +563,11 @@ describe("mountSelectionAuthorityBridge", () => {
     const unsubscribeG4 = subscribeFollowingSurfaceReset((event) => {
       g4Events.push(event);
     });
-    const bridge = mountSelectionAuthorityBridge({
+    const kernel = await startKernel(fakeClient);
+    const bridge = mountBridge({
       client: fakeClient,
+      kernel,
       directory,
-      now: () => 0,
     });
     expect(selectionListeners.length).toBe(2);
     const change: SelectionChange = {
@@ -464,6 +592,7 @@ describe("mountSelectionAuthorityBridge", () => {
 
     unsubscribeG4();
     bridge.dispose();
+    kernel.dispose();
   });
 
   it("(f) dispose unsubscribes and resets the store", async () => {
@@ -473,10 +602,11 @@ describe("mountSelectionAuthorityBridge", () => {
       identityKey: "acct-1",
     });
     const directory = new RecordingDirectory();
-    const bridge = mountSelectionAuthorityBridge({
+    const kernel = await startKernel(authority.client);
+    const bridge = mountBridge({
       client: authority.client,
+      kernel,
       directory,
-      now: () => 0,
     });
     await flushMicrotasks();
     expect(useSelectionAuthorityStore.getState().attached).toBe(true);
@@ -496,6 +626,7 @@ describe("mountSelectionAuthorityBridge", () => {
     expect(directory.calls.length).toBe(callsAtDispose);
     expect(useSelectionAuthorityStore.getState().attached).toBe(false);
 
+    kernel.dispose();
     authority.dispose();
   });
 });

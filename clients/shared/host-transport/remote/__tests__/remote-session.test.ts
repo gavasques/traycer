@@ -1,4 +1,11 @@
-import { NO_TRANSPORT_EVIDENCE } from "@traycer-clients/shared/host-selection/transport-evidence";
+import {
+  NO_TRANSPORT_EVIDENCE,
+  type TransportEvidenceReporter,
+} from "@traycer-clients/shared/host-selection/transport-evidence";
+import type {
+  SelectionIncompatibility,
+  SelectionTransportKind,
+} from "@traycer-clients/shared/host-selection/selection-authority-contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import {
@@ -544,6 +551,158 @@ class FakeRelayHost {
       return;
     }
     connection.socket.onmessage?.({ type: "binary", data: bytes });
+  }
+}
+
+/** One recorded call to a `TransportEvidenceReporter` method, keyed by name. */
+type RecordedEvidenceCall =
+  | {
+      readonly method: "sessionEstablished";
+      readonly hostId: string;
+      readonly sessionId: string;
+      readonly transportKind: SelectionTransportKind;
+    }
+  | {
+      readonly method: "sessionLost";
+      readonly hostId: string;
+      readonly sessionId: string;
+      readonly transportKind: SelectionTransportKind;
+    }
+  | {
+      readonly method: "reportDialSuccess";
+      readonly hostId: string;
+      readonly attemptId: string;
+      readonly transportKind: SelectionTransportKind;
+    }
+  | {
+      readonly method: "reportDialRefusal";
+      readonly hostId: string;
+      readonly attemptId: string;
+      readonly transportKind: SelectionTransportKind;
+      readonly refusalDetail: "plan-restricted" | null;
+    }
+  | {
+      readonly method: "reportDialTimeout";
+      readonly hostId: string;
+      readonly attemptId: string;
+      readonly transportKind: SelectionTransportKind;
+    }
+  | {
+      readonly method: "reportDialIndeterminate";
+      readonly hostId: string;
+      readonly attemptId: string;
+      readonly transportKind: SelectionTransportKind;
+    }
+  | {
+      readonly method: "reportCompatVerdict";
+      readonly input: {
+        readonly hostId: string;
+        readonly probedOnSessionId: string | null;
+        readonly hostVersion: string | null;
+        readonly incompatibility: SelectionIncompatibility | null;
+      };
+    };
+
+/**
+ * Records every call a transport makes into a `TransportEvidenceReporter`, in
+ * arrival order, so a test can assert on sequences and per-method counts
+ * rather than only on the latest call (the shape a plain `vi.fn` gives).
+ */
+class RecordingEvidence implements TransportEvidenceReporter {
+  readonly calls: RecordedEvidenceCall[] = [];
+
+  sessionEstablished(
+    hostId: string,
+    sessionId: string,
+    transportKind: SelectionTransportKind,
+  ): void {
+    this.calls.push({
+      method: "sessionEstablished",
+      hostId,
+      sessionId,
+      transportKind,
+    });
+  }
+
+  sessionLost(
+    hostId: string,
+    sessionId: string,
+    transportKind: SelectionTransportKind,
+  ): void {
+    this.calls.push({ method: "sessionLost", hostId, sessionId, transportKind });
+  }
+
+  reportDialSuccess(
+    hostId: string,
+    attemptId: string,
+    transportKind: SelectionTransportKind,
+  ): void {
+    this.calls.push({
+      method: "reportDialSuccess",
+      hostId,
+      attemptId,
+      transportKind,
+    });
+  }
+
+  reportDialRefusal(
+    hostId: string,
+    attemptId: string,
+    transportKind: SelectionTransportKind,
+    refusalDetail: "plan-restricted" | null,
+  ): void {
+    this.calls.push({
+      method: "reportDialRefusal",
+      hostId,
+      attemptId,
+      transportKind,
+      refusalDetail,
+    });
+  }
+
+  reportDialTimeout(
+    hostId: string,
+    attemptId: string,
+    transportKind: SelectionTransportKind,
+  ): void {
+    this.calls.push({
+      method: "reportDialTimeout",
+      hostId,
+      attemptId,
+      transportKind,
+    });
+  }
+
+  reportDialIndeterminate(
+    hostId: string,
+    attemptId: string,
+    transportKind: SelectionTransportKind,
+  ): void {
+    this.calls.push({
+      method: "reportDialIndeterminate",
+      hostId,
+      attemptId,
+      transportKind,
+    });
+  }
+
+  reportCompatVerdict(input: {
+    readonly hostId: string;
+    readonly probedOnSessionId: string | null;
+    readonly hostVersion: string | null;
+    readonly incompatibility: SelectionIncompatibility | null;
+  }): void {
+    this.calls.push({ method: "reportCompatVerdict", input });
+  }
+
+  /** Every recorded call for one method name, narrowed to its own shape. */
+  callsNamed<Method extends RecordedEvidenceCall["method"]>(
+    method: Method,
+  ): (RecordedEvidenceCall & { readonly method: Method })[] {
+    return this.calls.filter(
+      (call): call is RecordedEvidenceCall & { readonly method: Method } =>
+        call.method === method,
+    );
   }
 }
 
@@ -2214,6 +2373,203 @@ describe("RemoteSession poisoned inbound on a subscription stream (S2 / S4-clien
         expect(relay.errors).toEqual([]);
       } finally {
         streamB.close();
+        session.close();
+      }
+    },
+    TEST_BUDGET_MS,
+  );
+});
+
+describe("RemoteSession evidence classification (redesign P1.3 invariant 5)", () => {
+  it(
+    "plan-restricted attach-grant denial reports exactly one refusal, never an indeterminate",
+    async () => {
+      const relay = new FakeRelayHost();
+      const lease = new MutableBearerLease("valid-token", "user-1");
+      const recorder = new RecordingEvidence();
+      const session = new RemoteSession({
+        ...buildSessionOptions(relay, lease, null),
+        grantProvider: () =>
+          Promise.resolve({ kind: "plan-restricted" as const }),
+        evidence: recorder,
+      });
+      try {
+        session.start();
+        await vi.waitFor(() => expect(session.isClosed()).toBe(true), WAIT);
+
+        const refusals = recorder.callsNamed("reportDialRefusal");
+        expect(refusals).toHaveLength(1);
+        expect(refusals[0].refusalDetail).toBe("plan-restricted");
+        expect(refusals[0].hostId).toBe("host-1");
+        expect(refusals[0].transportKind).toBe("remote-relay");
+        expect(recorder.callsNamed("reportDialIndeterminate")).toHaveLength(0);
+      } finally {
+        session.close();
+      }
+    },
+    TEST_BUDGET_MS,
+  );
+
+  it(
+    "an unavailable attach-grant mint (signed out / revoked / authn 5xx) reports exactly one indeterminate, never a refusal",
+    async () => {
+      const relay = new FakeRelayHost();
+      const lease = new MutableBearerLease("valid-token", "user-1");
+      const recorder = new RecordingEvidence();
+      const session = new RemoteSession({
+        ...buildSessionOptions(relay, lease, null),
+        grantProvider: () =>
+          Promise.resolve({
+            kind: "unavailable" as const,
+            detail: "authn answered HTTP 500",
+            context: "",
+          }),
+        evidence: recorder,
+      });
+      try {
+        session.start();
+        await vi.waitFor(
+          () => expect(recorder.calls.length).toBeGreaterThan(0),
+          WAIT,
+        );
+
+        const indeterminates = recorder.callsNamed("reportDialIndeterminate");
+        expect(indeterminates).toHaveLength(1);
+        expect(indeterminates[0].hostId).toBe("host-1");
+        expect(indeterminates[0].transportKind).toBe("remote-relay");
+        // The classification rule's whole point: a credential/authn-plane
+        // failure must never be counted as a refusal, or one authn outage
+        // would reach the confirmed-death streak on every remote host at
+        // once and fail the whole fleet over (module header, transport
+        // -evidence.ts).
+        expect(recorder.callsNamed("reportDialRefusal")).toHaveLength(0);
+      } finally {
+        session.close();
+      }
+    },
+    TEST_BUDGET_MS,
+  );
+});
+
+describe("RemoteSession evidence retraction on terminal-fatal (redesign P1.3)", () => {
+  it(
+    "a session that reached ready and then goes terminal-fatal still retracts through sessionLost, and a fresh session's connection-loss refusal is not suppressed afterward",
+    async () => {
+      const relay = new FakeRelayHost();
+      const lease = new MutableBearerLease("valid-token", "user-1");
+      const recorder = new RecordingEvidence();
+      const session = new RemoteSession({
+        ...buildSessionOptions(relay, lease, null),
+        evidence: recorder,
+      });
+      try {
+        session.start();
+        await vi.waitFor(() => expect(session.isReady()).toBe(true), WAIT);
+
+        const established = recorder.callsNamed("sessionEstablished");
+        expect(established).toHaveLength(1);
+        const announcedSessionId = established[0].sessionId;
+
+        // Drive a genuine terminal-fatal (not a plain drop): a session-level
+        // FATAL whose code is neither `retryable` nor `UNAUTHORIZED` stays
+        // terminal via `goTerminalFatal`, exactly like the existing
+        // "terminal close notification" describe block above.
+        await relay.sendStreamFatal(SESSION_CONTROL_STREAM_ID, {
+          code: "INCOMPATIBLE",
+          reason: "manifest mismatch",
+          incompatibleMethods: null,
+          upgradeGuidance: null,
+        });
+        await vi.waitFor(() => expect(session.isClosed()).toBe(true), WAIT);
+
+        const lost = recorder.callsNamed("sessionLost");
+        expect(lost).toHaveLength(1);
+        expect(lost[0].sessionId).toBe(announcedSessionId);
+        expect(lost[0].hostId).toBe("host-1");
+
+        // A fresh session/generation for the SAME host must still be able to
+        // produce refusal evidence afterward - proving `teardownConnection`'s
+        // retraction really ran and left no phantom "still live" session
+        // suppressing later death evidence for this host (module header,
+        // `announcedSessionId`).
+        const deadFactory: IStreamWebSocketFactory = {
+          create: (): StreamWebSocketLike => {
+            const socket = new FakeSocket(
+              () => undefined,
+              () => undefined,
+            );
+            queueMicrotask(() => {
+              socket.onclose?.({ code: 1006, reason: "", wasClean: false });
+            });
+            return socket;
+          },
+        };
+        const freshSession = new RemoteSession({
+          ...buildSessionOptions(relay, lease, null),
+          webSocketFactory: deadFactory,
+          evidence: recorder,
+        });
+        try {
+          freshSession.start();
+          await vi.waitFor(
+            () =>
+              expect(
+                recorder.callsNamed("reportDialRefusal").length,
+              ).toBeGreaterThan(0),
+            WAIT,
+          );
+          const freshRefusals = recorder.callsNamed("reportDialRefusal");
+          expect(freshRefusals).toHaveLength(1);
+          expect(freshRefusals[0].hostId).toBe("host-1");
+          expect(freshRefusals[0].refusalDetail).toBeNull();
+        } finally {
+          freshSession.close();
+        }
+      } finally {
+        session.close();
+      }
+    },
+    TEST_BUDGET_MS,
+  );
+});
+
+describe("RemoteSession connection-loss attempt id is distinct from its generation's success id (redesign P1.3)", () => {
+  it(
+    "the connection-loss refusal after a ready boundary uses a suffixed id, not the dial-success attempt id",
+    async () => {
+      const relay = new FakeRelayHost();
+      const lease = new MutableBearerLease("valid-token", "user-1");
+      const recorder = new RecordingEvidence();
+      const session = new RemoteSession({
+        ...buildSessionOptions(relay, lease, null),
+        evidence: recorder,
+      });
+      try {
+        session.start();
+        await vi.waitFor(() => expect(session.isReady()).toBe(true), WAIT);
+
+        const successes = recorder.callsNamed("reportDialSuccess");
+        expect(successes).toHaveLength(1);
+        const successAttemptId = successes[0].attemptId;
+
+        relay.dropCurrentConnection();
+        await vi.waitFor(
+          () =>
+            expect(
+              recorder.callsNamed("reportDialRefusal").length,
+            ).toBeGreaterThan(0),
+          WAIT,
+        );
+
+        const refusals = recorder.callsNamed("reportDialRefusal");
+        expect(refusals).toHaveLength(1);
+        const lostAttemptId = refusals[0].attemptId;
+        // Not deduped away: reusing the generation's own dial-success id
+        // here would collide with the authority's per-attempt-id dedup and
+        // swallow the very first refusal after a live session died.
+        expect(lostAttemptId).not.toBe(successAttemptId);
+        expect(lostAttemptId).toBe(`${successAttemptId}-lost`);
+      } finally {
         session.close();
       }
     },

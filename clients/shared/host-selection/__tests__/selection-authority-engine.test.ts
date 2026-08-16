@@ -38,6 +38,7 @@ import {
   fleetHost,
   findLease,
   recordEngineEvents,
+  type RecordedEngineEvent,
 } from "./selection-authority-harness";
 
 // ---------------------------------------------------------------- builders
@@ -2319,7 +2320,7 @@ describe("SelectionAuthorityEngineImpl - P1.3 F14 clear on identity adopt (H)", 
     };
   }): {
     engine: SelectionAuthorityEngineImpl;
-    events: ReturnType<typeof recordEngineEvents>["events"];
+    events: readonly RecordedEngineEvent[];
     transition: () => void;
   } {
     const store = new InMemoryPreferredHostStore();

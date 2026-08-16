@@ -19,6 +19,24 @@ export const USAGE_EXPORT_REGION_SELECTOR = "[data-usage-export-region]";
  */
 const USAGE_EXPORT_EXCLUDE_SELECTOR = "[data-usage-export-exclude]";
 
+/**
+ * Marks a horizontal scroller INSIDE the export region whose full content
+ * must appear in the shared image, scaled down to fit (the year-wide
+ * activity heatmap). A shared image has no scrollbar, so capturing the
+ * scroller as-is would silently crop the year to whatever slice the live
+ * surface happened to be scrolled to.
+ */
+export const USAGE_EXPORT_FIT_SELECTOR = "[data-usage-export-fit]";
+
+/**
+ * Marks a node whose TEXT must be replaced in the shared image with the
+ * attribute's value - for copy that is right on the live page but leaks
+ * workspace-internal detail in a screenshot (a host's display name in the
+ * cost figure's scope note). The live surface keeps the specific text;
+ * only the capture clone is rewritten.
+ */
+export const USAGE_EXPORT_REDACT_ATTRIBUTE = "data-usage-export-redact";
+
 const SVG_NS = "http://www.w3.org/2000/svg";
 const EXPORT_PADDING_PX = 32;
 
@@ -68,6 +86,12 @@ export async function captureUsageExportImageBlob(
   wrapper.appendChild(cloneRegionWithResolvedPalette(region));
   wrapper.appendChild(buildBrandingFooter());
 
+  // Parked offscreen but still in the document: without these, keyboard
+  // and assistive tech can reach the clone's dead buttons while a slow
+  // rasterisation is in flight.
+  wrapper.setAttribute("inert", "");
+  wrapper.setAttribute("aria-hidden", "true");
+  wrapper.style.pointerEvents = "none";
   document.body.appendChild(wrapper);
   try {
     const blob = await toBlob(wrapper, {
@@ -141,10 +165,20 @@ function buildBrandingFooter(): HTMLElement {
 }
 
 /**
- * Deep-clone the region and rewrite every SVG presentation attribute
- * whose value carries `var(...)` to the source element's computed value.
+ * Deep-clone the region and fix up everything a bare `cloneNode` loses:
+ *
+ * - SVG presentation attributes carrying `var(...)` are rewritten to the
+ *   source element's computed value (the ECharts palette plumbing).
+ * - Marked scrollers are scaled down so their WHOLE content fits the
+ *   region's width (see {@link USAGE_EXPORT_FIT_SELECTOR}). The export is
+ *   deterministic - the same image whatever the live scroll position -
+ *   because a still frame cannot offer the rest, so anything not captured
+ *   is simply lost rather than one scroll away.
+ *
  * Original and clone are walked in parallel - `cloneNode(true)` preserves
- * order, so index `i` in both lists is the same element.
+ * order, so index `i` in both lists is the same element. Node removals
+ * (the exclude-strip) and text rewrites (redaction) run only AFTER the
+ * walk, since removal desynchronizes the index pairing.
  */
 function cloneRegionWithResolvedPalette(region: HTMLElement): HTMLElement {
   const clone = region.cloneNode(true);
@@ -157,25 +191,64 @@ function cloneRegionWithResolvedPalette(region: HTMLElement): HTMLElement {
   for (let i = 0; i < sources.length; i++) {
     const source = sources[i];
     const target = targets[i];
-    if (!(source instanceof SVGElement) || !(target instanceof SVGElement)) {
-      continue;
-    }
-    for (const name of attributes) {
-      const value = source.getAttribute(name);
-      if (value === null || !value.includes("var(")) continue;
-      const computed = getComputedStyle(source).getPropertyValue(name);
-      if (computed !== "") {
-        target.setAttribute(name, computed);
+    if (source instanceof SVGElement && target instanceof SVGElement) {
+      for (const name of attributes) {
+        const value = source.getAttribute(name);
+        if (value === null || !value.includes("var(")) continue;
+        const computed = getComputedStyle(source).getPropertyValue(name);
+        if (computed !== "") {
+          target.setAttribute(name, computed);
+        }
       }
     }
+    if (
+      source instanceof HTMLElement &&
+      target instanceof HTMLElement &&
+      source.matches(USAGE_EXPORT_FIT_SELECTOR)
+    ) {
+      fitScrollerToWidth(source, target);
+    }
   }
-  // After the parallel walk - removal desynchronizes the index pairing.
   for (const excluded of clone.querySelectorAll(
     USAGE_EXPORT_EXCLUDE_SELECTOR,
   )) {
     excluded.remove();
   }
+  for (const redacted of clone.querySelectorAll(
+    `[${USAGE_EXPORT_REDACT_ATTRIBUTE}]`,
+  )) {
+    redacted.textContent =
+      redacted.getAttribute(USAGE_EXPORT_REDACT_ATTRIBUTE) ?? "";
+  }
   return clone;
+}
+
+/**
+ * Shrink a marked scroller's clone until its whole scrollable content fits
+ * the width it has on screen - the heatmap's full year rather than the ~3
+ * visible months.
+ *
+ * Measurements come from the LIVE node: the clone is parked in an offscreen
+ * wrapper and has not laid out yet, so its own metrics are meaningless.
+ * `scale()` does not affect layout, so the clone's own height is set to the
+ * scaled content height - otherwise the scroller keeps the unscaled box and
+ * leaves a band of empty pixels under the shrunken grid. Content wider than
+ * the viewport is the only case worth handling; `f` is capped at 1 so a
+ * scroller that already fits is never blown up.
+ */
+function fitScrollerToWidth(source: HTMLElement, target: HTMLElement): void {
+  const { clientWidth, scrollWidth, scrollHeight } = source;
+  if (scrollWidth <= 0) return;
+  const scale = Math.min(1, clientWidth / scrollWidth);
+  if (scale >= 1) return;
+  target.style.overflow = "hidden";
+  target.style.height = `${String(scrollHeight * scale)}px`;
+  for (const child of target.children) {
+    if (!(child instanceof HTMLElement)) continue;
+    child.style.width = `${String(scrollWidth)}px`;
+    child.style.transform = `scale(${String(scale)})`;
+    child.style.transformOrigin = "top left";
+  }
 }
 
 /**

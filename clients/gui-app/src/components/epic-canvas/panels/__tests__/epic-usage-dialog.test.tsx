@@ -606,6 +606,45 @@ describe("<EpicUsageDialog />", () => {
     await expect(captured).resolves.toBe(blob);
   });
 
+  it("disables the download button too while a copy export is in flight", async () => {
+    const user = userEvent.setup();
+    const blob = new Blob(["fake-png-bytes"], { type: "image/png" });
+    let resolveCapture: (value: Blob) => void = () => undefined;
+    mocks.captureUsageExportImageBlob.mockReturnValue(
+      new Promise<Blob>((resolve) => {
+        resolveCapture = resolve;
+      }),
+    );
+    mocks.copyImageBlobPromiseToClipboard.mockImplementation(
+      async (blobPromise) => {
+        await blobPromise;
+      },
+    );
+    renderDialog(usageSummaryResponse);
+    await screen.findByTestId("usage-cost-figure");
+
+    await user.click(screen.getByTestId("epic-usage-copy-image"));
+
+    // A capture is a full-region rasterisation, so the two legs share one
+    // mutation: while the copy runs, DOWNLOAD is disabled too - not just the
+    // button that was pressed.
+    const downloadButton = screen.getByTestId("epic-usage-download-image");
+    await waitFor(() => {
+      expect(
+        downloadButton instanceof HTMLButtonElement && downloadButton.disabled,
+      ).toBe(true);
+    });
+    expect(mocks.captureUsageExportImageBlob).toHaveBeenCalledTimes(1);
+
+    resolveCapture(blob);
+
+    await waitFor(() => {
+      expect(
+        downloadButton instanceof HTMLButtonElement && downloadButton.disabled,
+      ).toBe(false);
+    });
+  });
+
   it("captures the export region and saves it to disk from 'Download image'", async () => {
     const user = userEvent.setup();
     const blob = new Blob(["fake-png-bytes"], { type: "image/png" });

@@ -79,13 +79,18 @@ const RESPONSE_WINDOW = {
 // `daysForResponse`/`formatDateRangeLabel` in `usage-summary-panel.tsx`) -
 // computed here with the same helpers rather than hand-typed, so the
 // assertion tracks the panel's actual label instead of a guess at its format.
-const EXPECTED_SUBHEADING = formatDateRangeLabel(
+const EXPECTED_DATE_RANGE = formatDateRangeLabel(
   lastNCalendarDays(
     RESPONSE_WINDOW.windowDays,
     RESPONSE_WINDOW.timezone,
     RESPONSE_WINDOW.endAtExclusive - 1,
   ),
 );
+
+// The metric is part of the subheading because its toggle is outside the
+// capture region. The separator and the metric wording are asserted literally
+// - this is the text a reader of the exported PNG sees.
+const EXPECTED_SUBHEADING = `${EXPECTED_DATE_RANGE} · Cost`;
 
 function usageSummaryResponse(): UsageSummaryResponse {
   return {
@@ -186,7 +191,11 @@ function renderPanel(
 describe("<UsageSummaryPanel /> image export", () => {
   it("enables both export buttons and renders the capture region once loaded", async () => {
     renderPanel(usageSummaryResponse);
+    // Both reads, not just the primary one: `exportReady` also waits for the
+    // activity lane to settle, so waiting on the cost figure alone would
+    // assert on a pass where the buttons are still legitimately disabled.
     await screen.findByTestId("usage-cost-figure");
+    await screen.findByTestId("usage-activity-section");
 
     const copyButton = screen.getByTestId("usage-copy-image");
     const downloadButton = screen.getByTestId("usage-download-image");
@@ -215,6 +224,7 @@ describe("<UsageSummaryPanel /> image export", () => {
     ).toBe(true);
 
     await screen.findByTestId("usage-cost-figure");
+    await screen.findByTestId("usage-activity-section");
     expect(
       copyButton instanceof HTMLButtonElement && copyButton.disabled,
     ).toBe(false);
@@ -245,6 +255,27 @@ describe("<UsageSummaryPanel /> image export", () => {
       subheading: EXPECTED_SUBHEADING,
     });
     expect(mocks.saveBlobToDisk).not.toHaveBeenCalled();
+  });
+
+  it("names the selected metric in the subheading after the toggle switches", async () => {
+    const user = userEvent.setup();
+    const blob = new Blob(["fake-png-bytes"], { type: "image/png" });
+    mocks.captureUsageExportImageBlob.mockResolvedValue(blob);
+    mocks.copyImageBlobPromiseToClipboard.mockResolvedValue(undefined);
+    renderPanel(usageSummaryResponse);
+    await screen.findByTestId("usage-cost-figure");
+    await screen.findByTestId("usage-activity-section");
+
+    await user.click(screen.getByTestId("usage-metric-tokens"));
+    await user.click(screen.getByTestId("usage-copy-image"));
+
+    await waitFor(() => {
+      expect(mocks.captureUsageExportImageBlob).toHaveBeenCalledWith({
+        region: screen.getByTestId("usage-export-region"),
+        heading: "Usage",
+        subheading: `${EXPECTED_DATE_RANGE} · Tokens`,
+      });
+    });
   });
 
   it("hands the pending capture to the clipboard on click, before it resolves", async () => {

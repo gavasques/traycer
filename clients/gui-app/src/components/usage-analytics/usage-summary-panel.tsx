@@ -35,7 +35,10 @@ import {
 import { formatDateRangeLabel } from "@/lib/usage-analytics/format-metric-value";
 import { lastNCalendarDays } from "@/lib/usage-analytics/day-window";
 import { UsageWindowPicker } from "@/components/usage-analytics/usage-window-picker";
-import { UsageMetricToggle } from "@/components/usage-analytics/usage-metric-toggle";
+import {
+  UsageMetricToggle,
+  USAGE_METRIC_LABELS,
+} from "@/components/usage-analytics/usage-metric-toggle";
 import { UsageDailyChart } from "@/components/usage-analytics/usage-daily-chart";
 import { UsageBreakdownTable } from "@/components/usage-analytics/usage-breakdown-table";
 import { UsageDayBreakdownTable } from "@/components/usage-analytics/usage-day-breakdown-table";
@@ -236,17 +239,37 @@ export function UsageSummaryPanel(props: UsageSummaryPanelProps): ReactNode {
   // and an event-time DOM query needs no render-time ref reads. Scoped to
   // this root so a second usage surface can never be captured by mistake.
   const panelRef = useRef<HTMLDivElement | null>(null);
-  const exportReady = query.data !== undefined;
-  const { copyImage, downloadImage, isCopying, isDownloading } =
-    useUsageImageExport({
-      getExportNode: () =>
-        panelRef.current?.querySelector<HTMLElement>(
-          USAGE_EXPORT_REGION_SELECTOR,
-        ) ?? null,
-      fileName: `traycer-usage-${String(windowDays)}d.png`,
-      heading: "Usage",
-      subheading: dateRangeLabel,
-    });
+  // The capture region spans the headline THROUGH the activity calendar, so
+  // "the primary read resolved" is not enough to export: while the activity
+  // lane is still loading it renders nothing at all, and a capture taken then
+  // yields a PNG with the Activity section silently missing rather than one
+  // that looks unfinished. Both lanes must be at rest first - a displayed
+  // error card inside the image is honest, an absent section is not.
+  const exportReady =
+    query.data !== undefined &&
+    usageActivityLaneSettled(activityQuery, activityFallbackQuery);
+  const { mutation, copyImage, downloadImage } = useUsageImageExport({
+    getExportNode: () =>
+      panelRef.current?.querySelector<HTMLElement>(
+        USAGE_EXPORT_REGION_SELECTOR,
+      ) ?? null,
+    fileName: `traycer-usage-${String(windowDays)}d.png`,
+    heading: "Usage",
+    // The metric belongs in the subheading because its toggle sits OUTSIDE
+    // the capture region: the chart and the activity calendar both obey it,
+    // so a tokens-mode capture is a page of magnitudes with nothing naming
+    // what they measure - a reader would take them for dollars. The date
+    // range alone describes only half the scope of what the image shows.
+    subheading: `${dateRangeLabel} · ${USAGE_METRIC_LABELS[metric]}`,
+    errorSource: "Usage settings",
+    analyticsSource: "settings",
+  });
+  // One export runs at a time, so BOTH buttons go disabled while either is
+  // pending; only the button that started it shows the spinner, which is
+  // what the variables discriminate.
+  const isExporting = mutation.isPending;
+  const isCopying = isExporting && mutation.variables?.action === "copy";
+  const isDownloading = isExporting && mutation.variables?.action === "download";
 
   return (
     <div ref={panelRef} className="flex w-full max-w-4xl flex-col gap-5">
@@ -284,7 +307,7 @@ export function UsageSummaryPanel(props: UsageSummaryPanelProps): ReactNode {
               size="icon-sm"
               aria-label="Copy usage image"
               data-testid="usage-copy-image"
-              disabled={!exportReady || isCopying}
+              disabled={!exportReady || isExporting}
               onClick={copyImage}
             >
               {isCopying ? (
@@ -310,7 +333,7 @@ export function UsageSummaryPanel(props: UsageSummaryPanelProps): ReactNode {
               size="icon-sm"
               aria-label="Download usage image"
               data-testid="usage-download-image"
-              disabled={!exportReady || isDownloading}
+              disabled={!exportReady || isExporting}
               onClick={downloadImage}
             >
               {isDownloading ? (
@@ -637,19 +660,13 @@ function UsageActivitySection(props: {
       </div>
     );
   }
-  // The year read failed for a reason the fallback does not exist for, or
-  // the fallback itself failed too - either way the section owes the
-  // reader an explanation and a way back, never a silent gap.
-  const windowTooWide = isWindowTooWideError(query.error);
-  if (
-    query.error !== null &&
-    (!windowTooWide || fallbackQuery.error !== null)
-  ) {
+  const displayedError = usageActivityDisplayedError(query, fallbackQuery);
+  if (displayedError !== null) {
     return (
       <div className="flex flex-col gap-2" data-testid="usage-activity-section">
         <h3 className="text-ui-sm font-medium text-foreground">Activity</h3>
         <UsageErrorCard
-          error={query.error}
+          error={displayedError}
           onRetry={() => {
             void query.refetch();
             void fallbackQuery.refetch();
@@ -659,4 +676,44 @@ function UsageActivitySection(props: {
     );
   }
   return null;
+}
+
+/**
+ * The error the activity section puts on screen, or `null` when it has none
+ * to show yet.
+ *
+ * The year read failed for a reason the fallback does not exist for, or the
+ * fallback itself failed too - either way the section owes the reader an
+ * explanation and a way back, never a silent gap. A classified
+ * too-wide-window rejection with the fallback still in flight is NOT that
+ * state: the narrower read is the answer to it, so the section waits.
+ */
+function usageActivityDisplayedError(
+  query: UsageSummaryQueryResult,
+  fallbackQuery: UsageSummaryQueryResult,
+): HostRpcError | null {
+  const error = query.error;
+  if (error === null) return null;
+  if (isWindowTooWideError(error) && fallbackQuery.error === null) return null;
+  return error;
+}
+
+/**
+ * Whether the activity lane has reached a state it actually RENDERS - the
+ * calendar from either read, or the error card above. Anything else is the
+ * section's loading branch, which draws nothing.
+ *
+ * Shared with the export gate rather than restated there: a second notion of
+ * "settled" would drift from the branching in {@link UsageActivitySection},
+ * and the failure that drift produces is invisible - an image that captured
+ * the gap where the calendar was about to appear.
+ */
+function usageActivityLaneSettled(
+  query: UsageSummaryQueryResult,
+  fallbackQuery: UsageSummaryQueryResult,
+): boolean {
+  return (
+    (query.data ?? fallbackQuery.data) !== undefined ||
+    usageActivityDisplayedError(query, fallbackQuery) !== null
+  );
 }

@@ -113,16 +113,23 @@ export function EpicUsageDialog(props: EpicUsageDialogProps): ReactNode {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const exportReady =
     query.data !== undefined && query.data.summary.totals.factCount > 0;
-  const { copyImage, downloadImage, isCopying, isDownloading } =
-    useUsageImageExport({
-      getExportNode: () =>
-        contentRef.current?.querySelector<HTMLElement>(
-          USAGE_EXPORT_REGION_SELECTOR,
-        ) ?? null,
-      fileName: `traycer-usage-${String(windowDays)}d.png`,
-      heading: "Usage",
-      subheading: "Cost and token usage for this task.",
-    });
+  const { mutation, copyImage, downloadImage } = useUsageImageExport({
+    getExportNode: () =>
+      contentRef.current?.querySelector<HTMLElement>(
+        USAGE_EXPORT_REGION_SELECTOR,
+      ) ?? null,
+    fileName: `traycer-usage-${String(windowDays)}d.png`,
+    heading: "Usage",
+    subheading: "Cost and token usage for this task.",
+    errorSource: "Epic usage dialog",
+    analyticsSource: "epic_dialog",
+  });
+  // One export runs at a time, so BOTH buttons go disabled while either is
+  // pending; only the button that started it shows the spinner, which is
+  // what the variables discriminate.
+  const isExporting = mutation.isPending;
+  const isCopying = isExporting && mutation.variables?.action === "copy";
+  const isDownloading = isExporting && mutation.variables?.action === "download";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -162,7 +169,7 @@ export function EpicUsageDialog(props: EpicUsageDialogProps): ReactNode {
                   size="sm"
                   className="max-[28rem]:w-full"
                   data-testid="epic-usage-copy-image"
-                  disabled={!exportReady || isCopying}
+                  disabled={!exportReady || isExporting}
                   onClick={copyImage}
                 >
                   {isCopying ? (
@@ -182,7 +189,7 @@ export function EpicUsageDialog(props: EpicUsageDialogProps): ReactNode {
                   size="sm"
                   className="max-[28rem]:w-full"
                   data-testid="epic-usage-download-image"
-                  disabled={!exportReady || isDownloading}
+                  disabled={!exportReady || isExporting}
                   onClick={downloadImage}
                 >
                   {isDownloading ? (

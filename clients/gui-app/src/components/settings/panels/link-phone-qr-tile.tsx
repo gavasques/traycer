@@ -2,6 +2,7 @@ import { useMemo, type ReactElement } from "react";
 import QRCode from "qrcode";
 import { buildLinkLoginQrPayload } from "@traycer-clients/shared/auth/link-login";
 import { BrandMark } from "@/components/auth/cinematic-backdrop";
+import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
@@ -12,15 +13,37 @@ import { cn } from "@/lib/utils";
  * can compare every drawn module against the encoder's matrix), it takes the
  * brand mark as the inline SVG the app already has instead of loading an image
  * the test environment can never resolve, and it costs no dependency.
+ *
+ * The tile owns a fixed square footprint whether or not a code is in hand, so
+ * a rotation never reflows the panel around it.
  */
 
-/** The spec's minimum silent margin; scanners rely on it to find the symbol. */
-const QUIET_ZONE_MODULES = 4;
+/**
+ * The spec's minimum silent margin is 4 modules. A fifth is carried because
+ * the frame's stroke covers the paper's outermost fraction (see below), and
+ * the four light modules have to survive that.
+ */
+const QUIET_ZONE_MODULES = 5;
 /** Finder patterns are 7x7 modules at three corners, drawn as styled eyes. */
 const FINDER_SIZE_MODULES = 7;
 /** Gap between adjacent modules, in module units, that gives the dot look. */
 const MODULE_INSET = 0.04;
 const MODULE_RADIUS = 0.32;
+
+/**
+ * Frame geometry, in percent of the tile's side — the unit both the SVG frame
+ * (a 100x100 viewBox) and the loading state's CSS can express exactly.
+ *
+ * The paper's edge is placed ON the frame's centre line, with the same corner
+ * radius, so the stroke straddles it: half the band covers the paper's own
+ * antialiased boundary, half falls outside onto the app background. Nothing
+ * light can survive beyond the band's outer edge, which is what keeps the
+ * white tile from speckling through the frame's curves in dark mode. Two
+ * independently rounded boxes stacked on each other cannot promise that.
+ */
+const FRAME_STROKE_PERCENT = 2.8;
+const FRAME_CENTRE_INSET_PERCENT = FRAME_STROKE_PERCENT / 2;
+const FRAME_RADIUS_PERCENT = 4;
 
 /**
  * A QR scans by luminance contrast, not by palette, so the symbol keeps a
@@ -106,6 +129,10 @@ function QrSymbolSvg(props: { readonly symbol: QrSymbol }) {
       );
     }
   }
+  // The frame's percentages expressed in this symbol's own units, so paper
+  // and frame describe one shape rather than two that nearly agree.
+  const paperInset = (FRAME_CENTRE_INSET_PERCENT / 100) * extent;
+  const paperRadius = (FRAME_RADIUS_PERCENT / 100) * extent;
   return (
     <svg
       viewBox={`0 0 ${extent} ${extent}`}
@@ -117,7 +144,14 @@ function QrSymbolSvg(props: { readonly symbol: QrSymbol }) {
       data-qr-error-correction="H"
       data-qr-quiet-zone={QUIET_ZONE_MODULES}
     >
-      <rect width={extent} height={extent} fill={QR_PAPER} />
+      <rect
+        x={paperInset}
+        y={paperInset}
+        width={extent - paperInset * 2}
+        height={extent - paperInset * 2}
+        rx={paperRadius}
+        fill={QR_PAPER}
+      />
       <g data-testid="link-phone-qr-modules">{modules}</g>
       <FinderEye row={0} col={0} />
       <FinderEye row={0} col={size - FINDER_SIZE_MODULES} />
@@ -131,9 +165,14 @@ function QrSymbolSvg(props: { readonly symbol: QrSymbol }) {
  * as the seconds run out, so the thing that is expiring is the thing that
  * shows it. `pathLength` normalises the perimeter to 1, which makes the
  * remaining share the dash offset directly.
+ *
+ * Track and drain are the same path, and the drain's caps are butt — a round
+ * cap would bulge past the band at the two dash boundaries and read as a
+ * lumpy seam where the two colours meet.
  */
 function ExpiryFrame(props: { readonly remainingFraction: number }) {
   const remaining = Math.min(1, Math.max(0, props.remainingFraction));
+  const side = 100 - FRAME_CENTRE_INSET_PERCENT * 2;
   return (
     <svg
       viewBox="0 0 100 100"
@@ -141,24 +180,23 @@ function ExpiryFrame(props: { readonly remainingFraction: number }) {
       aria-hidden="true"
     >
       <rect
-        x={1.4}
-        y={1.4}
-        width={97.2}
-        height={97.2}
-        rx={4}
-        pathLength={1}
-        strokeWidth={2.8}
+        x={FRAME_CENTRE_INSET_PERCENT}
+        y={FRAME_CENTRE_INSET_PERCENT}
+        width={side}
+        height={side}
+        rx={FRAME_RADIUS_PERCENT}
+        strokeWidth={FRAME_STROKE_PERCENT}
         className="fill-none stroke-border"
       />
       <rect
-        x={1.4}
-        y={1.4}
-        width={97.2}
-        height={97.2}
-        rx={4}
+        x={FRAME_CENTRE_INSET_PERCENT}
+        y={FRAME_CENTRE_INSET_PERCENT}
+        width={side}
+        height={side}
+        rx={FRAME_RADIUS_PERCENT}
         pathLength={1}
-        strokeWidth={2.8}
-        strokeLinecap="round"
+        strokeWidth={FRAME_STROKE_PERCENT}
+        strokeLinecap="butt"
         strokeDasharray={1}
         strokeDashoffset={1 - remaining}
         data-testid="link-phone-expiry-frame"
@@ -171,26 +209,65 @@ function ExpiryFrame(props: { readonly remainingFraction: number }) {
   );
 }
 
-export function LinkPhoneQrTile(props: {
-  readonly code: string;
-  /** Share of the displayed code's life still left, 0..1. */
+/**
+ * The square the tile always occupies. Both states render it, so the panel's
+ * height is the same before and after a code arrives.
+ */
+function TileFootprint(props: {
+  readonly state: "code" | "loading";
   readonly remainingFraction: number;
+  readonly children: ReactElement;
 }) {
-  const symbol = useMemo(() => encodeQrSymbol(props.code), [props.code]);
-  if (symbol === null) {
-    return <Skeleton className="aspect-square w-full max-w-64 rounded-xl" />;
-  }
   return (
     <div
       className="relative aspect-square w-full max-w-64"
       data-testid="link-phone-qr-tile"
+      data-tile-state={props.state}
     >
+      {props.children}
+      <ExpiryFrame remainingFraction={props.remainingFraction} />
+    </div>
+  );
+}
+
+export function LinkPhoneQrTile(props: {
+  /** Null while a code is being minted — the footprint is held either way. */
+  readonly code: string | null;
+  /** Share of the displayed code's life still left, 0..1. */
+  readonly remainingFraction: number;
+}) {
+  const symbol = useMemo(
+    () => (props.code === null ? null : encodeQrSymbol(props.code)),
+    [props.code],
+  );
+  if (symbol === null) {
+    return (
+      <TileFootprint state="loading" remainingFraction={0}>
+        <div
+          className="absolute inset-0"
+          data-testid="link-phone-qr-placeholder"
+        >
+          {/* The paper's own geometry, so the frame sits on this edge too. */}
+          <Skeleton className="absolute inset-[1.4%] rounded-[4%]" />
+          <div className="absolute inset-0 flex items-center justify-center">
+            <AgentSpinningDots
+              className={undefined}
+              testId={undefined}
+              variant={undefined}
+            />
+          </div>
+        </div>
+      </TileFootprint>
+    );
+  }
+  return (
+    <TileFootprint state="code" remainingFraction={props.remainingFraction}>
       <div
         // Keyed on the code so a rotation mounts a fresh tile and fades it in
         // instead of swapping the matrix under the user.
         key={props.code}
         className={cn(
-          "absolute inset-0 overflow-hidden rounded-xl bg-white",
+          "absolute inset-0",
           "animate-in fade-in-0 duration-500 motion-reduce:animate-none",
         )}
         data-testid="link-phone-qr-surface"
@@ -207,7 +284,6 @@ export function LinkPhoneQrTile(props: {
           </div>
         </div>
       </div>
-      <ExpiryFrame remainingFraction={props.remainingFraction} />
-    </div>
+    </TileFootprint>
   );
 }

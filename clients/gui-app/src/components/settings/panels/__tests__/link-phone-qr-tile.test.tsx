@@ -13,8 +13,11 @@ import { buildLinkLoginQrPayload } from "@traycer-clients/shared/auth/link-login
 import { LinkPhoneQrTile } from "../link-phone-qr-tile";
 
 const CODE = "ABCDE-FGHJK";
-const QUIET_ZONE = 4;
+const QUIET_ZONE = 5;
 const FINDER = 7;
+/** The frame's stroke straddles this inset, in percent of the tile's side. */
+const FRAME_CENTRE_INSET_PERCENT = 1.4;
+const FRAME_RADIUS_PERCENT = 4;
 
 function expectedSymbol(code: string) {
   const qr = QRCode.create(buildLinkLoginQrPayload(code), {
@@ -104,6 +107,64 @@ describe("LinkPhoneQrTile", () => {
     expect(frame().getAttribute("data-remaining-fraction")).toBe("1.00");
     view.rerender(<LinkPhoneQrTile code={CODE} remainingFraction={-0.2} />);
     expect(frame().getAttribute("data-remaining-fraction")).toBe("0.00");
+  });
+
+  it("ends the paper on the frame's centre line, sharing its corner curve", () => {
+    const expected = expectedSymbol(CODE);
+    render(<LinkPhoneQrTile code={CODE} remainingFraction={1} />);
+    const svg = screen.getByTestId("link-phone-qr");
+    const extent = expected.size + QUIET_ZONE * 2;
+    // The paper is the first rect in the symbol — everything else is a module
+    // or an eye. Its edge must land where the frame's stroke is centred, with
+    // the frame's radius, or the two curves disagree and the white tile
+    // speckles out past the band on a dark background.
+    const paper = svg.querySelector("rect");
+    const inset = (FRAME_CENTRE_INSET_PERCENT / 100) * extent;
+    expect(Number(paper?.getAttribute("x"))).toBeCloseTo(inset, 6);
+    expect(Number(paper?.getAttribute("width"))).toBeCloseTo(
+      extent - inset * 2,
+      6,
+    );
+    expect(Number(paper?.getAttribute("rx"))).toBeCloseTo(
+      (FRAME_RADIUS_PERCENT / 100) * extent,
+      6,
+    );
+    // Four light modules have to survive the stroke covering the paper's rim.
+    expect(QUIET_ZONE - inset).toBeGreaterThanOrEqual(4);
+  });
+
+  it("draws the drain flush against its track, with no protruding caps", () => {
+    render(<LinkPhoneQrTile code={CODE} remainingFraction={0.5} />);
+    const drain = screen.getByTestId("link-phone-expiry-frame");
+    expect(drain.getAttribute("stroke-linecap")).toBe("butt");
+    // Track and drain are the same path, so the band cannot step or gap.
+    const track = drain.previousElementSibling;
+    for (const attribute of ["x", "y", "width", "height", "rx"]) {
+      expect(track?.getAttribute(attribute)).toBe(
+        drain.getAttribute(attribute),
+      );
+    }
+  });
+
+  it("holds the same footprint while a code is being minted", () => {
+    const view = render(<LinkPhoneQrTile code={CODE} remainingFraction={1} />);
+    const withCode = screen.getByTestId("link-phone-qr-tile");
+    expect(withCode.getAttribute("data-tile-state")).toBe("code");
+
+    view.rerender(<LinkPhoneQrTile code={null} remainingFraction={0} />);
+    const pending = screen.getByTestId("link-phone-qr-tile");
+    // jsdom does no layout, so the invariant is pinned on the box that
+    // decides the height: same element, same sizing classes, both states.
+    expect(pending.className).toBe(withCode.className);
+    expect(pending.getAttribute("data-tile-state")).toBe("loading");
+    expect(screen.getByTestId("link-phone-qr-placeholder")).toBeTruthy();
+    expect(screen.queryByTestId("link-phone-qr")).toBeNull();
+    // The frame stays, empty — the tile still reads as the code's place.
+    expect(
+      screen
+        .getByTestId("link-phone-expiry-frame")
+        .getAttribute("data-remaining-fraction"),
+    ).toBe("0.00");
   });
 
   it("fades a rotated code in on a fresh surface", () => {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactElement } from "react";
 import { QrCode, Smartphone } from "lucide-react";
 import type { MintLinkLoginCodeResponse } from "@traycer/protocol/auth/link-login";
 import { LinkPhoneQrTile } from "@/components/settings/panels/link-phone-qr-tile";
@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { LINK_LOGIN_REMINT_MS } from "@/hooks/auth/use-link-login-code-query";
 import { LinkLoginMintError } from "@/lib/auth/link-login-mint-error";
+import { cn } from "@/lib/utils";
 import {
   useLinkLoginWatch,
   type LinkLoginDeadKind,
@@ -72,16 +73,35 @@ function claimantDeviceLabel(claim: LiveClaim): string {
   return "a device";
 }
 
+/** The verdict whose respond round-trip is in flight, if any. */
+type PendingVerdict = "approve" | "reject" | null;
+
+/**
+ * Attributes the in-flight respond to the button that fired it: the PRESSED
+ * button shows the inline spinner, the other one only disables — a Reject
+ * click must never put Approve into a loading state.
+ */
+function pendingRespondVerdict(
+  isPending: boolean,
+  variables: { readonly approve: boolean } | undefined,
+): PendingVerdict {
+  if (!isPending || variables === undefined) {
+    return null;
+  }
+  return variables.approve ? "approve" : "reject";
+}
+
 function ConfirmClaimCard(props: {
   readonly claim: LiveClaim;
-  readonly busy: boolean;
+  readonly pendingVerdict: PendingVerdict;
   readonly onDecide: (approve: boolean) => void;
 }) {
-  const detailLine = [
-    props.claim.address ?? "address unknown",
-    props.claim.location ?? "location unknown",
-    "just now",
-  ].join(" · ");
+  // Unknown metadata is simply absent — an "unknown" admission reads worse
+  // than nothing, and "just now" always anchors the line.
+  const detailLine = [props.claim.address, props.claim.location, "just now"]
+    .filter((part): part is string => part !== null)
+    .join(" · ");
+  const busy = props.pendingVerdict !== null;
   return (
     <div
       className="flex w-full max-w-md flex-col items-center gap-4"
@@ -106,30 +126,37 @@ function ConfirmClaimCard(props: {
       <div className="flex w-full items-center justify-center gap-3">
         <Button
           variant="default"
-          disabled={props.busy}
+          disabled={busy}
           data-testid="link-phone-approve"
           onClick={() => {
             props.onDecide(true);
           }}
         >
           Approve
-          {props.busy ? (
+          {props.pendingVerdict === "approve" ? (
             <AgentSpinningDots
               variant="dots"
               className="ml-1.5"
-              testId={undefined}
+              testId="link-phone-approve-spinner"
             />
           ) : null}
         </Button>
         <Button
           variant="outline"
-          disabled={props.busy}
+          disabled={busy}
           data-testid="link-phone-reject"
           onClick={() => {
             props.onDecide(false);
           }}
         >
           Reject
+          {props.pendingVerdict === "reject" ? (
+            <AgentSpinningDots
+              variant="dots"
+              className="ml-1.5"
+              testId="link-phone-reject-spinner"
+            />
+          ) : null}
         </Button>
       </div>
     </div>
@@ -230,33 +257,36 @@ function ApprovedCard(props: { readonly onRestart: () => void }) {
   );
 }
 
-function ShowingCard(props: { readonly minted: MintLinkLoginCodeResponse }) {
-  const countdown = useRotationCountdown({
-    expiresAtEpochSeconds: props.minted.expires_at,
-    expiresInSeconds: props.minted.expires_in,
-  });
+/**
+ * The typeable code's box. Shared by the live code and the state that is
+ * waiting for one, so both occupy exactly one line of the same type — the
+ * panel cannot change height as a code arrives or rotates away.
+ */
+const CODE_BOX_CLASS =
+  "w-full rounded-md border border-border/60 bg-muted/40 px-3 py-2 text-center font-mono text-ui-xs break-all select-all";
+
+/**
+ * Everything the code state shows around the tile. Both the live code and the
+ * regenerating one render through here, which is what makes their footprints
+ * identical by construction rather than by two layouts kept in agreement.
+ */
+function CodeSurface(props: {
+  readonly tile: ReactElement;
+  readonly codeSlot: ReactElement;
+  readonly statusLine: ReactElement;
+}) {
   return (
     <>
-      <LinkPhoneQrTile
-        code={props.minted.code}
-        remainingFraction={countdown.remainingFraction}
-      />
+      {props.tile}
       <div className="flex w-full max-w-md flex-col items-center gap-2">
         <p className="text-ui-sm text-muted-foreground">
           In the mobile app, choose{" "}
           <span className="font-medium text-foreground">Scan QR code</span> — or
           type this code in:
         </p>
-        <code className="w-full rounded-md border border-border/60 bg-muted/40 px-3 py-2 text-center font-mono text-ui-xs break-all select-all">
-          {props.minted.code}
-        </code>
+        {props.codeSlot}
         <div className="flex flex-col items-center gap-0.5">
-          <p
-            className="text-ui-xs text-muted-foreground tabular-nums"
-            data-testid="link-phone-countdown"
-          >
-            New code in {countdown.secondsLeft}s
-          </p>
+          {props.statusLine}
           <p
             className="text-ui-xs text-muted-foreground"
             data-testid="link-phone-single-use-hint"
@@ -267,6 +297,61 @@ function ShowingCard(props: { readonly minted: MintLinkLoginCodeResponse }) {
         </div>
       </div>
     </>
+  );
+}
+
+function ShowingCard(props: { readonly minted: MintLinkLoginCodeResponse }) {
+  const countdown = useRotationCountdown({
+    expiresAtEpochSeconds: props.minted.expires_at,
+    expiresInSeconds: props.minted.expires_in,
+  });
+  return (
+    <CodeSurface
+      tile={
+        <LinkPhoneQrTile
+          code={props.minted.code}
+          remainingFraction={countdown.remainingFraction}
+        />
+      }
+      codeSlot={<code className={CODE_BOX_CLASS}>{props.minted.code}</code>}
+      statusLine={
+        <p
+          className="text-ui-xs text-muted-foreground tabular-nums"
+          data-testid="link-phone-countdown"
+        >
+          New code in {countdown.secondsLeft}s
+        </p>
+      }
+    />
+  );
+}
+
+/**
+ * A code is on its way — the first mint, a rotation, or a user-driven
+ * restart. It holds the code state's exact footprint so the surrounding
+ * panel never resizes; only the tile and the code line themselves go quiet.
+ */
+function PendingCodeCard() {
+  return (
+    <CodeSurface
+      tile={<LinkPhoneQrTile code={null} remainingFraction={0} />}
+      codeSlot={
+        <code className={cn(CODE_BOX_CLASS, "relative")}>
+          {/* One invisible line of the code's own type: the box keeps its
+              height exactly, whatever the font metrics are. */}
+          <span className="invisible">&nbsp;</span>
+          <Skeleton className="absolute inset-1 rounded-sm" />
+        </code>
+      }
+      statusLine={
+        <p
+          className="text-ui-xs text-muted-foreground tabular-nums"
+          data-testid="link-phone-code-pending"
+        >
+          Getting a new code…
+        </p>
+      }
+    />
   );
 }
 
@@ -382,7 +467,10 @@ export function LinkPhonePanel() {
               void code.refetch();
             },
           }}
-          respondPending={respond.isPending}
+          respondVerdict={pendingRespondVerdict(
+            respond.isPending,
+            respond.variables,
+          )}
           onDecide={decide}
           onRestart={resumeAfterApproval}
           onShowNew={restartCode}
@@ -407,7 +495,7 @@ function LinkPhonePanelBody(props: {
   readonly deadKind: LinkLoginDeadKind | null;
   readonly minted: MintLinkLoginCodeResponse | null;
   readonly code: PanelCodeView;
-  readonly respondPending: boolean;
+  readonly respondVerdict: PendingVerdict;
   readonly onDecide: (approve: boolean) => void;
   readonly onRestart: () => void;
   /** The evicting restart — the ONLY way a dead code is replaced. */
@@ -427,7 +515,7 @@ function LinkPhonePanelBody(props: {
     return (
       <ConfirmClaimCard
         claim={props.claim}
-        busy={props.respondPending}
+        pendingVerdict={props.respondVerdict}
         onDecide={props.onDecide}
       />
     );
@@ -462,15 +550,5 @@ function LinkPhonePanelBody(props: {
       />
     );
   }
-  return (
-    <div className="flex flex-col items-center gap-3">
-      {/* Same footprint and radius as the tile, so the code lands in place. */}
-      <Skeleton className="aspect-square w-full max-w-64 rounded-xl" />
-      <AgentSpinningDots
-        className={undefined}
-        testId={undefined}
-        variant={undefined}
-      />
-    </div>
-  );
+  return <PendingCodeCard />;
 }

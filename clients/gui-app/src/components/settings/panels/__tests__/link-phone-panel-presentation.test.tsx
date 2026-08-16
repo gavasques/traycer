@@ -128,6 +128,47 @@ describe("LinkPhonePanel presentation", () => {
     expect(screen.getByText("BBBBB-BBBBB")).toBeTruthy();
   });
 
+  it("keeps the panel's shape while a code is being regenerated", () => {
+    mocks.useLinkLoginWatch.mockReturnValue(showing(Date.now(), "ABCDE-FGHJK"));
+    const view = render(<LinkPhonePanel />);
+    const rows = () =>
+      screen.getByTestId("link-phone-single-use-hint").parentElement
+        ?.parentElement?.children.length;
+    const withCode = {
+      tile: screen.getByTestId("link-phone-qr-tile"),
+      rows: rows(),
+    };
+
+    // The evicting restart drops the mint data, which is the moment the panel
+    // used to collapse to a bare skeleton and resize the modal around it.
+    mocks.useLinkLoginWatch.mockReturnValue({
+      claim: null,
+      deadKind: null,
+      code: codeQuery({ data: null, isError: false, error: null }),
+    });
+    view.rerender(<LinkPhonePanel />);
+
+    const pending = screen.getByTestId("link-phone-qr-tile");
+    expect(pending.className).toBe(withCode.tile.className);
+    expect(pending.getAttribute("data-tile-state")).toBe("loading");
+    // Same rows around the tile: instructions, the code's box, the status
+    // pair. Only their contents go quiet.
+    expect(rows()).toBe(withCode.rows);
+    expect(screen.getByTestId("link-phone-code-pending").textContent).toBe(
+      "Getting a new code…",
+    );
+    expect(screen.getByTestId("link-phone-single-use-hint")).toBeTruthy();
+    expect(screen.queryByTestId("link-phone-countdown")).toBeNull();
+
+    // And back again when the new code lands.
+    mocks.useLinkLoginWatch.mockReturnValue(showing(Date.now(), "BBBBB-BBBBB"));
+    view.rerender(<LinkPhonePanel />);
+    expect(
+      screen.getByTestId("link-phone-qr-tile").getAttribute("data-tile-state"),
+    ).toBe("code");
+    expect(rows()).toBe(withCode.rows);
+  });
+
   it("shows the code with its scan instructions and single-use terms", () => {
     mocks.useLinkLoginWatch.mockReturnValue(showing(Date.now(), "ABCDE-FGHJK"));
     render(<LinkPhonePanel />);
@@ -157,6 +198,47 @@ describe("LinkPhonePanel presentation", () => {
     expect(confirm.textContent).toContain("These details are approximate");
     // No tile behind the decision — the code being decided is not on offer.
     expect(screen.queryByTestId("link-phone-qr")).toBeNull();
+  });
+
+  it("spins only the button that was pressed", () => {
+    const claim = {
+      code: "ABCDE-FGHJK",
+      address: "192.168.29.87",
+      userAgent: "TraycerMobile/1.0 (iPhone)",
+      location: "Bengaluru, IN",
+    };
+    mocks.useLinkLoginWatch.mockReturnValue({
+      claim,
+      deadKind: null,
+      code: codeQuery({ data: null, isError: false, error: null }),
+    });
+    // A reject round-trip in flight: Reject carries the spinner, Approve is
+    // only disabled. Putting the spinner on Approve would read as though the
+    // sign-in were being granted.
+    mocks.useRespondLinkLoginMutation.mockReturnValue({
+      isPending: true,
+      variables: { code: "ABCDE-FGHJK", approve: false },
+      mutate: vi.fn(),
+    });
+    const view = render(<LinkPhonePanel />);
+    expect(screen.getByTestId("link-phone-reject-spinner")).toBeTruthy();
+    expect(screen.queryByTestId("link-phone-approve-spinner")).toBeNull();
+    expect(
+      screen.getByTestId("link-phone-approve").hasAttribute("disabled"),
+    ).toBe(true);
+    // Labels never swap while pending.
+    expect(screen.getByTestId("link-phone-reject").textContent).toContain(
+      "Reject",
+    );
+
+    mocks.useRespondLinkLoginMutation.mockReturnValue({
+      isPending: true,
+      variables: { code: "ABCDE-FGHJK", approve: true },
+      mutate: vi.fn(),
+    });
+    view.rerender(<LinkPhonePanel />);
+    expect(screen.getByTestId("link-phone-approve-spinner")).toBeTruthy();
+    expect(screen.queryByTestId("link-phone-reject-spinner")).toBeNull();
   });
 
   it("distinguishes a superseded code from one that was rejected elsewhere", () => {
@@ -234,9 +316,14 @@ describe("LinkPhonePanel presentation", () => {
       code: codeQuery({ data: null, isError: false, error: null }),
     });
     render(<LinkPhonePanel />);
-    // An unknown User-Agent still gets a sentence, not a blank.
+    // Metadata the server never observed is left out rather than confessed —
+    // "just now" is the one part always true, and it anchors the line alone.
     expect(screen.getByTestId("link-phone-claimant").textContent).toBe(
-      "address unknown · location unknown · just now",
+      "just now",
+    );
+    // An unknown User-Agent still names something, never a blank.
+    expect(screen.getByTestId("link-phone-confirm").textContent).toContain(
+      "Approve sign-in from a device?",
     );
     act(() => {
       screen.getByTestId("link-phone-approve").click();

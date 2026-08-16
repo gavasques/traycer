@@ -505,8 +505,6 @@ import {
   worktreeListByWorkspacePathsResponseSchemaV13,
   worktreeListByWorkspacePathsRequestSchemaV14,
   worktreeListByWorkspacePathsResponseSchemaV14,
-  worktreeListByWorkspacePathsRequestSchemaV15,
-  worktreeListByWorkspacePathsResponseSchemaV15,
   worktreeListBindingsForEpicRequestSchema,
   worktreeListBindingsForEpicResponseSchema,
   worktreeListBindingsForEpicResponseSchemaV11,
@@ -843,36 +841,14 @@ export const worktreeListByWorkspacePathsUpgradeV13ToV14 = defineUpgradePath<
     workspaces: response.workspaces.map((workspace) => ({
       ...workspace,
       repoBranchPrefix: { status: "absent" as const },
-    })),
-  }),
-});
-
-// v1.5 adds the host-local `presence` fact to every workspace summary. Both
-// worktree list methods take this minor together so an old host's previously
-// authoritative summary preserves the established behavior: its path reads as
-// present rather than being mistaken for a missing remote directory.
-export const worktreeListByWorkspacePathsV15 = defineRpcContract({
-  method: "worktree.listByWorkspacePaths",
-  schemaVersion: { major: 1, minor: 5 } as const,
-  requestSchema: worktreeListByWorkspacePathsRequestSchemaV15,
-  responseSchema: worktreeListByWorkspacePathsResponseSchemaV15,
-});
-
-export const worktreeListByWorkspacePathsUpgradeV14ToV15 = defineUpgradePath<
-  typeof worktreeListByWorkspacePathsV14,
-  typeof worktreeListByWorkspacePathsV15
->({
-  from: worktreeListByWorkspacePathsV14.schemaVersion,
-  to: worktreeListByWorkspacePathsV15.schemaVersion,
-  upgradeRequest: (request) => request,
-  upgradeResponse: (response) => ({
-    ...response,
-    workspaces: response.workspaces.map((workspace) => ({
-      ...workspace,
+      // A v1.3 host's summary was authoritative for a path it listed, so its
+      // rows read as present rather than being mistaken for a missing remote
+      // directory - the established pre-`presence` behaviour.
       presence: "present" as const,
     })),
   }),
 });
+
 
 export const worktreeListBranchesV10 = defineRpcContract({
   method: "worktree.listBranches",
@@ -6373,7 +6349,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   },
   "worktree.listByWorkspacePaths": {
     1: {
-      latestMinor: 5,
+      latestMinor: 4,
       versions: {
         0: {
           contract: worktreeListByWorkspacePathsV10,
@@ -6398,11 +6374,6 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
           contract: worktreeListByWorkspacePathsV14,
           upgradeFromPreviousVersion:
             worktreeListByWorkspacePathsUpgradeV13ToV14,
-        },
-        5: {
-          contract: worktreeListByWorkspacePathsV15,
-          upgradeFromPreviousVersion:
-            worktreeListByWorkspacePathsUpgradeV14ToV15,
         },
       },
       downgradePathsFromLatest: {},

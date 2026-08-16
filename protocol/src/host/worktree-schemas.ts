@@ -546,28 +546,11 @@ export type WorktreeListByWorkspacePathsRequestV14 =
   WorktreeListByWorkspacePathsRequestV13;
 
 export const worktreeListByWorkspacePathsResponseSchemaV14 = z.object({
-  workspaces: z.array(worktreeWorkspaceSummarySchemaV14),
+  workspaces: z.array(worktreeWorkspaceSummarySchemaV15),
   scriptsAtRefs: z.array(worktreeScriptsAtRefSchema),
 });
 export type WorktreeListByWorkspacePathsResponseV14 = z.infer<
   typeof worktreeListByWorkspacePathsResponseSchemaV14
->;
-
-/**
- * `worktree.listByWorkspacePaths` v1.5 request. Unchanged from v1.4; this
- * minor adds the response presence fact only.
- */
-export const worktreeListByWorkspacePathsRequestSchemaV15 =
-  worktreeListByWorkspacePathsRequestSchemaV14;
-export type WorktreeListByWorkspacePathsRequestV15 =
-  WorktreeListByWorkspacePathsRequestV14;
-
-export const worktreeListByWorkspacePathsResponseSchemaV15 = z.object({
-  workspaces: z.array(worktreeWorkspaceSummarySchemaV15),
-  scriptsAtRefs: z.array(worktreeScriptsAtRefSchema),
-});
-export type WorktreeListByWorkspacePathsResponseV15 = z.infer<
-  typeof worktreeListByWorkspacePathsResponseSchemaV15
 >;
 
 export const worktreeBranchSchema = z.object({

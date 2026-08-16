@@ -8,6 +8,7 @@ import type {
   TrayEpic,
   TrayIndicatorState,
 } from "@traycer-clients/shared/platform/runner-host";
+import { createInertSelectionAuthorityClient } from "@traycer-clients/shared/test-fixtures/selection-authority";
 import {
   DesktopRunnerHost,
   type DesktopPreloadBridge,
@@ -557,6 +558,7 @@ function buildFakeBridge(
     hostControllerStatus: {
       onChange: () => ({ dispose: () => undefined }),
     },
+    selectionAuthority: createInertSelectionAuthorityClient(),
   };
 
   return {

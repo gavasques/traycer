@@ -19,6 +19,7 @@ import { create } from "zustand";
 import * as Y from "yjs";
 import { Awareness } from "y-protocols/awareness";
 import type { IRunnerHost } from "@traycer-clients/shared/platform/runner-host";
+import { createInertSelectionAuthorityClient } from "@traycer-clients/shared/test-fixtures/selection-authority";
 import type { TaskLight } from "@traycer/protocol/host/epic/unary-schemas";
 import { RunnerHostProvider } from "@/providers/runner-host-provider";
 import { useDesktopDialogStore } from "@/stores/dialogs/desktop-dialog-store";
@@ -292,6 +293,7 @@ function createRunnerHostWithoutPrivateDelivery(
 
 function createBaseRunnerHost(): IRunnerHost {
   return {
+    selectionAuthority: createInertSelectionAuthorityClient(),
     signInUrl: "https://auth.example.invalid/sign-in",
     authnBaseUrl: "https://auth.example.invalid",
     relayBaseUrl: "wss://relay.example.invalid/attach",

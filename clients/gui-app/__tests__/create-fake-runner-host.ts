@@ -1,4 +1,5 @@
 import type { IRunnerHost } from "@traycer-clients/shared/platform/runner-host";
+import { createInertSelectionAuthorityClient } from "@traycer-clients/shared/test-fixtures/selection-authority";
 
 /**
  * Shared `IRunnerHost` stub base for renderer/bridge-provider tests that need
@@ -91,6 +92,10 @@ export function createFakeRunnerHost(
     migration: null,
     hostManagement: null,
     hostTray: null,
+    // Inert by default: a test that exercises host selection passes a real
+    // in-window authority through `overrides` rather than getting a silently
+    // empty one here.
+    selectionAuthority: createInertSelectionAuthorityClient(),
     zoom: null,
   };
   return { ...base, ...overrides };

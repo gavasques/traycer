@@ -16,6 +16,7 @@ import {
 } from "@tanstack/react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { IRunnerHost } from "@traycer-clients/shared/platform/runner-host";
+import { createInertSelectionAuthorityClient } from "@traycer-clients/shared/test-fixtures/selection-authority";
 import { toast } from "sonner";
 import { RunnerHostProvider } from "@/providers/runner-host-provider";
 import { useDesktopDialogStore } from "@/stores/dialogs/desktop-dialog-store";
@@ -202,6 +203,7 @@ function createSupportBridgeHarness(overrides: {
 
 function createBaseRunnerHost(): IRunnerHost {
   return {
+    selectionAuthority: createInertSelectionAuthorityClient(),
     signInUrl: "https://auth.example.invalid/sign-in",
     authnBaseUrl: "https://auth.example.invalid",
     relayBaseUrl: "wss://relay.example.invalid/attach",

@@ -75,6 +75,7 @@ import { registerPerWindowStateIpc } from "./per-window-state-ipc";
 import { registerHostIpc } from "./host-ipc";
 import { registerHostManagementIpc } from "./host-management-ipc";
 import { registerHostControllerStatusBroadcast } from "./host-controller-status-broadcast";
+import { registerSelectionAuthorityIpc } from "./selection-authority-ipc";
 import { registerMigrationIpc } from "./migration-ipc";
 import { registerSupportIpc } from "./support-ipc";
 import { registerTraycerCliIpc } from "./traycer-cli-ipc";
@@ -505,6 +506,10 @@ export class RunnerIpcBridge {
     registerHostIpc(this);
     registerHostManagementIpc(this);
     registerHostControllerStatusBroadcast(this);
+    // After the status broadcast: the selection authority's local
+    // expected-outage signal subscribes to the tick source that module owns
+    // rather than standing up a second poll loop.
+    registerSelectionAuthorityIpc(this);
     registerMigrationIpc(this);
     registerTraycerCliIpc(this);
     // Platform IPC (recent docs, window effects, diagnostics, etc.) is wired

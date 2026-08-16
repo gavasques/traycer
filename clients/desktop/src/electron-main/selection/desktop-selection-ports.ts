@@ -1,0 +1,439 @@
+/**
+ * Desktop composition of the selection authority's engine ports (P1.1).
+ *
+ * The engine is transport-agnostic; these four adapters are what main already
+ * owns, expressed as the contract's ports:
+ *
+ *  - {@link DesktopAuthorityIdentitySource} - the auth-session state.
+ *  - {@link DesktopHostFleetSource} - the registry list fetch main already
+ *    runs for CORS reasons, plus this machine's durable local-host identity.
+ *  - {@link DesktopLocalHostOutageSignal} - the `HostController` mutation
+ *    lane (D5's expected-outage signal).
+ *  - {@link createDesktopLocalHostEnsurePort} - the provisioning controller,
+ *    wired but NOT invoked until P1.3.
+ *
+ * None of them is wire surface: they are constructor inputs to the engine.
+ */
+import type { HostListFetchResult } from "@traycer-clients/shared/host-client/remote-fetcher";
+import type {
+  AuthorityIdentitySource,
+  HostFleetEntry,
+  HostFleetSnapshot,
+  HostFleetSource,
+  LocalHostEnsurePort,
+  LocalHostOutageSignal,
+  SelectionSubscription,
+} from "@traycer-clients/shared/host-selection/selection-authority-contract";
+import type { AuthorityLog } from "@traycer-clients/shared/host-selection/selection-authority-engine";
+import type { DesktopAuthSessionSnapshot } from "../../ipc-contracts/window-types";
+import type { HostControllerStatus } from "../host/host-controller-types";
+import { readLastKnownLocalHostId } from "../host/local-host-identity";
+import type {
+  IpcDesktopAuthSession,
+  IpcHostController,
+  IpcHostLifecycle,
+} from "../ipc/runner-ipc-bridge";
+
+/**
+ * The identity the persisted preference is scoped to, and the generation the
+ * engine keys membership on.
+ *
+ * The generation increments ONLY when the signed-in USER changes - never on a
+ * token rotation. That distinction is the whole safety property: the auth
+ * session emits a change on every credential refresh, and bumping the
+ * generation there would wipe every scrap of evidence (sessions, streaks,
+ * compat, tombstones) and force every window to re-attach on a routine token
+ * refresh. `signing-in` and `signed-out` both collapse to a null key, so
+ * signing back in as the same user is one transition out and one back.
+ */
+export class DesktopAuthorityIdentitySource implements AuthorityIdentitySource {
+  private readonly authSession: IpcDesktopAuthSession;
+  private identityKey: string | null;
+  private generation = 0;
+  private readonly listeners = new Set<
+    (identity: { identityKey: string | null; generation: number }) => void
+  >();
+  private readonly onAuthSessionChange: (
+    snapshot: DesktopAuthSessionSnapshot,
+  ) => void;
+
+  constructor(authSession: IpcDesktopAuthSession) {
+    this.authSession = authSession;
+    this.identityKey = signedInUserId(authSession.get());
+    this.onAuthSessionChange = (snapshot: DesktopAuthSessionSnapshot) => {
+      const nextKey = signedInUserId(snapshot);
+      if (nextKey === this.identityKey) return;
+      this.identityKey = nextKey;
+      this.generation += 1;
+      const identity = this.current();
+      for (const listener of Array.from(this.listeners)) {
+        listener(identity);
+      }
+    };
+    this.authSession.on("change", this.onAuthSessionChange);
+  }
+
+  current(): { identityKey: string | null; generation: number } {
+    return { identityKey: this.identityKey, generation: this.generation };
+  }
+
+  onChanged(
+    listener: (identity: {
+      identityKey: string | null;
+      generation: number;
+    }) => void,
+  ): SelectionSubscription {
+    this.listeners.add(listener);
+    return {
+      dispose: () => {
+        this.listeners.delete(listener);
+      },
+    };
+  }
+
+  dispose(): void {
+    this.authSession.off("change", this.onAuthSessionChange);
+    this.listeners.clear();
+  }
+}
+
+/** Only a fully signed-in session names an identity (`auth-ipc.ts` parity). */
+function signedInUserId(snapshot: DesktopAuthSessionSnapshot): string | null {
+  return snapshot.status === "signed-in"
+    ? (snapshot.profile?.userId ?? null)
+    : null;
+}
+
+export interface DesktopHostFleetSourceOptions {
+  readonly authnBaseUrl: string;
+  readonly identity: AuthorityIdentitySource;
+  readonly authSession: IpcDesktopAuthSession;
+  readonly host: IpcHostLifecycle;
+  /** `fetchRegisteredHostsViaHttp` in production; a double in tests. */
+  readonly listRegisteredHosts: (
+    authnBaseUrl: string,
+    bearerToken: string,
+  ) => Promise<HostListFetchResult>;
+  readonly log: AuthorityLog;
+}
+
+/**
+ * The authority's fleet port on desktop: WHICH hosts exist and which one is
+ * this machine's - and deliberately nothing else.
+ *
+ * The registry response carries a full status DTO per row (connectivity,
+ * viewer reachability, update state). NONE of it is projected here. The
+ * snapshot type has no channel for it, so a DTO flip cannot reach a lease
+ * verdict by any path - which is invariant 5 ("cloud verdicts are
+ * display/bootstrap only") enforced by construction rather than by care.
+ *
+ * Race rules the contract requires of this port:
+ *
+ *  - `{localHostId, hosts}` is ONE atomic tuple per snapshot: both are
+ *    resolved before anything is published, never composed from two reads.
+ *  - `onChanged` delivers the snapshot itself, so subscribe-before-read
+ *    cannot lose a change.
+ *  - `revision` is process-lifetime monotonic and never resets, including
+ *    across sign-out.
+ *  - Every snapshot is stamped with the identity generation captured when its
+ *    FETCH STARTED, so a late account-A completion is rejected by the engine
+ *    however high its revision is.
+ *
+ * INTERIM BACKING (P4.1 - registry completion): there is no poller here. A
+ * host registered on ANOTHER machine appears on the next identity change,
+ * local-host change, or explicit {@link DesktopHostFleetSource.refresh}. A
+ * second 60 s poll in main is exactly what connection registry §6 says to
+ * collapse, so this port waits for the consolidated one rather than adding a
+ * competitor to it.
+ */
+export class DesktopHostFleetSource implements HostFleetSource {
+  private readonly options: DesktopHostFleetSourceOptions;
+  private currentSnapshot: HostFleetSnapshot;
+  private revisionCounter = 0;
+  private rows: readonly string[] = [];
+  private localHostId: string | null = null;
+  private readonly listeners = new Set<(snapshot: HostFleetSnapshot) => void>();
+  private readonly identitySubscription: SelectionSubscription;
+  private readonly onHostChange: () => void;
+  private disposed = false;
+
+  constructor(options: DesktopHostFleetSourceOptions) {
+    this.options = options;
+    this.currentSnapshot = {
+      revision: this.revisionCounter,
+      identityGeneration: options.identity.current().generation,
+      localHostId: null,
+      hosts: [],
+    };
+    this.identitySubscription = options.identity.onChanged(() => {
+      // Publish the empty fleet for the INCOMING generation immediately: the
+      // outgoing account's membership must not be re-published under the new
+      // identity, and the engine's own transition has already swapped to
+      // empty. The local id is cleared too - this machine's host belongs to
+      // the machine, but its MEMBERSHIP belongs to an account, and the new
+      // one has not been read yet. The refresh that follows lands as an
+      // ordinary fleet shift.
+      this.rows = [];
+      this.localHostId = null;
+      this.publish();
+      void this.refresh();
+    });
+    this.onHostChange = () => {
+      void this.refreshLocalIdentity();
+    };
+    options.host.on("change", this.onHostChange);
+  }
+
+  snapshot(): HostFleetSnapshot {
+    return this.currentSnapshot;
+  }
+
+  onChanged(
+    listener: (snapshot: HostFleetSnapshot) => void,
+  ): SelectionSubscription {
+    this.listeners.add(listener);
+    return {
+      dispose: () => {
+        this.listeners.delete(listener);
+      },
+    };
+  }
+
+  /**
+   * Re-reads this machine's identity and the account's registry rows, then
+   * publishes ONE tuple. Safe to call at any time; a failed fetch publishes
+   * nothing rather than clobbering known membership with a network error.
+   */
+  async refresh(): Promise<void> {
+    if (this.disposed) return;
+    // Stamped at fetch START (contract: "the generation this snapshot was
+    // FETCHED under"), so a completion that lands after an account switch is
+    // recognisably stale.
+    const generation = this.options.identity.current().generation;
+    const bearerToken = this.options.authSession.get().token;
+    if (bearerToken === null) {
+      // Signed out: the account fleet is empty, and the local host is not
+      // addressable without a credential context either.
+      this.applyFetched(generation, null, []);
+      return;
+    }
+    const localHostId = await this.readLocalHostId();
+    const result = await this.options.listRegisteredHosts(
+      this.options.authnBaseUrl,
+      bearerToken,
+    );
+    if (result.kind !== "ok") {
+      this.options.log.debug("[selection-fleet] registry fetch failed", {
+        kind: result.kind,
+      });
+      return;
+    }
+    this.applyFetched(
+      generation,
+      localHostId,
+      result.response.hosts.map((row) => row.hostId),
+    );
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    this.identitySubscription.dispose();
+    this.options.host.off("change", this.onHostChange);
+    this.listeners.clear();
+  }
+
+  /** pid.json moved: re-resolve local identity, keep the known rows. */
+  private async refreshLocalIdentity(): Promise<void> {
+    if (this.disposed) return;
+    const localHostId = await this.readLocalHostId();
+    if (localHostId === this.localHostId) return;
+    this.localHostId = localHostId;
+    this.publish();
+  }
+
+  private readLocalHostId(): Promise<string | null> {
+    return readLastKnownLocalHostId({
+      identityEnrollmentFile: this.options.host.identityEnrollmentFile,
+      pidMetadataFile: this.options.host.pidMetadataFile,
+    }).catch((error: unknown) => {
+      this.options.log.debug("[selection-fleet] local identity read failed", {
+        error: String(error),
+      });
+      return null;
+    });
+  }
+
+  private applyFetched(
+    generation: number,
+    localHostId: string | null,
+    rows: readonly string[],
+  ): void {
+    if (this.disposed) return;
+    if (generation !== this.options.identity.current().generation) {
+      // A late completion for a RETIRED identity. It is still published -
+      // stamped with the generation it was fetched under, which is exactly
+      // what lets the engine reject it - but it is NOT adopted as this port's
+      // membership. Adopting it would be the subtle half of the bug: a later
+      // local-host republish would carry the old account's rows under the
+      // CURRENT generation and sail straight past the engine's guard.
+      this.publishSnapshot(generation, localHostId, rows);
+      return;
+    }
+    this.localHostId = localHostId;
+    this.rows = rows;
+    this.publishAt(generation);
+  }
+
+  /** Publishes under the generation that is current right now. */
+  private publish(): void {
+    this.publishAt(this.options.identity.current().generation);
+  }
+
+  private publishAt(generation: number): void {
+    this.publishSnapshot(generation, this.localHostId, this.rows);
+  }
+
+  private publishSnapshot(
+    generation: number,
+    localHostId: string | null,
+    rows: readonly string[],
+  ): void {
+    this.revisionCounter += 1;
+    this.currentSnapshot = {
+      revision: this.revisionCounter,
+      identityGeneration: generation,
+      localHostId,
+      hosts: composeFleetEntries(localHostId, rows),
+    };
+    for (const listener of Array.from(this.listeners)) {
+      listener(this.currentSnapshot);
+    }
+  }
+}
+
+/**
+ * The atomic membership tuple. The local host is SYNTHESIZED when this machine
+ * has a durable identity the registry response does not list: it is real and
+ * dialable over the local socket whatever the cloud says, and omitting it
+ * would hide the one candidate D8 wants first. Sorted so a server-side
+ * reordering is not mistaken for a membership change.
+ *
+ * Takes its inputs as arguments rather than reading the port's cache, so a
+ * stale-generation completion can be published verbatim without touching it.
+ */
+function composeFleetEntries(
+  localHostId: string | null,
+  rows: readonly string[],
+): readonly HostFleetEntry[] {
+  const entries: HostFleetEntry[] = rows.map((hostId) => ({
+    hostId,
+    kind: hostId === localHostId ? "local" : "remote",
+  }));
+  if (localHostId !== null && !rows.includes(localHostId)) {
+    entries.push({ hostId: localHostId, kind: "local" });
+  }
+  return entries.sort((left, right) =>
+    left.hostId < right.hostId ? -1 : left.hostId > right.hostId ? 1 : 0,
+  );
+}
+
+export interface DesktopLocalHostOutageSignalOptions {
+  /**
+   * Subscribes to the canonical two-lane status broadcast main already
+   * computes (`onHostControllerStatusBroadcast`), returning an unsubscribe.
+   * Reusing that tick source is deliberate: a second poll loop against
+   * `getStatus()` would re-create the main-thread starvation the broadcast's
+   * serialization exists to prevent.
+   */
+  readonly subscribe: (
+    listener: (status: HostControllerStatus) => void,
+  ) => () => void;
+  readonly readStatus: () => Promise<HostControllerStatus>;
+  readonly log: AuthorityLog;
+}
+
+/**
+ * D5's LOCAL expected-outage signal: true while the `HostController` mutation
+ * lane has an operation in flight.
+ *
+ * Every mutation kind counts, not just restarts. The lane is busy exactly
+ * when the desktop shell itself took the host down (ensure, apply, activate,
+ * install, respawn, recovery, free-port-and-restart, uninstall), and in every
+ * one of those the outage is deliberate - which is the whole predicate. The
+ * engine caps how long it will hold a lease on this signal, so a lane that
+ * never reports completion cannot pin a host in `restarting-expected`.
+ */
+export class DesktopLocalHostOutageSignal implements LocalHostOutageSignal {
+  private readonly options: DesktopLocalHostOutageSignalOptions;
+  private busy = false;
+  private readonly listeners = new Set<(inExpectedOutage: boolean) => void>();
+  private readonly unsubscribe: () => void;
+
+  constructor(options: DesktopLocalHostOutageSignalOptions) {
+    this.options = options;
+    this.unsubscribe = options.subscribe((status) => {
+      this.apply(status.mutation !== null);
+    });
+    void options
+      .readStatus()
+      .then((status) => {
+        this.apply(status.mutation !== null);
+      })
+      .catch((error: unknown) => {
+        // A failed read is not evidence of an outage; stay false and let the
+        // next broadcast tick correct it.
+        options.log.debug("[selection-outage] initial status read failed", {
+          error: String(error),
+        });
+      });
+  }
+
+  inExpectedOutage(): boolean {
+    return this.busy;
+  }
+
+  onChanged(
+    listener: (inExpectedOutage: boolean) => void,
+  ): SelectionSubscription {
+    this.listeners.add(listener);
+    return {
+      dispose: () => {
+        this.listeners.delete(listener);
+      },
+    };
+  }
+
+  dispose(): void {
+    this.unsubscribe();
+    this.listeners.clear();
+  }
+
+  private apply(busy: boolean): void {
+    if (busy === this.busy) return;
+    this.busy = busy;
+    for (const listener of Array.from(this.listeners)) {
+      listener(busy);
+    }
+  }
+}
+
+/**
+ * The engine's one sanctioned process action (D14/C5), wired to the real
+ * provisioning controller.
+ *
+ * P1.1 composes it and NEVER calls it: the caller is P1.3's derivation, which
+ * requests `ensure` when it wants the local host and that host is down, and
+ * surfaces the outcome as the local lease's own status. Wiring it now means
+ * P1.3 adds a call site, not a port.
+ */
+export function createDesktopLocalHostEnsurePort(
+  hostController: IpcHostController,
+): LocalHostEnsurePort {
+  return {
+    ensureReady: async () => {
+      const outcome = await hostController.convergeReady(false);
+      if (outcome.kind === "ok") return { ok: true };
+      return { ok: false, reason: outcome.kind };
+    },
+  };
+}

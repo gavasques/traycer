@@ -1,0 +1,983 @@
+import { EventEmitter } from "node:events";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import type {
+  AuthorityIdentitySource,
+  HostFleetSnapshot,
+  SelectionSubscription,
+} from "@traycer-clients/shared/host-selection/selection-authority-contract";
+import type { AuthorityLog } from "@traycer-clients/shared/host-selection/selection-authority-engine";
+import type { HostListFetchResult } from "@traycer-clients/shared/host-client/remote-fetcher";
+import type { HostListItem } from "@traycer/protocol/host/host-status";
+import type {
+  IpcHostController,
+  IpcHostLifecycle,
+} from "../../ipc/runner-ipc-bridge";
+import type { HostControllerStatus } from "../../host/host-controller-types";
+import type {
+  ActivateInstalledOk,
+  ApplyStagedOk,
+  ApplyStagedTrigger,
+  ConvergeReadyOk,
+  InstallVersionOk,
+  MutationOutcome,
+  MutationProgress,
+  RemoveTraycerOk,
+  ServiceRegistrationOk,
+  UninstallOk,
+} from "../../host/host-controller-types";
+import type { DesktopPublishedHostSnapshot } from "../../../ipc-contracts/host-types";
+import { DesktopAuthSession } from "../../auth/desktop-auth-session";
+import {
+  createDesktopLocalHostEnsurePort,
+  DesktopAuthorityIdentitySource,
+  DesktopHostFleetSource,
+  DesktopLocalHostOutageSignal,
+} from "../desktop-selection-ports";
+
+const silentLog: AuthorityLog = {
+  debug: () => undefined,
+  warn: () => undefined,
+};
+
+function signedInSnapshot(userId: string, token: string) {
+  return {
+    status: "signed-in" as const,
+    token,
+    profile: { userId, userName: userId, email: `${userId}@example.com` },
+  };
+}
+
+const tempDirs: string[] = [];
+
+async function makeTempDir(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "selection-ports-test-"));
+  tempDirs.push(dir);
+  return dir;
+}
+
+async function writeEnrollment(dir: string, hostId: string): Promise<string> {
+  const file = join(dir, "enrollment.json");
+  await mkdir(dir, { recursive: true });
+  await writeFile(file, JSON.stringify({ hostId }), "utf8");
+  return file;
+}
+
+afterEach(async () => {
+  tempDirs.length = 0;
+});
+
+/**
+ * Local-identity re-reads go through real `fs.readFile` (libuv I/O, not just
+ * a microtask), so a couple of `Promise.resolve()` turns are not enough to
+ * observe their completion. A real macrotask tick is.
+ */
+function flushIo(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 10));
+}
+
+// ---------------------------------------------------------------------------
+// DesktopAuthorityIdentitySource
+// ---------------------------------------------------------------------------
+
+describe("DesktopAuthorityIdentitySource", () => {
+  it("does not bump the generation or fire onChanged on a token-only refresh (same user)", () => {
+    const authSession = new DesktopAuthSession();
+    authSession.set(signedInSnapshot("user-a", "token-1"));
+    const identity = new DesktopAuthorityIdentitySource(authSession);
+    expect(identity.current()).toEqual({
+      identityKey: "user-a",
+      generation: 0,
+    });
+
+    const seen: Array<{ identityKey: string | null; generation: number }> =
+      [];
+    identity.onChanged((next) => seen.push(next));
+
+    authSession.set(signedInSnapshot("user-a", "token-2"));
+
+    expect(identity.current()).toEqual({
+      identityKey: "user-a",
+      generation: 0,
+    });
+    expect(seen).toEqual([]);
+    identity.dispose();
+  });
+
+  it("bumps the generation and delivers the new identity on a different signed-in user", () => {
+    const authSession = new DesktopAuthSession();
+    authSession.set(signedInSnapshot("user-a", "token-1"));
+    const identity = new DesktopAuthorityIdentitySource(authSession);
+
+    const seen: Array<{ identityKey: string | null; generation: number }> =
+      [];
+    identity.onChanged((next) => seen.push(next));
+
+    authSession.set(signedInSnapshot("user-b", "token-2"));
+
+    expect(seen).toEqual([{ identityKey: "user-b", generation: 1 }]);
+    expect(identity.current()).toEqual({
+      identityKey: "user-b",
+      generation: 1,
+    });
+    identity.dispose();
+  });
+
+  it("counts sign-out and sign-back-in-as-the-same-user as two transitions", () => {
+    const authSession = new DesktopAuthSession();
+    authSession.set(signedInSnapshot("user-a", "token-1"));
+    const identity = new DesktopAuthorityIdentitySource(authSession);
+
+    const seen: Array<{ identityKey: string | null; generation: number }> =
+      [];
+    identity.onChanged((next) => seen.push(next));
+
+    authSession.set({ status: "signed-out", token: null, profile: null });
+    expect(identity.current()).toEqual({ identityKey: null, generation: 1 });
+
+    authSession.set(signedInSnapshot("user-a", "token-3"));
+    expect(identity.current()).toEqual({
+      identityKey: "user-a",
+      generation: 2,
+    });
+
+    expect(seen).toEqual([
+      { identityKey: null, generation: 1 },
+      { identityKey: "user-a", generation: 2 },
+    ]);
+    identity.dispose();
+  });
+
+  it("current() is authoritative at any point, and dispose() unsubscribes from later auth-session changes", () => {
+    const authSession = new DesktopAuthSession();
+    authSession.set(signedInSnapshot("user-a", "token-1"));
+    const identity = new DesktopAuthorityIdentitySource(authSession);
+    expect(identity.current()).toEqual({
+      identityKey: "user-a",
+      generation: 0,
+    });
+
+    const seen: Array<{ identityKey: string | null; generation: number }> =
+      [];
+    identity.onChanged((next) => seen.push(next));
+
+    identity.dispose();
+    authSession.set(signedInSnapshot("user-b", "token-2"));
+
+    expect(seen).toEqual([]);
+    // current() is frozen at whatever it held at dispose time - the source no
+    // longer observes the auth session at all.
+    expect(identity.current()).toEqual({
+      identityKey: "user-a",
+      generation: 0,
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DesktopHostFleetSource
+// ---------------------------------------------------------------------------
+
+class FakeIdentitySource implements AuthorityIdentitySource {
+  private identityKey: string | null;
+  private generation: number;
+  private readonly listeners = new Set<
+    (identity: { identityKey: string | null; generation: number }) => void
+  >();
+
+  constructor(identityKey: string | null, generation: number) {
+    this.identityKey = identityKey;
+    this.generation = generation;
+  }
+
+  current(): { identityKey: string | null; generation: number } {
+    return { identityKey: this.identityKey, generation: this.generation };
+  }
+
+  onChanged(
+    listener: (identity: {
+      identityKey: string | null;
+      generation: number;
+    }) => void,
+  ): SelectionSubscription {
+    this.listeners.add(listener);
+    return {
+      dispose: () => {
+        this.listeners.delete(listener);
+      },
+    };
+  }
+
+  set(identityKey: string | null, generation: number): void {
+    this.identityKey = identityKey;
+    this.generation = generation;
+    const current = this.current();
+    for (const listener of Array.from(this.listeners)) {
+      listener(current);
+    }
+  }
+}
+
+class FakeHostLifecycle extends EventEmitter implements IpcHostLifecycle {
+  pidMetadataFile = "/tmp/selection-ports-test/pid.json";
+  identityEnrollmentFile = "/tmp/selection-ports-test/enrollment.json";
+  isDisposed = false;
+
+  getSnapshot(): DesktopPublishedHostSnapshot | null {
+    return null;
+  }
+  notifyRespawning(): void {}
+  noteEndpointAnswered(): void {}
+  ensureWatcherInstalled(): void {}
+  async reloadSnapshotFromDisk(): Promise<DesktopPublishedHostSnapshot | null> {
+    return null;
+  }
+  async getRecentLogTail(_maxLines: number): Promise<string | null> {
+    return null;
+  }
+
+  emitChange(): void {
+    this.emit("change", null);
+  }
+}
+
+function buildHostListItem(hostId: string): HostListItem {
+  return {
+    hostId,
+    displayName: null,
+    platform: null,
+    kind: "personal",
+    publicKey: "pub-key",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    status: {
+      connectivity: "connectable",
+      viewerReachability: "ok",
+      clientCloud: "ok",
+      updateState: "current",
+      appVersion: null,
+      lastSeenAt: null,
+    },
+    updatePolicy: "manual",
+  };
+}
+
+interface Deferred<T> {
+  readonly promise: Promise<T>;
+  resolve(value: T): void;
+}
+
+function deferred<T>(): Deferred<T> {
+  let resolveFn: (value: T) => void = () => undefined;
+  const promise = new Promise<T>((resolve) => {
+    resolveFn = resolve;
+  });
+  return { promise, resolve: resolveFn };
+}
+
+function buildFleetSource(overrides: {
+  identity: AuthorityIdentitySource;
+  authSession: DesktopAuthSession;
+  host: FakeHostLifecycle;
+  listRegisteredHosts: (
+    authnBaseUrl: string,
+    bearerToken: string,
+  ) => Promise<HostListFetchResult>;
+}): DesktopHostFleetSource {
+  return new DesktopHostFleetSource({
+    authnBaseUrl: "http://localhost:5005",
+    identity: overrides.identity,
+    authSession: overrides.authSession,
+    host: overrides.host,
+    listRegisteredHosts: overrides.listRegisteredHosts,
+    log: silentLog,
+  });
+}
+
+describe("DesktopHostFleetSource", () => {
+  it("maps registry rows to fleet entries carrying only hostId and kind", async () => {
+    const dir = await makeTempDir();
+    const enrollmentFile = await writeEnrollment(dir, "local-host");
+    const authSession = new DesktopAuthSession();
+    authSession.set(signedInSnapshot("user-a", "token-1"));
+    const identity = new FakeIdentitySource("user-a", 0);
+    const host = new FakeHostLifecycle();
+    host.identityEnrollmentFile = enrollmentFile;
+    const fleet = buildFleetSource({
+      identity,
+      authSession,
+      host,
+      listRegisteredHosts: async () => ({
+        kind: "ok",
+        response: { hosts: [buildHostListItem("local-host")] },
+      }),
+    });
+
+    await fleet.refresh();
+
+    expect(fleet.snapshot().hosts).toHaveLength(1);
+    for (const entry of fleet.snapshot().hosts) {
+      expect(Object.keys(entry).sort()).toEqual(["hostId", "kind"]);
+    }
+    fleet.dispose();
+  });
+
+  it("classifies the row matching this machine's durable id as local, the rest as remote", async () => {
+    const dir = await makeTempDir();
+    const enrollmentFile = await writeEnrollment(dir, "local-host");
+    const authSession = new DesktopAuthSession();
+    authSession.set(signedInSnapshot("user-a", "token-1"));
+    const identity = new FakeIdentitySource("user-a", 0);
+    const host = new FakeHostLifecycle();
+    host.identityEnrollmentFile = enrollmentFile;
+    const fleet = buildFleetSource({
+      identity,
+      authSession,
+      host,
+      listRegisteredHosts: async () => ({
+        kind: "ok",
+        response: {
+          hosts: [
+            buildHostListItem("local-host"),
+            buildHostListItem("remote-host"),
+          ],
+        },
+      }),
+    });
+
+    await fleet.refresh();
+
+    expect(fleet.snapshot().hosts).toEqual([
+      { hostId: "local-host", kind: "local" },
+      { hostId: "remote-host", kind: "remote" },
+    ]);
+    fleet.dispose();
+  });
+
+  it("synthesizes the local host when the registry does not list it", async () => {
+    const dir = await makeTempDir();
+    const enrollmentFile = await writeEnrollment(dir, "local-host");
+    const authSession = new DesktopAuthSession();
+    authSession.set(signedInSnapshot("user-a", "token-1"));
+    const identity = new FakeIdentitySource("user-a", 0);
+    const host = new FakeHostLifecycle();
+    host.identityEnrollmentFile = enrollmentFile;
+    const fleet = buildFleetSource({
+      identity,
+      authSession,
+      host,
+      listRegisteredHosts: async () => ({
+        kind: "ok",
+        response: { hosts: [buildHostListItem("remote-host")] },
+      }),
+    });
+
+    await fleet.refresh();
+
+    expect(fleet.snapshot().hosts).toEqual([
+      { hostId: "local-host", kind: "local" },
+      { hostId: "remote-host", kind: "remote" },
+    ]);
+    fleet.dispose();
+  });
+
+  it("sorts entries by hostId so a server-side reordering is not a membership change", async () => {
+    const dir = await makeTempDir();
+    const enrollmentFile = await writeEnrollment(dir, "m-host");
+    const authSession = new DesktopAuthSession();
+    authSession.set(signedInSnapshot("user-a", "token-1"));
+    const identity = new FakeIdentitySource("user-a", 0);
+    const host = new FakeHostLifecycle();
+    host.identityEnrollmentFile = enrollmentFile;
+    const fleet = buildFleetSource({
+      identity,
+      authSession,
+      host,
+      listRegisteredHosts: async () => ({
+        kind: "ok",
+        response: {
+          hosts: [
+            buildHostListItem("z-host"),
+            buildHostListItem("a-host"),
+            buildHostListItem("m-host"),
+          ],
+        },
+      }),
+    });
+
+    await fleet.refresh();
+
+    expect(fleet.snapshot().hosts.map((entry) => entry.hostId)).toEqual([
+      "a-host",
+      "m-host",
+      "z-host",
+    ]);
+    fleet.dispose();
+  });
+
+  it("stamps the identity generation at fetch START, so a late completion carries the OLD generation", async () => {
+    const dir = await makeTempDir();
+    const enrollmentFile = await writeEnrollment(dir, "local-host");
+    const authSession = new DesktopAuthSession();
+    authSession.set(signedInSnapshot("user-a", "token-1"));
+    const identity = new FakeIdentitySource("user-a", 0);
+    const host = new FakeHostLifecycle();
+    host.identityEnrollmentFile = enrollmentFile;
+
+    const firstCall = deferred<HostListFetchResult>();
+    const secondCall = deferred<HostListFetchResult>();
+    const calls: number[] = [];
+    const fleet = buildFleetSource({
+      identity,
+      authSession,
+      host,
+      listRegisteredHosts: async () => {
+        calls.push(calls.length);
+        return calls.length === 1 ? firstCall.promise : secondCall.promise;
+      },
+    });
+
+    const publishedGenerations: number[] = [];
+    fleet.onChanged((snapshot) => {
+      publishedGenerations.push(snapshot.identityGeneration);
+    });
+
+    const inFlight = fleet.refresh();
+    // Identity moves on WHILE the first fetch is in flight.
+    identity.set("user-b", 1);
+
+    firstCall.resolve({
+      kind: "ok",
+      response: { hosts: [buildHostListItem("local-host")] },
+    });
+    await inFlight;
+    secondCall.resolve({ kind: "ok", response: { hosts: [] } });
+    await Promise.resolve();
+
+    // The publish produced by the FIRST (stale) fetch must still carry
+    // generation 0, whatever revision it lands at.
+    expect(publishedGenerations).toContain(0);
+    const staleIndex = publishedGenerations.lastIndexOf(0);
+    expect(staleIndex).toBeGreaterThanOrEqual(0);
+    fleet.dispose();
+  });
+
+  it("never lets a late account-A completion contaminate the port's own cache after a switch to account B", async () => {
+    const dir = await makeTempDir();
+    const enrollmentFile = join(dir, "enrollment.json");
+    await writeFile(
+      enrollmentFile,
+      JSON.stringify({ hostId: "local-a" }),
+      "utf8",
+    );
+    const authSession = new DesktopAuthSession();
+    authSession.set(signedInSnapshot("user-a", "token-1"));
+    const identity = new FakeIdentitySource("user-a", 0);
+    const host = new FakeHostLifecycle();
+    host.identityEnrollmentFile = enrollmentFile;
+
+    const callDeferreds: Array<Deferred<HostListFetchResult>> = [];
+    const fleet = buildFleetSource({
+      identity,
+      authSession,
+      host,
+      listRegisteredHosts: async () => {
+        const call = deferred<HostListFetchResult>();
+        callDeferreds.push(call);
+        return call.promise;
+      },
+    });
+
+    const snapshots: HostFleetSnapshot[] = [];
+    fleet.onChanged((snapshot) => snapshots.push(snapshot));
+
+    const inFlightA = fleet.refresh(); // call #1, captured generation 0.
+    await flushIo();
+    expect(callDeferreds).toHaveLength(1);
+
+    // Switch to account B WHILE A's fetch is still in flight.
+    identity.set("user-b", 1);
+    expect(snapshots.at(-1)).toMatchObject({
+      identityGeneration: 1,
+      localHostId: null,
+      hosts: [],
+    });
+
+    // B's own auto-triggered refresh (call #2) reaches listRegisteredHosts too.
+    await flushIo();
+    expect(callDeferreds).toHaveLength(2);
+
+    // Resolve A's STALE fetch first.
+    callDeferreds[0].resolve({
+      kind: "ok",
+      response: { hosts: [buildHostListItem("host-a")] },
+    });
+    await inFlightA;
+    expect(snapshots.at(-1)).toMatchObject({ identityGeneration: 0 });
+
+    // THEN complete B's own refresh with B's rows.
+    callDeferreds[1].resolve({
+      kind: "ok",
+      response: { hosts: [buildHostListItem("host-b")] },
+    });
+    await flushIo();
+
+    // A local-host republish afterwards - a DIFFERENT durable local id.
+    await writeFile(
+      enrollmentFile,
+      JSON.stringify({ hostId: "local-b" }),
+      "utf8",
+    );
+    host.emitChange();
+    await flushIo();
+
+    const finalSnapshot = snapshots.at(-1);
+    expect(finalSnapshot?.identityGeneration).toBe(1);
+    const finalHostIds = finalSnapshot?.hosts.map((entry) => entry.hostId);
+    expect(finalHostIds).not.toContain("host-a");
+    expect(finalHostIds).toContain("host-b");
+    fleet.dispose();
+  });
+
+  it("does not adopt a late account-A completion into its own cache, even when it resolves AFTER account B's refresh", async () => {
+    const dir = await makeTempDir();
+    const enrollmentFile = join(dir, "enrollment.json");
+    await writeFile(
+      enrollmentFile,
+      JSON.stringify({ hostId: "local-a" }),
+      "utf8",
+    );
+    const authSession = new DesktopAuthSession();
+    authSession.set(signedInSnapshot("user-a", "token-1"));
+    const identity = new FakeIdentitySource("user-a", 0);
+    const host = new FakeHostLifecycle();
+    host.identityEnrollmentFile = enrollmentFile;
+
+    const callDeferreds: Array<Deferred<HostListFetchResult>> = [];
+    const fleet = buildFleetSource({
+      identity,
+      authSession,
+      host,
+      listRegisteredHosts: async () => {
+        const call = deferred<HostListFetchResult>();
+        callDeferreds.push(call);
+        return call.promise;
+      },
+    });
+
+    const snapshots: HostFleetSnapshot[] = [];
+    fleet.onChanged((snapshot) => snapshots.push(snapshot));
+
+    const inFlightA = fleet.refresh(); // call #1, captured generation 0.
+    await flushIo();
+    expect(callDeferreds).toHaveLength(1);
+
+    // Switch to account B WHILE A's fetch is still in flight - triggers B's
+    // own auto-refresh (call #2).
+    identity.set("user-b", 1);
+    await flushIo();
+    expect(callDeferreds).toHaveLength(2);
+
+    // Resolve B's fetch FIRST...
+    callDeferreds[1].resolve({
+      kind: "ok",
+      response: { hosts: [buildHostListItem("host-b")] },
+    });
+    await flushIo();
+    // B's own refresh reads the local id BEFORE the enrollment file is
+    // rewritten below, so it still synthesizes "local-a" as local here - the
+    // point of this assertion is only that host-b's row landed.
+    expect(snapshots.at(-1)?.identityGeneration).toBe(1);
+    expect(snapshots.at(-1)?.hosts).toContainEqual({
+      hostId: "host-b",
+      kind: "remote",
+    });
+
+    // ...THEN resolve A's now-doubly-stale fetch LAST.
+    callDeferreds[0].resolve({
+      kind: "ok",
+      response: { hosts: [buildHostListItem("host-a")] },
+    });
+    await inFlightA;
+    // Published verbatim, stamped with the generation it was FETCHED under -
+    // this is what lets the engine itself reject it.
+    expect(snapshots.at(-1)).toMatchObject({ identityGeneration: 0 });
+
+    // Force a republish under the CURRENT generation with no new fetch: a
+    // local-host change, no listRegisteredHosts call involved at all.
+    await writeFile(
+      enrollmentFile,
+      JSON.stringify({ hostId: "local-b" }),
+      "utf8",
+    );
+    host.emitChange();
+    await flushIo();
+
+    // The republish must carry B's cached membership, NOT the late A
+    // completion that resolved after it. If the port's own cache had
+    // adopted A's rows/localHostId, this republish - stamped honestly with
+    // the CURRENT generation (1) - would carry account A's rows straight
+    // past the engine's identityGeneration guard.
+    const finalSnapshot = snapshots.at(-1);
+    expect(finalSnapshot?.identityGeneration).toBe(1);
+    const finalHostIds = finalSnapshot?.hosts.map((entry) => entry.hostId);
+    expect(finalHostIds).not.toContain("host-a");
+    expect(finalHostIds).toContain("host-b");
+    fleet.dispose();
+  });
+
+  it("publishes an EMPTY fleet for the incoming generation immediately on an identity change", () => {
+    const authSession = new DesktopAuthSession();
+    authSession.set(signedInSnapshot("user-a", "token-1"));
+    const identity = new FakeIdentitySource("user-a", 0);
+    const host = new FakeHostLifecycle();
+    const never = deferred<HostListFetchResult>();
+    const fleet = buildFleetSource({
+      identity,
+      authSession,
+      host,
+      listRegisteredHosts: async () => never.promise,
+    });
+
+    const snapshots: HostFleetSnapshot[] = [];
+    fleet.onChanged((snapshot) => snapshots.push(snapshot));
+
+    identity.set("user-b", 1);
+
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0]).toMatchObject({ identityGeneration: 1, hosts: [] });
+    fleet.dispose();
+  });
+
+  it("publishes nothing on a failed fetch (network-error, unauthorized) - known membership is not clobbered", async () => {
+    const dir = await makeTempDir();
+    const enrollmentFile = await writeEnrollment(dir, "local-host");
+    const authSession = new DesktopAuthSession();
+    authSession.set(signedInSnapshot("user-a", "token-1"));
+    const identity = new FakeIdentitySource("user-a", 0);
+    const host = new FakeHostLifecycle();
+    host.identityEnrollmentFile = enrollmentFile;
+
+    for (const kind of ["network-error", "unauthorized"] as const) {
+      const fleet = buildFleetSource({
+        identity,
+        authSession,
+        host,
+        listRegisteredHosts: async () => ({ kind }),
+      });
+      const snapshots: HostFleetSnapshot[] = [];
+      fleet.onChanged((snapshot) => snapshots.push(snapshot));
+
+      await fleet.refresh();
+
+      expect(snapshots).toEqual([]);
+      fleet.dispose();
+    }
+  });
+
+  it("publishes an empty fleet with localHostId: null when signed out", async () => {
+    const authSession = new DesktopAuthSession();
+    const identity = new FakeIdentitySource(null, 0);
+    const host = new FakeHostLifecycle();
+    const fleet = buildFleetSource({
+      identity,
+      authSession,
+      host,
+      listRegisteredHosts: async () => {
+        throw new Error("must not be called when signed out");
+      },
+    });
+
+    await fleet.refresh();
+
+    expect(fleet.snapshot()).toMatchObject({ localHostId: null, hosts: [] });
+    fleet.dispose();
+  });
+
+  it("keeps revision process-lifetime monotonic across every publish, including identity changes", async () => {
+    const dir = await makeTempDir();
+    const enrollmentFile = await writeEnrollment(dir, "local-host");
+    const authSession = new DesktopAuthSession();
+    authSession.set(signedInSnapshot("user-a", "token-1"));
+    const identity = new FakeIdentitySource("user-a", 0);
+    const host = new FakeHostLifecycle();
+    host.identityEnrollmentFile = enrollmentFile;
+    const fleet = buildFleetSource({
+      identity,
+      authSession,
+      host,
+      listRegisteredHosts: async () => ({
+        kind: "ok",
+        response: { hosts: [buildHostListItem("local-host")] },
+      }),
+    });
+
+    const revisions: number[] = [];
+    fleet.onChanged((snapshot) => revisions.push(snapshot.revision));
+
+    await fleet.refresh();
+    identity.set("user-b", 1); // publishes empty immediately, then refreshes
+    await fleet.refresh();
+
+    for (let i = 1; i < revisions.length; i += 1) {
+      expect(revisions[i]).toBeGreaterThan(revisions[i - 1]);
+    }
+    expect(revisions.length).toBeGreaterThanOrEqual(3);
+    fleet.dispose();
+  });
+
+  it("re-resolves the local identity and republishes on a local-host change; a no-op id change publishes nothing", async () => {
+    const dir = await makeTempDir();
+    const enrollmentFile = join(dir, "enrollment.json");
+    await writeFile(
+      enrollmentFile,
+      JSON.stringify({ hostId: "local-host-1" }),
+      "utf8",
+    );
+    const authSession = new DesktopAuthSession();
+    authSession.set(signedInSnapshot("user-a", "token-1"));
+    const identity = new FakeIdentitySource("user-a", 0);
+    const host = new FakeHostLifecycle();
+    host.identityEnrollmentFile = enrollmentFile;
+    const fleet = buildFleetSource({
+      identity,
+      authSession,
+      host,
+      listRegisteredHosts: async () => ({ kind: "ok", response: { hosts: [] } }),
+    });
+    await fleet.refresh();
+
+    const snapshots: HostFleetSnapshot[] = [];
+    fleet.onChanged((snapshot) => snapshots.push(snapshot));
+
+    // No-op: same id on disk, `host` fires "change" anyway.
+    host.emitChange();
+    await flushIo();
+    expect(snapshots).toEqual([]);
+
+    // Real change: rewrite the enrollment file, then fire the local-host
+    // change signal again.
+    await writeFile(
+      enrollmentFile,
+      JSON.stringify({ hostId: "local-host-2" }),
+      "utf8",
+    );
+    host.emitChange();
+    await flushIo();
+
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0].localHostId).toBe("local-host-2");
+    fleet.dispose();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DesktopLocalHostOutageSignal
+// ---------------------------------------------------------------------------
+
+function buildControllerStatus(
+  mutation: HostControllerStatus["mutation"],
+): HostControllerStatus {
+  return {
+    download: null,
+    mutation,
+    installedVersion: "1.0.0",
+    latestVersion: "1.0.0",
+    stagedVersion: null,
+    installedRuntimeVersion: "1.0.0",
+    runningRuntimeVersion: "1.0.0",
+    updateReady: false,
+    activation: "activated",
+    reachable: true,
+    removedByUser: false,
+    checkedAt: "2026-01-01T00:00:00.000Z",
+  };
+}
+
+const activeMutation: NonNullable<HostControllerStatus["mutation"]> = {
+  kind: "ensure",
+  progress: null,
+  startedAt: "2026-01-01T00:00:00.000Z",
+};
+
+describe("DesktopLocalHostOutageSignal", () => {
+  it("is true exactly while a broadcast status carries a non-null mutation lane, edge-triggered", async () => {
+    let readStatusResolve: (status: HostControllerStatus) => void = () =>
+      undefined;
+    const readStatus = () =>
+      new Promise<HostControllerStatus>((resolve) => {
+        readStatusResolve = resolve;
+      });
+    const tickListeners = new Set<(status: HostControllerStatus) => void>();
+    const subscribe = (listener: (status: HostControllerStatus) => void) => {
+      tickListeners.add(listener);
+      return () => tickListeners.delete(listener);
+    };
+
+    const signal = new DesktopLocalHostOutageSignal({
+      subscribe,
+      readStatus,
+      log: silentLog,
+    });
+    // Settle the initial read as idle so it does not interfere.
+    readStatusResolve(buildControllerStatus(null));
+    await Promise.resolve();
+
+    const seen: boolean[] = [];
+    signal.onChanged((next) => seen.push(next));
+
+    expect(signal.inExpectedOutage()).toBe(false);
+
+    for (const listener of tickListeners) listener(buildControllerStatus(activeMutation));
+    expect(signal.inExpectedOutage()).toBe(true);
+    expect(seen).toEqual([true]);
+
+    // Repeated identical ticks: no duplicate notifications.
+    for (const listener of tickListeners) listener(buildControllerStatus(activeMutation));
+    expect(seen).toEqual([true]);
+
+    for (const listener of tickListeners) listener(buildControllerStatus(null));
+    expect(signal.inExpectedOutage()).toBe(false);
+    expect(seen).toEqual([true, false]);
+
+    signal.dispose();
+  });
+
+  it("leaves inExpectedOutage() false when the initial read rejects, and a later tick still corrects it", async () => {
+    const readStatus = () =>
+      Promise.reject(new Error("initial read failed"));
+    const tickListeners = new Set<(status: HostControllerStatus) => void>();
+    const subscribe = (listener: (status: HostControllerStatus) => void) => {
+      tickListeners.add(listener);
+      return () => tickListeners.delete(listener);
+    };
+
+    const signal = new DesktopLocalHostOutageSignal({
+      subscribe,
+      readStatus,
+      log: silentLog,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(signal.inExpectedOutage()).toBe(false);
+
+    for (const listener of tickListeners) listener(buildControllerStatus(activeMutation));
+    expect(signal.inExpectedOutage()).toBe(true);
+
+    signal.dispose();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// createDesktopLocalHostEnsurePort
+// ---------------------------------------------------------------------------
+
+class FakeHostController implements IpcHostController {
+  outcome: MutationOutcome<ConvergeReadyOk> = {
+    kind: "ok",
+    value: { running: true, version: "1.0.0" },
+  };
+
+  async getStatus(): Promise<HostControllerStatus> {
+    return buildControllerStatus(null);
+  }
+  async convergeReady(
+    _force: boolean,
+  ): Promise<MutationOutcome<ConvergeReadyOk>> {
+    return this.outcome;
+  }
+  async stageLatest(): Promise<void> {}
+  async applyStaged(
+    _trigger: ApplyStagedTrigger,
+    _force: boolean,
+  ): Promise<MutationOutcome<ApplyStagedOk>> {
+    return { kind: "ok", value: { appliedVersion: "1.0.0", runningActivated: true } };
+  }
+  async activateInstalled(
+    _force: boolean,
+  ): Promise<MutationOutcome<ActivateInstalledOk>> {
+    return { kind: "ok", value: { activated: true } };
+  }
+  async installVersion(
+    pin: string,
+    _force: boolean,
+  ): Promise<MutationOutcome<InstallVersionOk>> {
+    return { kind: "ok", value: { installedVersion: pin, runningActivated: true } };
+  }
+  async registerService(): Promise<MutationOutcome<ServiceRegistrationOk>> {
+    return { kind: "ok", value: { registered: true } };
+  }
+  async deregisterService(): Promise<MutationOutcome<ServiceRegistrationOk>> {
+    return { kind: "ok", value: { registered: false } };
+  }
+  async respawn(): Promise<MutationOutcome<ActivateInstalledOk>> {
+    return { kind: "ok", value: { activated: true } };
+  }
+  async recoverIfDown(): Promise<
+    MutationOutcome<ActivateInstalledOk> | { readonly kind: "suppressed" }
+  > {
+    return { kind: "suppressed" };
+  }
+  async freePortAndRestart(
+    _pid: number | null,
+    _port: number | null,
+  ): Promise<MutationOutcome<ActivateInstalledOk>> {
+    return { kind: "ok", value: { activated: true } };
+  }
+  async uninstallHost(_all: boolean): Promise<MutationOutcome<UninstallOk>> {
+    return { kind: "ok", value: { removedInstallDir: true, deregisteredService: true } };
+  }
+  async removeTraycer(): Promise<MutationOutcome<RemoveTraycerOk>> {
+    return {
+      kind: "ok",
+      value: { removedHost: true, deregisteredService: true, removedLoginItem: false },
+    };
+  }
+  isPendingRevisionRefreshQuarantined(): boolean {
+    return false;
+  }
+  onMutationProgress(
+    _listener: (progress: MutationProgress) => void,
+  ): () => void {
+    return () => undefined;
+  }
+}
+
+describe("createDesktopLocalHostEnsurePort", () => {
+  it("maps an ok outcome to {ok: true}", async () => {
+    const controller = new FakeHostController();
+    controller.outcome = { kind: "ok", value: { running: true, version: "1.0.0" } };
+    const port = createDesktopLocalHostEnsurePort(controller);
+
+    await expect(port.ensureReady()).resolves.toEqual({ ok: true });
+  });
+
+  it("maps busy/failed/deferred outcomes to {ok: false, reason: <kind>}", async () => {
+    const controller = new FakeHostController();
+    const port = createDesktopLocalHostEnsurePort(controller);
+
+    controller.outcome = {
+      kind: "busy",
+      continuation: "retry-with-force",
+      message: "busy",
+    };
+    await expect(port.ensureReady()).resolves.toEqual({
+      ok: false,
+      reason: "busy",
+    });
+
+    controller.outcome = { kind: "failed", message: "boom" };
+    await expect(port.ensureReady()).resolves.toEqual({
+      ok: false,
+      reason: "failed",
+    });
+
+    controller.outcome = { kind: "deferred", message: "later" };
+    await expect(port.ensureReady()).resolves.toEqual({
+      ok: false,
+      reason: "deferred",
+    });
+  });
+});

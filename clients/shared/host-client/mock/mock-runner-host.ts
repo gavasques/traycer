@@ -59,6 +59,20 @@ import {
 } from "../../auth/auth-validation";
 import type { AuthIdentityValidationResult } from "../../auth/auth-validation-types";
 import type { HostDirectoryEntry } from "../host-directory";
+import type { SelectionAuthorityClient } from "../../host-selection/selection-authority-contract";
+import {
+  createInProcessSelectionAuthority,
+  inertLocalHostOutageSignal,
+  InMemoryAuthorityIdentitySource,
+  InMemoryHostFleetSource,
+  unavailableLocalHostEnsurePort,
+  type InProcessSelectionAuthority,
+} from "../../host-selection/in-process-selection-authority";
+import {
+  createIncrementingIncarnationIds,
+  silentAuthorityLog,
+  systemAuthorityClock,
+} from "../../host-selection/selection-authority-engine";
 import {
   fetchRegisteredHostsViaHttp,
   type HostListFetchResult,
@@ -172,6 +186,22 @@ export class MockRunnerHost implements IRunnerHost {
   private localHost: LocalHostSnapshot | null;
   /** `undefined` means "derive from `localHost`"; `null` means "no id on disk". */
   private readonly explicitLastKnownLocalHostId: string | null | undefined;
+  /**
+   * The in-window selection authority (D16 browser/dev binding) and the two
+   * ports that drive it. They are fields rather than constructor locals so a
+   * dev shell or test can move the fleet (`setHosts`) and the identity
+   * (`setSelectionIdentity`) and watch the authority react exactly as it
+   * would on desktop.
+   */
+  readonly selectionFleet = new InMemoryHostFleetSource({
+    revision: 0,
+    identityGeneration: 0,
+    localHostId: null,
+    hosts: [],
+  });
+  readonly selectionIdentity = new InMemoryAuthorityIdentitySource(null);
+  private readonly selectionAuthorityMount: InProcessSelectionAuthority;
+  readonly selectionAuthority: SelectionAuthorityClient;
   private retainedStepUpCredential: RetainedStepUpCredential | null = null;
 
   readonly tray: MockTrayState = new MockTrayState();
@@ -225,6 +255,25 @@ export class MockRunnerHost implements IRunnerHost {
     this.localHost = options.localHost;
     this.explicitLastKnownLocalHostId = options.lastKnownLocalHostId;
     this.hosts = options.hosts;
+    // Browser/dev topology (D16): the SAME authority engine mounted in the
+    // single window behind the in-process adapter. Nothing about the rules
+    // changes here - one reporter, the engine's own allocator, the same
+    // claim and atomic-inventory semantics - which is what keeps the two
+    // bindings from drifting.
+    this.selectionAuthorityMount = createInProcessSelectionAuthority({
+      fleet: this.selectionFleet,
+      identity: this.selectionIdentity,
+      // A shell with no host process can neither provision nor take the host
+      // deliberately down, and saying so honestly is what makes P1.3's ∅
+      // definition come out right here.
+      localHostEnsure: unavailableLocalHostEnsurePort,
+      localOutage: inertLocalHostOutageSignal,
+      clock: systemAuthorityClock,
+      newIncarnationId: createIncrementingIncarnationIds(),
+      log: silentAuthorityLog,
+    });
+    this.selectionAuthority = this.selectionAuthorityMount.client;
+    this.publishSelectionFleet();
     this.workspaceFolderPickerPaths =
       options.workspaceFolderPickerPaths === undefined
         ? []
@@ -652,6 +701,7 @@ export class MockRunnerHost implements IRunnerHost {
 
   setLocalHost(snapshot: LocalHostSnapshot | null): void {
     this.localHost = snapshot;
+    this.publishSelectionFleet();
     for (const handler of this.localHostHandlers) {
       handler(snapshot);
     }
@@ -666,6 +716,36 @@ export class MockRunnerHost implements IRunnerHost {
 
   setHosts(hosts: readonly HostDirectoryEntry[]): void {
     this.hosts = hosts;
+    this.publishSelectionFleet();
+  }
+
+  /**
+   * Republishes the authority's fleet from the mock's directory state.
+   *
+   * Only identity and membership cross: the directory entries carry a
+   * dialability verdict, and projecting it here would hand the authority a
+   * cloud-shaped liveness signal that invariant 5 forbids it to hold. The
+   * `mock` kind counts as remote - it is not this machine's own host.
+   */
+  private publishSelectionFleet(): void {
+    const localHostId = this.getLocalHostIdForSelection();
+    const hosts = this.hosts.map((entry) => ({
+      hostId: entry.hostId,
+      kind:
+        entry.hostId === localHostId ? ("local" as const) : ("remote" as const),
+    }));
+    this.selectionFleet.publish(
+      this.selectionIdentity.current().generation,
+      localHostId,
+      hosts,
+    );
+  }
+
+  private getLocalHostIdForSelection(): string | null {
+    if (this.explicitLastKnownLocalHostId !== undefined) {
+      return this.explicitLastKnownLocalHostId;
+    }
+    return this.localHost?.hostId ?? null;
   }
 
   setWorkspaceFolderPickerPaths(paths: readonly string[]): void {

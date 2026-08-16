@@ -81,6 +81,7 @@ export type {
   Vibrancy as DesktopVibrancy,
 };
 
+import type { SelectionAuthorityClient } from "@traycer-clients/shared/host-selection/selection-authority-contract";
 import type { AuthIdentityValidationResult } from "@traycer-clients/shared/auth/auth-validation-types";
 import type { HostListFetchResult } from "@traycer-clients/shared/host-client/remote-fetcher";
 import type {
@@ -239,6 +240,12 @@ export interface DesktopPreloadBridge {
   hostManagement: DesktopHostManagementBridge;
   hostTray: DesktopHostTrayBridge;
   hostControllerStatus: DesktopHostControllerStatusBridge;
+  /**
+   * The preload-built client of the main-process selection authority. It
+   * already carries this load's engine-issued `attachSeq` and its own
+   * buffering, so the renderer only has to attach and subscribe.
+   */
+  selectionAuthority: SelectionAuthorityClient;
 }
 
 export interface DesktopFileDropsBridge {
@@ -595,6 +602,7 @@ export class DesktopRunnerHost implements IRunnerHost {
   readonly hostManagement: IHostManagement;
   readonly hostTray: IHostTray;
   readonly hostControllerStatus: DesktopHostControllerStatusBridge;
+  readonly selectionAuthority: SelectionAuthorityClient;
   readonly deviceFlow: IDeviceFlowHost;
 
   private readonly bridge: DesktopPreloadBridge;
@@ -617,6 +625,11 @@ export class DesktopRunnerHost implements IRunnerHost {
     this.support = options.bridge.support;
     this.platform = options.bridge.platform;
     this.power = options.bridge.power;
+    // Passed straight through: the client instance, its issued attach
+    // generation and its buffering all belong to the preload load, so
+    // re-wrapping it here could only add a second identity for the same
+    // generation.
+    this.selectionAuthority = options.bridge.selectionAuthority;
     this.zoom = {
       ladder: options.bridge.zoom.ladder,
       get: () => options.bridge.zoom.get(),

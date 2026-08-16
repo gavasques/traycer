@@ -16,6 +16,7 @@ import type {
   UpdateHostVersionPolicyInput,
 } from "../host-client/host-version-policy-fetcher";
 import type { DeregisterHostFetchResult } from "../host-client/host-deregister-fetcher";
+import type { SelectionAuthorityClient } from "../host-selection/selection-authority-contract";
 import type { StoredCredentials } from "@traycer/protocol/config/credentials";
 
 export type { StoredCredentials } from "@traycer/protocol/config/credentials";
@@ -409,6 +410,21 @@ export interface IRunnerHost {
    * `progress` event while the terminal `result.data` resolves the promise.
    */
   readonly hostManagement: IHostManagement | null;
+
+  /**
+   * The window's client of the per-app selection authority (host-lifecycle
+   * redesign, D16). Every shell has one - the desktop preload binds it over
+   * IPC to the engine in main, and a shell with no main process mounts the
+   * same engine in-window behind the in-process adapter - so this is
+   * non-nullable by design: "which host is effective" must have exactly one
+   * answer per app, and a shell without an authority would have to invent a
+   * second one.
+   *
+   * Consumers do not talk to it directly; they go through the window's
+   * `SelectionEvidenceKernel`, which owns the attach choreography and the
+   * live-session inventory.
+   */
+  readonly selectionAuthority: SelectionAuthorityClient;
 
   /**
    * Tray-side host command channel forwarded from the shell tray to the

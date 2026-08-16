@@ -108,6 +108,11 @@ vi.mock("electron", () => ({
   app: {
     getVersion: (): string => "1.0.0",
     getPath: (_key: string): string => "/tmp/traycer-desktop-test",
+    // The selection-authority binding listens for `render-process-gone` here
+    // (a crashed renderer must be reported as a detach, or its announced
+    // sessions would suppress the death counter forever).
+    on: (_event: string, _listener: unknown): void => undefined,
+    off: (_event: string, _listener: unknown): void => undefined,
   },
   safeStorage: {
     isEncryptionAvailable: (): boolean => false,
@@ -790,6 +795,10 @@ describe("RunnerIpcBridge", () => {
         RunnerHostInvoke.zoomStepIn,
         RunnerHostInvoke.zoomStepOut,
         RunnerHostInvoke.zoomReset,
+        // Selection authority (D16 / P1.1).
+        RunnerHostInvoke.selectionAttach,
+        RunnerHostInvoke.selectionReportEvidence,
+        RunnerHostInvoke.selectionActivate,
       ].sort(),
     );
     bridge.dispose();
@@ -2225,12 +2234,19 @@ describe("RunnerIpcBridge", () => {
 
     expect(await getHandler(sender(202))).toEqual(signedIn);
     expect(authSession.get()).toEqual(signedIn);
-    expect(windowA.sentMessages).toEqual([
+    // Signing in is an IDENTITY TRANSITION for the selection authority (null
+    // -> userId), so every window is also told to re-attach: the transition
+    // voids every incarnation, and `reattachRequired` is the mandatory
+    // trigger that guarantees a post-transition attach.
+    const expectedFanOut = [
       { channel: RunnerHostEvent.authSessionChange, payload: signedIn },
-    ]);
-    expect(windowB.sentMessages).toEqual([
-      { channel: RunnerHostEvent.authSessionChange, payload: signedIn },
-    ]);
+      {
+        channel: RunnerHostEvent.selectionReattachRequired,
+        payload: { revision: 1 },
+      },
+    ];
+    expect(windowA.sentMessages).toEqual(expectedFanOut);
+    expect(windowB.sentMessages).toEqual(expectedFanOut);
     bridge.dispose();
   });
 

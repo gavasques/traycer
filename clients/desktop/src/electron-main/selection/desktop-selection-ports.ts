@@ -203,9 +203,37 @@ export class DesktopHostFleetSource implements HostFleetSource {
    * Re-reads this machine's identity and the account's registry rows, then
    * publishes ONE tuple. Safe to call at any time; a failed fetch publishes
    * nothing rather than clobbering known membership with a network error.
+   *
+   * TOTAL BY CONTRACT: this never rejects, whatever its inputs do. It has
+   * THREE owners - startup's fire-and-forget `void fleet.refresh()`, the
+   * identity-change subscription, and the renderer's `refreshFleet` invoke -
+   * and only the last of those had a caller wrapping it. `listRegisteredHosts`
+   * returning a non-`ok` RESULT was already handled; `listRegisteredHosts` (or
+   * the local-host read) THROWING was not, so a genuine network exception
+   * escaped into an unhandled rejection on two of the three paths and, on the
+   * third, surfaced to the renderer as a failed invoke on an operation that had
+   * already succeeded. Containing it at the source rather than at each caller
+   * is what makes the guarantee independent of who remembers to wrap.
+   *
+   * Failing to refresh costs one stale cycle, which the next identity change,
+   * local-host change or explicit call re-reads anyway - strictly cheaper than
+   * any way of surfacing it.
    */
   async refresh(): Promise<void> {
     if (this.disposed) return;
+    try {
+      await this.refreshOrThrow();
+    } catch (error: unknown) {
+      // WARN, not debug: this is now the single place a thrown refresh is
+      // reported anywhere in the process, so it must not be the quiet level.
+      // Contained must never decay into invisible.
+      this.options.log.warn("[selection-fleet] registry refresh threw", {
+        error: String(error),
+      });
+    }
+  }
+
+  private async refreshOrThrow(): Promise<void> {
     // Stamped at fetch START (contract: "the generation this snapshot was
     // FETCHED under"), so a completion that lands after an account switch is
     // recognisably stale.

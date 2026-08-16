@@ -603,20 +603,31 @@ function useHostProvisioning(args: {
     );
   }, [queryClient, run, runnerHost.hostManagement]);
 
-  useEffect(() => {
-    if (!canProvision || args.isReady || attemptedRef.current) {
-      return;
-    }
-    attemptedRef.current = true;
-    mutate(
-      { force: false },
-      hostSetupAnalyticsCallbacks(
-        "launch",
-        markBusyKeep,
-        captureFailedProgress,
-      ),
-    );
-  }, [canProvision, args.isReady, mutate, markBusyKeep, captureFailedProgress]);
+  // THE AUTOMATIC LAUNCH-TIME `convergeReady` IS RETIRED (D14/C5, registry §5).
+  //
+  // It used to fire here, once per session, whenever a signed-in local-host
+  // shell had no reachable host. That made the renderer a SECOND process actor
+  // alongside the selection authority, which requests the same
+  // `HostController.convergeReady` through `LocalHostEnsurePort` - and the
+  // registry is explicit that the engine gets EXACTLY ONE sanctioned process
+  // action and the registry itself never drives processes. Two actors broke
+  // that in both directions: whichever won, the other was wrong. Renderer-wins
+  // left the engine refraining (it saw provisioning already under way through
+  // the mutation lane and declined to ask), so its ∅ derivation and the actual
+  // provisioning state described different worlds; engine-wins produced two
+  // converge calls for one boot.
+  //
+  // It is also what made the ∅ definitions two rather than one: registry §5
+  // says ∅ is "no usable lease AND the ensure path is unavailable or has
+  // failed", which is only decidable if the engine is the one asking.
+  //
+  // What stays HERE is presentation and USER-INITIATED recovery: Retry, forced
+  // update, the busy-keep flow, the removal surface, and the progress the
+  // mutation lane pushes. Those are gestures and rendering, not automatic
+  // process mutation, and they remain until P3.1 re-homes this surface. The
+  // boot-time provisioning intent now belongs to the authority alone, which
+  // asks for it exactly when derivation wants the local host and it is down.
+  void attemptedRef;
 
   // Direct removal-sentinel check, independent of the one-shot `convergeReady`
   // effect above. That effect never re-fires once `attemptedRef` is set -

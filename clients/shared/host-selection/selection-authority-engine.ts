@@ -400,6 +400,15 @@ type QueuedAuthorityEvent =
     }
   | { readonly kind: "reattach"; readonly event: SelectionReattachRequired };
 
+/**
+ * One in-flight {@link LocalHostEnsurePort} request. Matched by OBJECT
+ * IDENTITY, so a completion can never be mistaken for a newer request's.
+ */
+interface LocalEnsureToken {
+  readonly generation: number;
+  readonly hostId: string;
+}
+
 /** The selection tuple the engine currently holds. */
 interface SelectionState {
   readonly preferredHostId: string | null;
@@ -580,8 +589,20 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
    * two can never disagree about which move is waiting.
    */
   private pendingDampingDeadline: number | null = null;
-  /** True while the engine's one sanctioned process action is in flight (D14). */
-  private localEnsureInFlight = false;
+  /**
+   * The in-flight local `ensure`, or null (D14).
+   *
+   * A TOKEN rather than a boolean, because a boolean cannot say WHOSE ensure is
+   * running. It crossed identity generations: account A's in-flight request
+   * suppressed B's (the flag was still set, so B's derivation refrained from
+   * asking), rendered B's local host `connecting` on the strength of
+   * provisioning nobody had asked for on B's behalf, and then A's completion -
+   * arriving under a mismatched generation - cleared the flag and returned
+   * WITHOUT re-deriving, stranding B with a lease that no longer described
+   * anything. Object identity is the match: only the exact request the engine
+   * is still waiting on may mutate state or commit.
+   */
+  private localEnsureToken: LocalEnsureToken | null = null;
   /**
    * End of the cooldown after a FAILED ensure, or null. While it runs the
    * local lease is `dead` - which is exactly what registry §5 means by "the
@@ -1259,6 +1280,28 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
     this.usableSince.clear();
     this.pendingDampingDeadline = null;
     this.localEnsureFailedUntil = null;
+    // Retire the outgoing account's in-flight ensure so the incoming identity
+    // may ask for its own. Its completion is now state-neutral by token
+    // mismatch, so nothing it does can reach B.
+    this.localEnsureToken = null;
+    // THE OUTGOING SELECTION IS NOT AN INCUMBENT FOR THE INCOMING IDENTITY.
+    //
+    // Everything else here is wiped, but `this.selection` was not - and it is
+    // read by BOTH halves of derivation. Damping treats a non-null
+    // `effectiveHostId` as "something is serving, protect it", so with account
+    // A's host still sitting there, B's first derivation looked like a
+    // FailedOver window: A's host is not B's target, B's target has no
+    // accumulated stability, and the move is therefore HELD - publishing an
+    // account-A host as account B's effective host for up to the full
+    // return-to-target window. The HOLD rule reads the same field and would
+    // hold on A's lease just as happily.
+    //
+    // Clearing it says the true thing: a new identity has no incumbent. The
+    // first derivation is then an ordinary NoHost adoption (immediate, no
+    // window), and `previousEffectiveHostId` on the event is null - which is
+    // also what makes the first-provision toast suppression correct across a
+    // sign-in rather than announcing a "switch" from a stranger's host.
+    this.selection = EMPTY_SELECTION;
     // One transaction: the state batch is staged first and the trigger after
     // it, so the trigger's revision is strictly above every event of the
     // commit it follows - then both are delivered in that order.
@@ -1443,10 +1486,7 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
     for (const lease of leases) {
       if (!isUsableForSelection(lease)) continue;
       usable.add(lease.hostId);
-      if (
-        lease.hostId === this.fleet.localHostId &&
-        this.localEnsureInFlight
-      ) {
+      if (this.localEnsureToken?.hostId === lease.hostId) {
         // The local host reads `connecting` right now BECAUSE the engine asked
         // for it, not because anything observed it - so it accrues no
         // stability while that request is outstanding. Keeping the mark at
@@ -1528,7 +1568,19 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
    *
    * Requested only when derivation genuinely WANTS the local host - it is the
    * target, or the target cannot serve so local is the next candidate. A
-   * healthy preferred remote leaves the local host alone.
+   * healthy preferred remote leaves the local host alone: that want-local
+   * conjunct is the whole of the narrow rule, and it is what keeps a
+   * deliberate-remote user from paying for an idle local boot.
+   *
+   * WANTED + NOT-KNOWN-USABLE, where not-known-usable is `dead` OR
+   * NEVER-DIALED. The dead-only reading was too narrow in exactly one case and
+   * it was the commonest one: a cold boot has no evidence at all, so the local
+   * lease reads `connecting` - which is *usable* - and the engine would refrain
+   * until three confirmed refusals accumulated against a socket that does not
+   * exist yet. Never-dialed is not "up"; and since the ensure is what makes the
+   * socket dialable in the first place, waiting for dial evidence to justify it
+   * is circular. A host that HAS been dialed is excluded either way: mid-streak
+   * it is still connecting, and once it reaches `dead` the first arm takes it.
    *
    * Returns whether a request was started, because the caller must re-derive:
    * the request itself changes the local lease.
@@ -1537,38 +1589,75 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
     leases: readonly HostLeaseSnapshot[],
     now: number,
   ): boolean {
-    if (this.localEnsureInFlight) return false;
+    if (this.localEnsureToken !== null) return false;
     const localHostId = this.fleet.localHostId;
     if (localHostId === null) return false;
     const local = this.leaseFor(localHostId, leases);
-    // Only for a host that is actually DOWN. `restarting-expected` already
-    // means a deliberate cycle is under way - the mutation lane, or a restart
-    // tombstone - and a second converge request would fight it.
-    if (local === null || local.status !== "dead") return false;
-    // Provisioning cannot fix a version mismatch; D13 says update, not boot.
-    if (local.dead.reason === "incompatible") return false;
+    if (local === null) return false;
+    if (local.status === "dead") {
+      // Provisioning cannot fix a version mismatch; D13 says update, not boot.
+      if (local.dead.reason === "incompatible") return false;
+    } else if (
+      local.status === "restarting-expected" ||
+      !this.isLocalNeverDialed(localHostId) ||
+      this.localOutageStartedAt !== null
+    ) {
+      // The THIRD conjunct is the never-dialed arm's guard (F3(c)): a
+      // never-dialed host draws an ensure only while the outage signal is
+      // FALSE at request time.
+      //
+      // Widening to never-dialed made two arms overlap that never could
+      // before. The in-flight-ensure lease arm deliberately outranks the
+      // expected-outage arm - the engine must not render as unusable the very
+      // host it is starting, or provisioning shows the ∅ modal - and that was
+      // safe while the trigger was `dead`-only, because a deliberately cycling
+      // host is never dead. A first-boot host under a deliberate restart has
+      // no dial evidence either, so it read as never-dialed, drew an ensure,
+      // and the in-flight arm then reported `connecting` for a host that was
+      // deliberately down: the D5 hold, defeated.
+      //
+      // Closing it at the SOURCE rather than by re-ranking the arms: a user
+      // restart implies a host that exists and comes back, so never-dialed
+      // plus a deliberate outage needs no provisioning at all - comeback
+      // detection owns that case. Re-ranking would have re-opened
+      // ∅-during-provisioning, and correlating "is this lane mine?" is not
+      // possible: the engine's own ensure busies the same lane, so every test
+      // of "did the outage begin after my request" is true of itself.
+      //
+      // KNOWN BOUNDED RACE, accepted: a user restart that races an ensure
+      // ALREADY in flight keeps the lane signal continuous, so the in-flight
+      // arm reports `connecting` until the token resolves. Self-healing at
+      // completion, and one boolean cannot carry the provenance that would fix
+      // it properly - revisit only if the lane ever reports which actor busied
+      // it.
+      return false;
+    }
+
     const targetHostId = this.preferredHostId ?? localHostId;
     if (targetHostId !== localHostId && this.isUsable(targetHostId, leases)) {
       return false;
     }
     const cooldownUntil = this.localEnsureFailedUntil;
     if (cooldownUntil !== null && now < cooldownUntil) return false;
-    this.localEnsureInFlight = true;
     this.localEnsureFailedUntil = null;
-    // Stamped with the identity that wanted it: a completion arriving after an
-    // account switch describes a fleet this engine no longer has.
-    const generation = this.identityGeneration;
+    // Stamped with the identity AND host that wanted it: a completion arriving
+    // after an account switch describes a fleet this engine no longer has, and
+    // must not be able to speak for whatever is running now.
+    const token: LocalEnsureToken = {
+      generation: this.identityGeneration,
+      hostId: localHostId,
+    };
+    this.localEnsureToken = token;
     void this.options.localHostEnsure.ensureReady().then(
       (outcome) => {
         this.completeLocalEnsure(
-          generation,
-          localHostId,
+          token,
           outcome.ok,
           outcome.ok ? "" : outcome.reason,
         );
       },
       (error: unknown) => {
-        this.completeLocalEnsure(generation, localHostId, false, String(error));
+        this.completeLocalEnsure(token, false, String(error));
       },
     );
     return true;
@@ -1580,20 +1669,24 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
    * grow a second opinion about provisioning.
    */
   private completeLocalEnsure(
-    generation: number,
-    localHostId: string,
+    token: LocalEnsureToken,
     ok: boolean,
     reason: string,
   ): void {
     if (this.disposed) return;
-    if (generation !== this.identityGeneration) {
-      // The account changed while provisioning ran. Its evidence was wiped
-      // with everything else; adopting this answer now would speak for a fleet
-      // that no longer exists.
-      this.localEnsureInFlight = false;
+    if (this.localEnsureToken !== token) {
+      // Not the request the engine is waiting on - the account changed and the
+      // transition retired it, or a newer request superseded it. State-neutral
+      // by construction: it must not clear a LIVE token (which would let a
+      // second ensure start while the first is still running) and it must not
+      // commit (which would publish an answer about a fleet that is gone).
+      this.options.log.debug("[selection-authority] stale ensure dropped", {
+        hostId: token.hostId,
+        generation: token.generation,
+      });
       return;
     }
-    this.localEnsureInFlight = false;
+    this.localEnsureToken = null;
     if (ok) {
       // FIRSTHAND proof of life, and legitimately so under invariant 5: this
       // is not a cloud DTO but the desktop's own provisioning controller
@@ -1601,7 +1694,17 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
       // the stale refusal streak would keep the lease `dead` until something
       // happened to dial the host - and while a remote is serving, nothing
       // would.
-      this.onHostProvedAlive(localHostId);
+      this.onHostProvedAlive(token.hostId);
+      // F5: STABILITY STARTS AT PROOF OF LIFE, not at the request.
+      // `trackUsability` refreshes the mark on every transaction while the
+      // ensure is in flight, so the last refresh sits at whichever transaction
+      // happened to run last - typically the one that STARTED the request. Left
+      // alone, a 10s provisioning run would have already banked 10s of the
+      // 20s return window against a host that had not yet proved anything,
+      // which is precisely the credit the in-flight refresh exists to deny.
+      // Dropping the mark makes the next `trackUsability` re-stamp it at
+      // completion time.
+      this.usableSince.delete(token.hostId);
     } else {
       this.localEnsureFailedUntil =
         this.options.clock.now() + LOCAL_ENSURE_RETRY_COOLDOWN_MS;
@@ -1649,7 +1752,7 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
         dead: { reason: "incompatible", detail: compat.incompatibility },
       };
     }
-    if (isLocal && this.localEnsureInFlight) {
+    if (isLocal && this.localEnsureToken?.hostId === hostId) {
       // The engine's own provisioning request is in flight (D14). It outranks
       // the expected-outage arm below deliberately: that arm's signal is the
       // HostController mutation lane, which THIS request drives, so deferring
@@ -1689,6 +1792,16 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
       };
     }
     return { hostId, status: "connecting", dead: null };
+  }
+
+  /**
+   * No evidence has ever been reported for this host - nothing dialed it, no
+   * session announced, no compat verdict. Distinct from "reported nothing
+   * bad": a successful dial creates a record with a zero streak, so a host
+   * that once answered is never never-dialed again.
+   */
+  private isLocalNeverDialed(hostId: string): boolean {
+    return !this.evidence.has(hostId) && !this.hasLiveSession(hostId);
   }
 
   /** Whether a failed ensure is still holding the local lease dead. */

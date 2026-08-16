@@ -154,17 +154,18 @@ function registerAttachSeqSync(
  * ordinary fleet path, so every existing race rule (generation stamping,
  * revision monotonicity, one-snapshot-one-transaction) applies unchanged.
  *
- * Failures never reach the caller, and the containment is HERE rather than
- * left to the fleet source. `refresh()` swallows a resolved error-kind fetch
- * result, but a `listRegisteredHosts` that REJECTS outright - a thrown network
- * error rather than a returned failure - propagates straight out of it; the
- * bridge's generic invoke wrapper then logs and RE-THROWS, so the rejection
- * would surface to the renderer. That is exactly the shape this edge must not
- * have: the deregistration that prompted the call has already succeeded, and
- * turning a transient registry blip into a user-visible error on an operation
- * that already worked is worse than main staying stale for one more cycle -
- * which is all a failed refresh costs, since the next identity change,
- * local-host change or explicit call re-reads anyway.
+ * Failures never reach the caller, and the containment lives in
+ * `DesktopHostFleetSource.refresh()`, which is TOTAL by contract - deliberately
+ * NOT duplicated here.
+ *
+ * The first fix put a try/catch at this handler, which was correct for this
+ * path and wrong as a design: `refresh()` has THREE owners (startup's
+ * fire-and-forget call, the identity-change subscription, and this invoke), and
+ * wrapping one of them left the other two able to leak an unhandled rejection
+ * in main. Containment belongs to whoever owns the promise, once, so the
+ * guarantee cannot depend on each caller remembering. A second catch here would
+ * now be unreachable, and unreachable defence reads as a live guard to the next
+ * person who moves the first one.
  */
 function registerFleetRefresh(
   bridge: RunnerIpcBridge,
@@ -172,15 +173,7 @@ function registerFleetRefresh(
 ): void {
   bridge.handleInvoke(
     SelectionAuthorityChannels.invoke.refreshFleet,
-    async (): Promise<void> => {
-      try {
-        await fleet.refresh();
-      } catch (error: unknown) {
-        authorityLog.warn("[selection-ipc] fleet refresh failed", {
-          error: String(error),
-        });
-      }
-    },
+    (): Promise<void> => fleet.refresh(),
   );
 }
 

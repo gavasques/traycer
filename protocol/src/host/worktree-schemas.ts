@@ -545,6 +545,13 @@ export const worktreeListByWorkspacePathsRequestSchemaV14 =
 export type WorktreeListByWorkspacePathsRequestV14 =
   WorktreeListByWorkspacePathsRequestV13;
 
+// A V15 SUMMARY on a V14 RESPONSE is deliberate, not a mismatch. This method's
+// 1.4 never shipped, so it was still mutable and absorbed `presence` rather
+// than opening a 1.5. The summary keeps its V15 name because the OTHER consumer
+// - `worktree.listAllForHost` - did ship 1.4, so there the same fact had to
+// open a real 1.5. Editing this response therefore edits an UNRELEASED line;
+// editing `worktreeWorkspaceSummarySchemaV15` edits one that `listAllForHost`
+// has already released.
 export const worktreeListByWorkspacePathsResponseSchemaV14 = z.object({
   workspaces: z.array(worktreeWorkspaceSummarySchemaV15),
   scriptsAtRefs: z.array(worktreeScriptsAtRefSchema),

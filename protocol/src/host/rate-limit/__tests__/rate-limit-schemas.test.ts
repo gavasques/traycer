@@ -1110,7 +1110,12 @@ describe("host.getRateLimitUsage v4.0 Hugging Face freeze + downgrade bridges", 
   });
 });
 
-describe("host.getRateLimitUsage v5.0 OpenCode freeze + downgrade bridges", () => {
+// OpenCode rides the SAME major as Hugging Face: the release collapsed the
+// unreleased v5.0 into v4.0, so there is no peer that negotiated one arm
+// without the other. The Hugging-Face-specific coverage and the major-4
+// registry assertions live in the v4.0 block above; only the OpenCode-specific
+// behaviour is asserted here.
+describe("host.getRateLimitUsage v4.0 OpenCode arm + downgrade bridges", () => {
   const openCodeAvailable = {
     provider: "opencode" as const,
     available: true as const,
@@ -1146,19 +1151,6 @@ describe("host.getRateLimitUsage v5.0 OpenCode freeze + downgrade bridges", () =
     available: false as const,
     reason: "usage_fetch_failed" as const,
     credentialGeneration: "gen-opencode-1",
-  };
-
-  const huggingFaceAvailable = {
-    provider: "huggingface" as const,
-    available: true as const,
-    includedUsd: 2,
-    usedUsd: 0.5,
-    remainingIncludedUsd: 1.5,
-    limitUsd: 10,
-    remainingLimitUsd: 9.5,
-    numRequests: 42,
-    periodStart: "2026-08-01T00:00:00.000Z",
-    periodEnd: "2026-09-01T00:00:00.000Z",
   };
 
   it("accepts an OpenCode arm and generation on the live v4 line", () => {
@@ -1235,22 +1227,6 @@ describe("host.getRateLimitUsage v5.0 OpenCode freeze + downgrade bridges", () =
     });
   });
 
-  it("degrades a Hugging Face arm on the v4 -> v3 bridge, where it has no arm", () => {
-    const result = hostGetRateLimitUsageDowngradeV4ToV3.downgradeResponse(
-      rateLimitUsageResponseSchemaV40.parse({
-        totalTokens: 0,
-        remainingTokens: 0,
-        providerRateLimits: huggingFaceAvailable,
-      }),
-    );
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.value.providerRateLimits).toMatchObject({
-      available: false,
-      reason: "unsupported_provider",
-    });
-  });
-
   it("degrades OpenCode through the host registry major 4 -> 3 / 2 / 1 paths", () => {
     const response = rateLimitUsageResponseSchemaV40.parse({
       totalTokens: 0,
@@ -1279,16 +1255,4 @@ describe("host.getRateLimitUsage v5.0 OpenCode freeze + downgrade bridges", () =
     }
   });
 
-  it("registers host.getRateLimitUsage major 4.0 as the latest line", () => {
-    expect(
-      hostRpcRegistry["host.getRateLimitUsage"][4].versions[0].contract
-        .schemaVersion,
-    ).toEqual({ major: 4, minor: 0 });
-    expect(
-      Object.keys(
-        hostRpcRegistry["host.getRateLimitUsage"][4]
-          .downgradePathsFromLatest as Record<string, unknown>,
-      ).sort(),
-    ).toEqual(["1", "2", "3"]);
-  });
 });

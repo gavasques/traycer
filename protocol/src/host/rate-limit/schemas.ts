@@ -8,7 +8,6 @@ import {
   providerIdSchemaV40,
   providerIdSchemaV50,
   providerIdSchemaV60,
-  providerIdSchemaV70,
 } from "@traycer/protocol/host/provider-schemas";
 
 // `host.getRateLimitUsage` v1.0 request: no fields. Non-strict on purpose so a
@@ -424,27 +423,19 @@ export const providerRateLimitsSchemaV21 = z.union([
 ]);
 export type ProviderRateLimitsV21 = z.infer<typeof providerRateLimitsSchemaV21>;
 
-// Frozen provider union carried by host.getRateLimitUsage@4.0 and
-// agent.getProviderProfileRateLimits@4.0. It includes Hugging Face but not
-// OpenCode Go.
-export const providerRateLimitsSchemaV70 = z.union([
-  codexRateLimitsSchema,
-  claudeCodeRateLimitsSchema,
-  openRouterRateLimitsSchema,
-  kiloCodeRateLimitsSchema,
-  grokRateLimitsSchema,
-  huggingFaceRateLimitsSchema,
-  z.object({
-    provider: providerIdSchemaV70,
-    available: z.literal(false),
-    reason: rateLimitUnavailableReasonSchemaV2,
-  }),
-]);
-export type ProviderRateLimitsV70 = z.infer<typeof providerRateLimitsSchemaV70>;
-
-// Latest provider union: the frozen v4 union plus OpenCode Go. The new
-// available arm travels behind the next RPC major; the unavailable arm's
-// optional cache generation is stripped naturally by older object schemas.
+// Latest provider union, carried by `host.getRateLimitUsage@4.0` and
+// `agent.getProviderProfileRateLimits@4.0`. Both the Hugging Face and the
+// OpenCode Go available arms ride 4.0: neither had shipped when the release
+// collapsed them onto one major, so there is no peer that negotiated one
+// without the other. The unavailable arm's optional cache generation is
+// stripped naturally by older object schemas.
+//
+// A pre-collapse `providerRateLimitsSchemaV70` used to sit here as the frozen
+// pre-image these two lines parsed through. Nothing binds it now - 4.0 ranges
+// over this live union directly - so it was removed rather than left as an
+// unbound union documenting a freeze that no longer exists. Adding an arm here
+// therefore GROWS THE 4.0 WIRE immediately; the bridges below are what keep the
+// released 3.0/2.1/1.2 lines parsing.
 export const providerRateLimitsSchema = z.union([
   codexRateLimitsSchema,
   claudeCodeRateLimitsSchema,

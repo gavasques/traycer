@@ -1125,9 +1125,14 @@ export const worktreeListAllForHostUpgradeV13ToV14 = defineUpgradePath<
   }),
 });
 
-// v1.5 adds the same `presence` fact to the host-wide worktree listing. Keep
-// it paired with `worktree.listByWorkspacePaths@1.5`: a v1.4 host's rows were
-// already authoritative and therefore upgrade as present.
+// v1.5 adds the same `presence` fact to the host-wide worktree listing. The two
+// methods deliberately DIVERGE on the minor that carries it: this one shipped
+// 1.4, so `presence` had to open a new 1.5, while
+// `worktree.listByWorkspacePaths` never shipped its 1.4 and absorbed `presence`
+// into that still-mutable minor instead. Do not "re-pair" them by reopening a
+// `listByWorkspacePaths@1.5` - the fact rides `@1.4` there. What stays true is
+// the upgrade semantics: a v1.4 host's rows were already authoritative and
+// therefore upgrade as present.
 export const worktreeListAllForHostV15 = defineRpcContract({
   method: "worktree.listAllForHost",
   schemaVersion: { major: 1, minor: 5 } as const,

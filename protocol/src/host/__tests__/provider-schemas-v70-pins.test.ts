@@ -204,12 +204,15 @@ describe("the v7-era schemas are distinct objects from the canonical live ones",
   });
 });
 
-// The live schema now models the concrete v8.0 additions. These tests keep the
-// contrast real: the same payload is accepted by the live schema and loses
-// the new fields only when decoded through the frozen v7.0 schema.
-describe("v7.0 does not track the live shape forward", () => {
-  it("drops the new v8.0 provider-row fields (packId, managedVersions, nextRunBinary)", () => {
-    const v8ShapedRow = {
+// The version-manager fields ride the LIVE schema, which `providers.list@7.0`
+// now binds directly - the release collapsed the unreleased v8.0 that used to
+// carry them into v7.0. `providerCliStateSchemaV70` survives as the v7.0-SHAPED
+// PIN that the older bridges and compat suites parse through, not as the v7.0
+// wire. These tests keep that contrast real: the same payload is accepted by
+// the live schema and loses the fields only when decoded through the pin.
+describe("the v7.0 pin does not track the live shape forward", () => {
+  it("drops the live provider-row fields (packId, managedVersions, nextRunBinary)", () => {
+    const liveShapedRow = {
       ...providerState("claude-code"),
       profiles: [],
       packId: "pack-claude-code",
@@ -236,7 +239,7 @@ describe("v7.0 does not track the live shape forward", () => {
         version: "1.2.3",
       },
     };
-    expect(providerCliStateSchema.parse(v8ShapedRow)).toMatchObject({
+    expect(providerCliStateSchema.parse(liveShapedRow)).toMatchObject({
       packId: "pack-claude-code",
       managedVersions: { sharedWithProviders: ["codex"] },
       nextRunBinary: {
@@ -244,19 +247,19 @@ describe("v7.0 does not track the live shape forward", () => {
         version: "1.2.3",
       },
     });
-    const parsed = providerCliStateSchemaV70.parse(v8ShapedRow);
+    const parsed = providerCliStateSchemaV70.parse(liveShapedRow);
     expect(parsed).not.toHaveProperty("packId");
     expect(parsed).not.toHaveProperty("managedVersions");
     expect(parsed).not.toHaveProperty("nextRunBinary");
   });
 
-  it("drops the new v8.0 `version` addition to managedInstallState's downloading/installed arms", () => {
-    const v8ShapedRow = {
+  it("drops the live `version` addition to managedInstallState's downloading/installed arms", () => {
+    const liveShapedRow = {
       ...providerState("codex"),
       profiles: [],
       managedInstallState: { status: "installed", version: "1.2.3" },
     };
-    const parsed = providerCliStateSchemaV70.parse(v8ShapedRow);
+    const parsed = providerCliStateSchemaV70.parse(liveShapedRow);
     expect(parsed.managedInstallState).toEqual({ status: "installed" });
     expect(parsed.managedInstallState).not.toHaveProperty("version");
 

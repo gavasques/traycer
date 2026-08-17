@@ -1584,6 +1584,15 @@ describe("pr split RPC contracts", () => {
     expect(fileDiffContract.schemaVersion).toEqual({ major: 1, minor: 0 });
     expect(summaryContract.method).toBe("pr.getLocalDiffSummary");
     expect(fileDiffContract.method).toBe("pr.getLocalFileDiff");
+
+    // That 1.0 is the ONLY minor: the collapse left no 1.1 above it, and
+    // nothing below it to upgrade from.
+    expect(summary[1].latestMinor).toBe(0);
+    expect(fileDiff[1].latestMinor).toBe(0);
+    expect(Object.keys(summary[1].versions)).toEqual(["0"]);
+    expect(Object.keys(fileDiff[1].versions)).toEqual(["0"]);
+    expect(summary[1].versions[0].upgradeFromPreviousVersion).toBeNull();
+    expect(fileDiff[1].versions[0].upgradeFromPreviousVersion).toBeNull();
   });
 
   it("keeps both additive methods optional and unsupported on older hosts", () => {
@@ -1609,39 +1618,6 @@ describe("pr split RPC contracts", () => {
       major: 1,
       minor: 0,
     });
-  });
-});
-
-describe("pr split RPC byte-path registry entries", () => {
-  it("registers a single 1.0 carrying the byte-path sidecars", () => {
-    const summary = hostRpcRegistry["pr.getLocalDiffSummary"];
-    const fileDiff = hostRpcRegistry["pr.getLocalFileDiff"];
-
-    expect(summary[1].latestMinor).toBe(0);
-    expect(fileDiff[1].latestMinor).toBe(0);
-    expect(Object.keys(summary[1].versions)).toEqual(["0"]);
-    expect(Object.keys(fileDiff[1].versions)).toEqual(["0"]);
-
-    const summaryV10 = summary[1].versions[0];
-    const fileDiffV10 = fileDiff[1].versions[0];
-
-    expect(summaryV10.contract).toBe(prGetLocalDiffSummaryV10);
-    expect(fileDiffV10.contract).toBe(prGetLocalFileDiffV10);
-    expect(summaryV10.upgradeFromPreviousVersion).toBeNull();
-    expect(fileDiffV10.upgradeFromPreviousVersion).toBeNull();
-    expect(summaryV10.contract.schemaVersion).toEqual({ major: 1, minor: 0 });
-    expect(fileDiffV10.contract.schemaVersion).toEqual({
-      major: 1,
-      minor: 0,
-    });
-
-    // The sidecar-bearing schemas are the ones the single minor binds.
-    expect(summaryV10.contract.responseSchema).toBe(
-      prGetLocalDiffSummaryResponseV11Schema,
-    );
-    expect(fileDiffV10.contract.requestSchema).toBe(
-      prGetLocalFileDiffRequestV11Schema,
-    );
   });
 });
 

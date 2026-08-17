@@ -225,9 +225,9 @@ describe("<UsageSummaryPanel /> image export", () => {
 
     await screen.findByTestId("usage-cost-figure");
     await screen.findByTestId("usage-activity-section");
-    expect(
-      copyButton instanceof HTMLButtonElement && copyButton.disabled,
-    ).toBe(false);
+    expect(copyButton instanceof HTMLButtonElement && copyButton.disabled).toBe(
+      false,
+    );
     expect(
       downloadButton instanceof HTMLButtonElement && downloadButton.disabled,
     ).toBe(false);

@@ -147,7 +147,9 @@ describe("copyImageBlobPromiseToClipboard", () => {
     if (!(item instanceof FakeClipboardItem)) throw new Error("no item");
     expect(item.items["image/png"]).toBe(capture);
 
-    resolveCapture(new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }));
+    resolveCapture(
+      new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }),
+    );
     await copied;
   });
 

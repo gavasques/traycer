@@ -7,7 +7,10 @@ import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
 import { Button } from "@/components/ui/button";
 import { TooltipWrapper } from "@/components/ui/tooltip-wrapper";
 import type { HostRpcRegistry } from "@/lib/host";
-import { useUsageImageExport } from "@/hooks/usage-analytics/use-usage-image-export";
+import {
+  useUsageImageExport,
+  type UsageImageExportMutation,
+} from "@/hooks/usage-analytics/use-usage-image-export";
 import { USAGE_EXPORT_REGION_SELECTOR } from "@/lib/usage-analytics/usage-export-image";
 import {
   buildUsageSummaryRequest,
@@ -35,10 +38,8 @@ import {
 import { formatDateRangeLabel } from "@/lib/usage-analytics/format-metric-value";
 import { lastNCalendarDays } from "@/lib/usage-analytics/day-window";
 import { UsageWindowPicker } from "@/components/usage-analytics/usage-window-picker";
-import {
-  UsageMetricToggle,
-  USAGE_METRIC_LABELS,
-} from "@/components/usage-analytics/usage-metric-toggle";
+import { UsageMetricToggle } from "@/components/usage-analytics/usage-metric-toggle";
+import { USAGE_METRIC_LABELS } from "@/lib/usage-analytics/usage-metric-labels";
 import { UsageDailyChart } from "@/components/usage-analytics/usage-daily-chart";
 import { UsageBreakdownTable } from "@/components/usage-analytics/usage-breakdown-table";
 import { UsageDayBreakdownTable } from "@/components/usage-analytics/usage-day-breakdown-table";
@@ -264,13 +265,6 @@ export function UsageSummaryPanel(props: UsageSummaryPanelProps): ReactNode {
     errorSource: "Usage settings",
     analyticsSource: "settings",
   });
-  // One export runs at a time, so BOTH buttons go disabled while either is
-  // pending; only the button that started it shows the spinner, which is
-  // what the variables discriminate.
-  const isExporting = mutation.isPending;
-  const isCopying = isExporting && mutation.variables?.action === "copy";
-  const isDownloading = isExporting && mutation.variables?.action === "download";
-
   return (
     <div ref={panelRef} className="flex w-full max-w-4xl flex-col gap-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -295,58 +289,12 @@ export function UsageSummaryPanel(props: UsageSummaryPanelProps): ReactNode {
         </div>
         <div className="flex items-center gap-1.5">
           <UsageMetricToggle metric={metric} onChange={setMetric} />
-          <TooltipWrapper
-            label="Copy image"
-            side="top"
-            sideOffset={undefined}
-            align={undefined}
-          >
-            <Button
-              type="button"
-              variant="outline"
-              size="icon-sm"
-              aria-label="Copy usage image"
-              data-testid="usage-copy-image"
-              disabled={!exportReady || isExporting}
-              onClick={copyImage}
-            >
-              {isCopying ? (
-                <AgentSpinningDots
-                  className="size-3"
-                  testId={undefined}
-                  variant={undefined}
-                />
-              ) : (
-                <Copy aria-hidden className="size-3.5" />
-              )}
-            </Button>
-          </TooltipWrapper>
-          <TooltipWrapper
-            label="Download image"
-            side="top"
-            sideOffset={undefined}
-            align={undefined}
-          >
-            <Button
-              type="button"
-              variant="outline"
-              size="icon-sm"
-              aria-label="Download usage image"
-              data-testid="usage-download-image"
-              disabled={!exportReady || isExporting}
-              onClick={downloadImage}
-            >
-              {isDownloading ? (
-                <AgentSpinningDots
-                  className="size-3"
-                  testId={undefined}
-                  variant={undefined}
-                />
-              ) : (
-                <Download aria-hidden className="size-3.5" />
-              )}
-            </Button>
-          </TooltipWrapper>
+          <UsageExportImageActions
+            exportReady={exportReady}
+            mutation={mutation}
+            onCopyImage={copyImage}
+            onDownloadImage={downloadImage}
+          />
         </div>
       </div>
       <UsageSummaryPanelBody
@@ -365,6 +313,81 @@ export function UsageSummaryPanel(props: UsageSummaryPanelProps): ReactNode {
         }
       />
     </div>
+  );
+}
+
+/**
+ * The header's Copy image / Download image pair. One export runs at a time,
+ * so BOTH buttons go disabled while either is pending; only the button that
+ * started it shows the spinner, which is what the mutation's variables
+ * discriminate. Extracted from the panel so the pending derivations live
+ * beside the buttons they gate.
+ */
+function UsageExportImageActions(props: {
+  readonly exportReady: boolean;
+  readonly mutation: UsageImageExportMutation;
+  readonly onCopyImage: () => void;
+  readonly onDownloadImage: () => void;
+}): ReactNode {
+  const { exportReady, mutation } = props;
+  const isExporting = mutation.isPending;
+  const isCopying = isExporting && mutation.variables.action === "copy";
+  const isDownloading = isExporting && mutation.variables.action === "download";
+  return (
+    <>
+      <TooltipWrapper
+        label="Copy image"
+        side="top"
+        sideOffset={undefined}
+        align={undefined}
+      >
+        <Button
+          type="button"
+          variant="outline"
+          size="icon-sm"
+          aria-label="Copy usage image"
+          data-testid="usage-copy-image"
+          disabled={!exportReady || isExporting}
+          onClick={props.onCopyImage}
+        >
+          {isCopying ? (
+            <AgentSpinningDots
+              className="size-3"
+              testId={undefined}
+              variant={undefined}
+            />
+          ) : (
+            <Copy aria-hidden className="size-3.5" />
+          )}
+        </Button>
+      </TooltipWrapper>
+      <TooltipWrapper
+        label="Download image"
+        side="top"
+        sideOffset={undefined}
+        align={undefined}
+      >
+        <Button
+          type="button"
+          variant="outline"
+          size="icon-sm"
+          aria-label="Download usage image"
+          data-testid="usage-download-image"
+          disabled={!exportReady || isExporting}
+          onClick={props.onDownloadImage}
+        >
+          {isDownloading ? (
+            <AgentSpinningDots
+              className="size-3"
+              testId={undefined}
+              variant={undefined}
+            />
+          ) : (
+            <Download aria-hidden className="size-3.5" />
+          )}
+        </Button>
+      </TooltipWrapper>
+    </>
   );
 }
 

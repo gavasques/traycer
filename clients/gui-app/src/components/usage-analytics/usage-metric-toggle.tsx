@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { USAGE_METRIC_LABELS } from "@/lib/usage-analytics/usage-metric-labels";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { UsageMetric } from "@/lib/usage-analytics/usage-chart-data";
 
@@ -6,18 +7,6 @@ export interface UsageMetricToggleProps {
   readonly metric: UsageMetric;
   readonly onChange: (metric: UsageMetric) => void;
 }
-
-/**
- * What each metric is CALLED on screen, owned by the control that puts the
- * word there. Exported because a surface can have to name the selected metric
- * somewhere the toggle itself is not - the image export's subheading, whose
- * toggle sits outside the captured region - and a second copy of the wording
- * would drift from the tab the reader actually clicked.
- */
-export const USAGE_METRIC_LABELS: Readonly<Record<UsageMetric, string>> = {
-  cost: "Cost",
-  tokens: "Tokens",
-};
 
 export function UsageMetricToggle(props: UsageMetricToggleProps): ReactNode {
   return (

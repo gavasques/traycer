@@ -128,8 +128,8 @@ export function EpicUsageDialog(props: EpicUsageDialogProps): ReactNode {
   // pending; only the button that started it shows the spinner, which is
   // what the variables discriminate.
   const isExporting = mutation.isPending;
-  const isCopying = isExporting && mutation.variables?.action === "copy";
-  const isDownloading = isExporting && mutation.variables?.action === "download";
+  const isCopying = isExporting && mutation.variables.action === "copy";
+  const isDownloading = isExporting && mutation.variables.action === "download";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

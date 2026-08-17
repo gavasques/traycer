@@ -54,8 +54,7 @@ export type UsageImageExportInput =
 export type UsageImageExportMutation = UseMutationResult<
   string | null,
   Error,
-  UsageImageExportInput,
-  unknown
+  UsageImageExportInput
 >;
 
 export interface UseUsageImageExportResult {

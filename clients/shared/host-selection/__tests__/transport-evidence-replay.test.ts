@@ -371,3 +371,35 @@ describe("TransportEvidenceRelay - inventory replay across a kernel replacement"
     fixture.dispose();
   });
 });
+
+describe("TransportEvidenceRelay - currentSessionIdFor (P5.2 T6-T8)", () => {
+  it("T6/P5: sessionEstablished names the session for its host; an unknown host answers null", () => {
+    const relay = new TransportEvidenceRelay();
+    expect(relay.currentSessionIdFor(HOST_ID)).toBeNull();
+
+    relay.sessionEstablished(HOST_ID, "s1", "remote-relay");
+    expect(relay.currentSessionIdFor(HOST_ID)).toBe("s1");
+    expect(relay.currentSessionIdFor("unknown-host")).toBeNull();
+  });
+
+  it("T7/P6a: sessionLost clears the name it matches", () => {
+    const relay = new TransportEvidenceRelay();
+    relay.sessionEstablished(HOST_ID, "s1", "remote-relay");
+    expect(relay.currentSessionIdFor(HOST_ID)).toBe("s1");
+
+    relay.sessionLost(HOST_ID, "s1", "remote-relay");
+    expect(relay.currentSessionIdFor(HOST_ID)).toBeNull();
+  });
+
+  it("T8/P6b: a late sessionLost for a REPLACED session must not clear the newer one", () => {
+    const relay = new TransportEvidenceRelay();
+    relay.sessionEstablished(HOST_ID, "s1", "remote-relay");
+    relay.sessionEstablished(HOST_ID, "s2", "remote-relay");
+    expect(relay.currentSessionIdFor(HOST_ID)).toBe("s2");
+
+    // s1's teardown arrives after s2 is already up - the ordinary shape of a
+    // seamless reconnect. It must be cleared only by its OWN id.
+    relay.sessionLost(HOST_ID, "s1", "remote-relay");
+    expect(relay.currentSessionIdFor(HOST_ID)).toBe("s2");
+  });
+});

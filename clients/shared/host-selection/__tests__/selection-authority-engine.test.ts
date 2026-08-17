@@ -54,7 +54,10 @@ function attachRequest(
   };
 }
 
-function liveSession(hostId: string, sessionId: string): LiveSessionAnnouncement {
+function liveSession(
+  hostId: string,
+  sessionId: string,
+): LiveSessionAnnouncement {
   return { hostId, sessionId, transportKind: "remote-relay" };
 }
 
@@ -64,7 +67,14 @@ function dialOutcome(
   outcome: "success" | "timeout" | "indeterminate",
   at: number,
 ): SelectionEvidenceReport {
-  return { kind: "dial", hostId, attemptId, outcome, transportKind: "remote-relay", at };
+  return {
+    kind: "dial",
+    hostId,
+    attemptId,
+    outcome,
+    transportKind: "remote-relay",
+    at,
+  };
 }
 
 function dialRefusal(
@@ -90,7 +100,14 @@ function sessionEvidence(
   transition: "established" | "lost",
   at: number,
 ): SelectionEvidenceReport {
-  return { kind: "session", hostId, sessionId, transition, transportKind: "remote-relay", at };
+  return {
+    kind: "session",
+    hostId,
+    sessionId,
+    transition,
+    transportKind: "remote-relay",
+    at,
+  };
 }
 
 function compatCompatible(
@@ -139,7 +156,11 @@ const INCOMPAT_DETAIL: SelectionIncompatibility = {
   minSupportedVersion: "2.0.0",
 };
 
-const EMPTY_FLEET_SEED = { identityGeneration: 0, localHostId: null, hosts: [] };
+const EMPTY_FLEET_SEED = {
+  identityGeneration: 0,
+  localHostId: null,
+  hosts: [],
+};
 
 /**
  * A local `ensure` port that answers "ready" immediately.
@@ -208,14 +229,21 @@ describe("SelectionAuthorityEngineImpl - attach fence", () => {
   it("version mismatch retires the previous attachment and consumes the seq; a replay of the same seq is superseded", () => {
     const clock = createFakeAuthorityClock(0);
     const authority = createTestAuthority({
-      initialFleet: { identityGeneration: 0, localHostId: null, hosts: [fleetHost("H", "remote")] },
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: null,
+        hosts: [fleetHost("H", "remote")],
+      },
       initialIdentityKey: "acct-1",
       clock,
     });
     const { engine } = authority;
 
     const seq1 = engine.allocateAttachSeq("R1");
-    const attach1 = engine.attach("R1", attachRequest(seq1, [liveSession("H", "s1")]));
+    const attach1 = engine.attach(
+      "R1",
+      attachRequest(seq1, [liveSession("H", "s1")]),
+    );
     expect(attach1.ok).toBe(true);
     expect(findLease(engine.snapshot().leases, "H")?.status).toBe("ready");
 
@@ -243,14 +271,21 @@ describe("SelectionAuthorityEngineImpl - attach fence", () => {
   it("refuseMalformedAttach claims the latest-unconsumed seq and retires the previous attachment; a stale or already-consumed seq is state-neutral", () => {
     const clock = createFakeAuthorityClock(0);
     const authority = createTestAuthority({
-      initialFleet: { identityGeneration: 0, localHostId: null, hosts: [fleetHost("H", "remote")] },
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: null,
+        hosts: [fleetHost("H", "remote")],
+      },
       initialIdentityKey: "acct-1",
       clock,
     });
     const { engine } = authority;
 
     const seq1 = engine.allocateAttachSeq("R1");
-    const attach1 = engine.attach("R1", attachRequest(seq1, [liveSession("H", "s1")]));
+    const attach1 = engine.attach(
+      "R1",
+      attachRequest(seq1, [liveSession("H", "s1")]),
+    );
     expect(attach1.ok).toBe(true);
 
     const seq2 = engine.allocateAttachSeq("R1");
@@ -281,7 +316,11 @@ describe("SelectionAuthorityEngineImpl - SEAM: late attach and handover races", 
   it("a late-attaching window receives the full current snapshot, including a host that already died", () => {
     const clock = createFakeAuthorityClock(0);
     const authority = createTestAuthority({
-      initialFleet: { identityGeneration: 0, localHostId: null, hosts: [fleetHost("H", "remote")] },
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: null,
+        hosts: [fleetHost("H", "remote")],
+      },
       initialIdentityKey: "acct-1",
       clock,
     });
@@ -291,7 +330,11 @@ describe("SelectionAuthorityEngineImpl - SEAM: late attach and handover races", 
     const attachA = engine.attach("A", attachRequest(seqA, []));
     if (!attachA.ok) throw new Error("expected attach A to succeed");
     for (let i = 0; i < CONFIRMED_DEATH_REFUSAL_STREAK; i += 1) {
-      engine.ingestEvidence("A", attachA.incarnationId, dialRefusal("H", `attempt-${i}`, null, i));
+      engine.ingestEvidence(
+        "A",
+        attachA.incarnationId,
+        dialRefusal("H", `attempt-${i}`, null, i),
+      );
     }
     expect(findLease(engine.snapshot().leases, "H")?.status).toBe("dead");
 
@@ -308,14 +351,21 @@ describe("SelectionAuthorityEngineImpl - SEAM: late attach and handover races", 
   it("a stale attach retried after replacement is superseded while the surviving instance's session stays counted", () => {
     const clock = createFakeAuthorityClock(0);
     const authority = createTestAuthority({
-      initialFleet: { identityGeneration: 0, localHostId: null, hosts: [fleetHost("H", "remote")] },
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: null,
+        hosts: [fleetHost("H", "remote")],
+      },
       initialIdentityKey: "acct-1",
       clock,
     });
     const { engine } = authority;
 
     const seqA1 = engine.allocateAttachSeq("A");
-    const attachA1 = engine.attach("A", attachRequest(seqA1, [liveSession("H", "sA")]));
+    const attachA1 = engine.attach(
+      "A",
+      attachRequest(seqA1, [liveSession("H", "sA")]),
+    );
     expect(attachA1.ok).toBe(true);
     expect(findLease(engine.snapshot().leases, "H")?.status).toBe("ready");
 
@@ -333,7 +383,11 @@ describe("SelectionAuthorityEngineImpl - SEAM: late attach and handover races", 
   it("attach with surviving sockets never opens an empty-session window that concurrent refusals could count against", () => {
     const clock = createFakeAuthorityClock(0);
     const authority = createTestAuthority({
-      initialFleet: { identityGeneration: 0, localHostId: null, hosts: [fleetHost("H", "remote")] },
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: null,
+        hosts: [fleetHost("H", "remote")],
+      },
       initialIdentityKey: "acct-1",
       clock,
     });
@@ -345,12 +399,19 @@ describe("SelectionAuthorityEngineImpl - SEAM: late attach and handover races", 
 
     // A new load re-attaches announcing the same live session.
     const seqA2 = engine.allocateAttachSeq("A");
-    const attachA2 = engine.attach("A", attachRequest(seqA2, [liveSession("H", "sA")]));
+    const attachA2 = engine.attach(
+      "A",
+      attachRequest(seqA2, [liveSession("H", "sA")]),
+    );
     if (!attachA2.ok) throw new Error("expected re-attach to succeed");
     expect(findLease(engine.snapshot().leases, "H")?.status).toBe("ready");
 
     for (let i = 0; i < 3; i += 1) {
-      engine.ingestEvidence("A", attachA2.incarnationId, dialRefusal("H", `refusal-${i}`, null, i));
+      engine.ingestEvidence(
+        "A",
+        attachA2.incarnationId,
+        dialRefusal("H", `refusal-${i}`, null, i),
+      );
     }
     expect(findLease(engine.snapshot().leases, "H")?.status).toBe("ready");
 
@@ -370,7 +431,11 @@ describe("SelectionAuthorityEngineImpl - death aggregation", () => {
   it("SEAM: two windows contributing one refusal each is the same evidence as one window contributing two", () => {
     const clock = createFakeAuthorityClock(0);
     const twoWindow = createTestAuthority({
-      initialFleet: { identityGeneration: 0, localHostId: null, hosts: [fleetHost("H", "remote")] },
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: null,
+        hosts: [fleetHost("H", "remote")],
+      },
       initialIdentityKey: "acct-1",
       clock,
     });
@@ -378,37 +443,80 @@ describe("SelectionAuthorityEngineImpl - death aggregation", () => {
     const attachA = twoWindow.engine.attach("A", attachRequest(seqA, []));
     const seqB = twoWindow.engine.allocateAttachSeq("B");
     const attachB = twoWindow.engine.attach("B", attachRequest(seqB, []));
-    if (!attachA.ok || !attachB.ok) throw new Error("expected both attaches to succeed");
+    if (!attachA.ok || !attachB.ok)
+      throw new Error("expected both attaches to succeed");
 
-    twoWindow.engine.ingestEvidence("A", attachA.incarnationId, dialRefusal("H", "a1", null, 0));
-    twoWindow.engine.ingestEvidence("B", attachB.incarnationId, dialRefusal("H", "b1", null, 0));
-    expect(findLease(twoWindow.engine.snapshot().leases, "H")?.status).not.toBe("dead");
+    twoWindow.engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      dialRefusal("H", "a1", null, 0),
+    );
+    twoWindow.engine.ingestEvidence(
+      "B",
+      attachB.incarnationId,
+      dialRefusal("H", "b1", null, 0),
+    );
+    expect(findLease(twoWindow.engine.snapshot().leases, "H")?.status).not.toBe(
+      "dead",
+    );
 
-    twoWindow.engine.ingestEvidence("A", attachA.incarnationId, dialRefusal("H", "a2", null, 0));
-    expect(findLease(twoWindow.engine.snapshot().leases, "H")?.status).toBe("dead");
+    twoWindow.engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      dialRefusal("H", "a2", null, 0),
+    );
+    expect(findLease(twoWindow.engine.snapshot().leases, "H")?.status).toBe(
+      "dead",
+    );
     twoWindow.dispose();
 
     const oneWindow = createTestAuthority({
-      initialFleet: { identityGeneration: 0, localHostId: null, hosts: [fleetHost("H", "remote")] },
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: null,
+        hosts: [fleetHost("H", "remote")],
+      },
       initialIdentityKey: "acct-1",
       clock: createFakeAuthorityClock(0),
     });
     const seqC = oneWindow.engine.allocateAttachSeq("C");
     const attachC = oneWindow.engine.attach("C", attachRequest(seqC, []));
     if (!attachC.ok) throw new Error("expected attach to succeed");
-    oneWindow.engine.ingestEvidence("C", attachC.incarnationId, dialRefusal("H", "c1", null, 0));
-    expect(findLease(oneWindow.engine.snapshot().leases, "H")?.status).not.toBe("dead");
-    oneWindow.engine.ingestEvidence("C", attachC.incarnationId, dialRefusal("H", "c2", null, 0));
-    expect(findLease(oneWindow.engine.snapshot().leases, "H")?.status).not.toBe("dead");
-    oneWindow.engine.ingestEvidence("C", attachC.incarnationId, dialRefusal("H", "c3", null, 0));
-    expect(findLease(oneWindow.engine.snapshot().leases, "H")?.status).toBe("dead");
+    oneWindow.engine.ingestEvidence(
+      "C",
+      attachC.incarnationId,
+      dialRefusal("H", "c1", null, 0),
+    );
+    expect(findLease(oneWindow.engine.snapshot().leases, "H")?.status).not.toBe(
+      "dead",
+    );
+    oneWindow.engine.ingestEvidence(
+      "C",
+      attachC.incarnationId,
+      dialRefusal("H", "c2", null, 0),
+    );
+    expect(findLease(oneWindow.engine.snapshot().leases, "H")?.status).not.toBe(
+      "dead",
+    );
+    oneWindow.engine.ingestEvidence(
+      "C",
+      attachC.incarnationId,
+      dialRefusal("H", "c3", null, 0),
+    );
+    expect(findLease(oneWindow.engine.snapshot().leases, "H")?.status).toBe(
+      "dead",
+    );
     oneWindow.dispose();
   });
 
   it("dial dedup counts the same attemptId once per incarnation, and again from a different incarnation", () => {
     const clock = createFakeAuthorityClock(0);
     const authority = createTestAuthority({
-      initialFleet: { identityGeneration: 0, localHostId: null, hosts: [fleetHost("H", "remote")] },
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: null,
+        hosts: [fleetHost("H", "remote")],
+      },
       initialIdentityKey: "acct-1",
       clock,
     });
@@ -418,15 +526,27 @@ describe("SelectionAuthorityEngineImpl - death aggregation", () => {
     const attachA = engine.attach("A", attachRequest(seqA, []));
     if (!attachA.ok) throw new Error("expected attach to succeed");
     for (let i = 0; i < 5; i += 1) {
-      engine.ingestEvidence("A", attachA.incarnationId, dialRefusal("H", "dup", null, i));
+      engine.ingestEvidence(
+        "A",
+        attachA.incarnationId,
+        dialRefusal("H", "dup", null, i),
+      );
     }
     expect(findLease(engine.snapshot().leases, "H")?.status).not.toBe("dead");
 
     const seqA2 = engine.allocateAttachSeq("A");
     const attachA2 = engine.attach("A", attachRequest(seqA2, []));
     if (!attachA2.ok) throw new Error("expected re-attach to succeed");
-    engine.ingestEvidence("A", attachA2.incarnationId, dialRefusal("H", "dup", null, 0));
-    engine.ingestEvidence("A", attachA2.incarnationId, dialRefusal("H", "other", null, 0));
+    engine.ingestEvidence(
+      "A",
+      attachA2.incarnationId,
+      dialRefusal("H", "dup", null, 0),
+    );
+    engine.ingestEvidence(
+      "A",
+      attachA2.incarnationId,
+      dialRefusal("H", "other", null, 0),
+    );
     expect(findLease(engine.snapshot().leases, "H")?.status).toBe("dead");
 
     authority.dispose();
@@ -435,7 +555,11 @@ describe("SelectionAuthorityEngineImpl - death aggregation", () => {
   it("success clears the refusal streak; indeterminate never advances it", () => {
     const clock = createFakeAuthorityClock(0);
     const authority = createTestAuthority({
-      initialFleet: { identityGeneration: 0, localHostId: null, hosts: [fleetHost("H", "remote")] },
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: null,
+        hosts: [fleetHost("H", "remote")],
+      },
       initialIdentityKey: "acct-1",
       clock,
     });
@@ -445,9 +569,21 @@ describe("SelectionAuthorityEngineImpl - death aggregation", () => {
     const attachA = engine.attach("A", attachRequest(seqA, []));
     if (!attachA.ok) throw new Error("expected attach to succeed");
 
-    engine.ingestEvidence("A", attachA.incarnationId, dialRefusal("H", "r1", null, 0));
-    engine.ingestEvidence("A", attachA.incarnationId, dialRefusal("H", "r2", null, 0));
-    engine.ingestEvidence("A", attachA.incarnationId, dialOutcome("H", "success-1", "success", 0));
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      dialRefusal("H", "r1", null, 0),
+    );
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      dialRefusal("H", "r2", null, 0),
+    );
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      dialOutcome("H", "success-1", "success", 0),
+    );
 
     for (let i = 0; i < 10; i += 1) {
       engine.ingestEvidence(
@@ -464,29 +600,56 @@ describe("SelectionAuthorityEngineImpl - death aggregation", () => {
   it("a live session suppresses refusal accumulation; the streak reaches death normally once the session is lost", () => {
     const clock = createFakeAuthorityClock(0);
     const authority = createTestAuthority({
-      initialFleet: { identityGeneration: 0, localHostId: null, hosts: [fleetHost("H", "remote")] },
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: null,
+        hosts: [fleetHost("H", "remote")],
+      },
       initialIdentityKey: "acct-1",
       clock,
     });
     const { engine } = authority;
 
     const seqA = engine.allocateAttachSeq("A");
-    const attachA = engine.attach("A", attachRequest(seqA, [liveSession("H", "s1")]));
+    const attachA = engine.attach(
+      "A",
+      attachRequest(seqA, [liveSession("H", "s1")]),
+    );
     if (!attachA.ok) throw new Error("expected attach to succeed");
     expect(findLease(engine.snapshot().leases, "H")?.status).toBe("ready");
 
     for (let i = 0; i < 5; i += 1) {
-      engine.ingestEvidence("A", attachA.incarnationId, dialRefusal("H", `suppressed-${i}`, null, i));
+      engine.ingestEvidence(
+        "A",
+        attachA.incarnationId,
+        dialRefusal("H", `suppressed-${i}`, null, i),
+      );
     }
     expect(findLease(engine.snapshot().leases, "H")?.status).toBe("ready");
 
-    engine.ingestEvidence("A", attachA.incarnationId, sessionEvidence("H", "s1", "lost", 0));
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      sessionEvidence("H", "s1", "lost", 0),
+    );
     expect(findLease(engine.snapshot().leases, "H")?.status).toBe("connecting");
 
-    engine.ingestEvidence("A", attachA.incarnationId, dialRefusal("H", "fresh-1", null, 0));
-    engine.ingestEvidence("A", attachA.incarnationId, dialRefusal("H", "fresh-2", null, 0));
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      dialRefusal("H", "fresh-1", null, 0),
+    );
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      dialRefusal("H", "fresh-2", null, 0),
+    );
     expect(findLease(engine.snapshot().leases, "H")?.status).not.toBe("dead");
-    engine.ingestEvidence("A", attachA.incarnationId, dialRefusal("H", "fresh-3", null, 0));
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      dialRefusal("H", "fresh-3", null, 0),
+    );
     expect(findLease(engine.snapshot().leases, "H")?.status).toBe("dead");
 
     authority.dispose();
@@ -498,7 +661,11 @@ describe("SelectionAuthorityEngineImpl - death aggregation", () => {
       initialFleet: {
         identityGeneration: 0,
         localHostId: null,
-        hosts: [fleetHost("H1", "remote"), fleetHost("H2", "remote"), fleetHost("H3", "remote")],
+        hosts: [
+          fleetHost("H1", "remote"),
+          fleetHost("H2", "remote"),
+          fleetHost("H3", "remote"),
+        ],
       },
       initialIdentityKey: "acct-1",
       clock,
@@ -516,17 +683,39 @@ describe("SelectionAuthorityEngineImpl - death aggregation", () => {
         dialRefusal("H1", `plan-${i}`, "plan-restricted", i),
       );
     }
-    expect(findLease(engine.snapshot().leases, "H1")?.dead).toEqual({ reason: "plan-restricted" });
+    expect(findLease(engine.snapshot().leases, "H1")?.dead).toEqual({
+      reason: "plan-restricted",
+    });
 
     for (let i = 0; i < CONFIRMED_DEATH_REFUSAL_STREAK; i += 1) {
-      engine.ingestEvidence("A", attachA.incarnationId, dialRefusal("H2", `off-${i}`, null, i));
+      engine.ingestEvidence(
+        "A",
+        attachA.incarnationId,
+        dialRefusal("H2", `off-${i}`, null, i),
+      );
     }
-    expect(findLease(engine.snapshot().leases, "H2")?.dead).toEqual({ reason: "offline" });
+    expect(findLease(engine.snapshot().leases, "H2")?.dead).toEqual({
+      reason: "offline",
+    });
 
-    engine.ingestEvidence("A", attachA.incarnationId, dialRefusal("H3", "mix-1", "plan-restricted", 0));
-    engine.ingestEvidence("A", attachA.incarnationId, dialRefusal("H3", "mix-2", "plan-restricted", 0));
-    engine.ingestEvidence("A", attachA.incarnationId, dialRefusal("H3", "mix-3", null, 0));
-    expect(findLease(engine.snapshot().leases, "H3")?.dead).toEqual({ reason: "offline" });
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      dialRefusal("H3", "mix-1", "plan-restricted", 0),
+    );
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      dialRefusal("H3", "mix-2", "plan-restricted", 0),
+    );
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      dialRefusal("H3", "mix-3", null, 0),
+    );
+    expect(findLease(engine.snapshot().leases, "H3")?.dead).toEqual({
+      reason: "offline",
+    });
 
     authority.dispose();
   });
@@ -536,7 +725,11 @@ describe("SelectionAuthorityEngineImpl - session pairing", () => {
   it("session transitions are idempotent: duplicate established/lost are no-ops, lost-before-established tombstones, a stale incarnation is dropped", () => {
     const clock = createFakeAuthorityClock(0);
     const authority = createTestAuthority({
-      initialFleet: { identityGeneration: 0, localHostId: null, hosts: [fleetHost("H", "remote")] },
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: null,
+        hosts: [fleetHost("H", "remote")],
+      },
       initialIdentityKey: "acct-1",
       clock,
     });
@@ -546,23 +739,51 @@ describe("SelectionAuthorityEngineImpl - session pairing", () => {
     const attachA = engine.attach("A", attachRequest(seqA, []));
     if (!attachA.ok) throw new Error("expected attach to succeed");
 
-    engine.ingestEvidence("A", attachA.incarnationId, sessionEvidence("H", "s1", "established", 0));
-    engine.ingestEvidence("A", attachA.incarnationId, sessionEvidence("H", "s1", "established", 0));
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      sessionEvidence("H", "s1", "established", 0),
+    );
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      sessionEvidence("H", "s1", "established", 0),
+    );
     expect(findLease(engine.snapshot().leases, "H")?.status).toBe("ready");
 
-    engine.ingestEvidence("A", attachA.incarnationId, sessionEvidence("H", "s1", "lost", 0));
-    engine.ingestEvidence("A", attachA.incarnationId, sessionEvidence("H", "s1", "lost", 0));
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      sessionEvidence("H", "s1", "lost", 0),
+    );
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      sessionEvidence("H", "s1", "lost", 0),
+    );
     expect(findLease(engine.snapshot().leases, "H")?.status).not.toBe("ready");
 
     // lost before established: the id is tombstoned, the later established never lands.
-    engine.ingestEvidence("A", attachA.incarnationId, sessionEvidence("H", "s2", "lost", 0));
-    engine.ingestEvidence("A", attachA.incarnationId, sessionEvidence("H", "s2", "established", 0));
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      sessionEvidence("H", "s2", "lost", 0),
+    );
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      sessionEvidence("H", "s2", "established", 0),
+    );
     expect(findLease(engine.snapshot().leases, "H")?.status).not.toBe("ready");
 
     // a transition stamped with a stale incarnation is dropped.
     const seqA2 = engine.allocateAttachSeq("A");
     engine.attach("A", attachRequest(seqA2, []));
-    engine.ingestEvidence("A", attachA.incarnationId, sessionEvidence("H", "s3", "established", 0));
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      sessionEvidence("H", "s3", "established", 0),
+    );
     expect(findLease(engine.snapshot().leases, "H")?.status).not.toBe("ready");
 
     authority.dispose();
@@ -573,24 +794,36 @@ describe("SelectionAuthorityEngineImpl - SEAM: cloud-DTO flip has no channel to 
   it("republishing an identical fleet membership never changes a lease, connecting and dead arms", () => {
     const clock = createFakeAuthorityClock(0);
     const authority = createTestAuthority({
-      initialFleet: { identityGeneration: 0, localHostId: null, hosts: [fleetHost("H", "remote")] },
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: null,
+        hosts: [fleetHost("H", "remote")],
+      },
       initialIdentityKey: "acct-1",
       clock,
     });
     const { engine, events, fleet } = authority;
 
     const revisionBefore = engine.snapshot().revision;
-    const leaseEventsBefore = events.filter((event) => event.kind === "leases").length;
+    const leaseEventsBefore = events.filter(
+      (event) => event.kind === "leases",
+    ).length;
     fleet.publish(0, null, [fleetHost("H", "remote")]);
     expect(engine.snapshot().revision).toBe(revisionBefore);
-    expect(events.filter((event) => event.kind === "leases").length).toBe(leaseEventsBefore);
+    expect(events.filter((event) => event.kind === "leases").length).toBe(
+      leaseEventsBefore,
+    );
     expect(findLease(engine.snapshot().leases, "H")?.status).toBe("connecting");
 
     const seqA = engine.allocateAttachSeq("A");
     const attachA = engine.attach("A", attachRequest(seqA, []));
     if (!attachA.ok) throw new Error("expected attach to succeed");
     for (let i = 0; i < CONFIRMED_DEATH_REFUSAL_STREAK; i += 1) {
-      engine.ingestEvidence("A", attachA.incarnationId, dialRefusal("H", `d-${i}`, null, i));
+      engine.ingestEvidence(
+        "A",
+        attachA.incarnationId,
+        dialRefusal("H", `d-${i}`, null, i),
+      );
     }
     expect(findLease(engine.snapshot().leases, "H")?.status).toBe("dead");
 
@@ -607,7 +840,11 @@ describe("SelectionAuthorityEngineImpl - compat freshness", () => {
   it("compat freshness is anchored to session observation order: a later session's verdict recovers the lease, and a delayed verdict re-anchored to the older session is dropped", () => {
     const clock = createFakeAuthorityClock(0);
     const authority = createTestAuthority({
-      initialFleet: { identityGeneration: 0, localHostId: null, hosts: [fleetHost("H", "remote")] },
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: null,
+        hosts: [fleetHost("H", "remote")],
+      },
       initialIdentityKey: "acct-1",
       clock,
     });
@@ -617,21 +854,47 @@ describe("SelectionAuthorityEngineImpl - compat freshness", () => {
     if (!attachA.ok) throw new Error("expected attach to succeed");
 
     // s1's ordinal is assigned now, on first observation.
-    engine.ingestEvidence("A", attachA.incarnationId, sessionEvidence("H", "s1", "established", 0));
-    engine.ingestEvidence("A", attachA.incarnationId, compatIncompatible("H", "s1", INCOMPAT_DETAIL));
-    expect(findLease(engine.snapshot().leases, "H")?.dead?.reason).toBe("incompatible");
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      sessionEvidence("H", "s1", "established", 0),
+    );
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      compatIncompatible("H", "s1", INCOMPAT_DETAIL),
+    );
+    expect(findLease(engine.snapshot().leases, "H")?.dead?.reason).toBe(
+      "incompatible",
+    );
 
     // s1 is lost; s2 is observed for the first time now, so its ordinal is
     // strictly later than s1's - a legitimate downgrade / same-version
     // restart case, not a version-string comparison.
-    engine.ingestEvidence("A", attachA.incarnationId, sessionEvidence("H", "s1", "lost", 0));
-    engine.ingestEvidence("A", attachA.incarnationId, sessionEvidence("H", "s2", "established", 0));
-    engine.ingestEvidence("A", attachA.incarnationId, compatCompatible("H", "s2"));
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      sessionEvidence("H", "s1", "lost", 0),
+    );
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      sessionEvidence("H", "s2", "established", 0),
+    );
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      compatCompatible("H", "s2"),
+    );
     expect(findLease(engine.snapshot().leases, "H")?.status).not.toBe("dead");
 
     // A delayed verdict still anchored to s1 arrives after: its rank is
     // strictly below s2's, so it is dropped - the lease stays usable.
-    engine.ingestEvidence("A", attachA.incarnationId, compatIncompatible("H", "s1", INCOMPAT_DETAIL));
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      compatIncompatible("H", "s1", INCOMPAT_DETAIL),
+    );
     expect(findLease(engine.snapshot().leases, "H")?.status).not.toBe("dead");
 
     authority.dispose();
@@ -653,14 +916,40 @@ describe("SelectionAuthorityEngineImpl - compat freshness", () => {
     const attachA = engine.attach("A", attachRequest(seqA, []));
     if (!attachA.ok) throw new Error("expected attach to succeed");
 
-    engine.ingestEvidence("A", attachA.incarnationId, sessionEvidence("H1", "s1", "established", 0));
-    engine.ingestEvidence("A", attachA.incarnationId, sessionEvidence("H1", "s1", "lost", 0));
-    engine.ingestEvidence("A", attachA.incarnationId, compatIncompatible("H1", "s1", INCOMPAT_DETAIL));
-    engine.ingestEvidence("A", attachA.incarnationId, compatCompatible("H1", null));
-    expect(findLease(engine.snapshot().leases, "H1")?.dead?.reason).toBe("incompatible");
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      sessionEvidence("H1", "s1", "established", 0),
+    );
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      sessionEvidence("H1", "s1", "lost", 0),
+    );
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      compatIncompatible("H1", "s1", INCOMPAT_DETAIL),
+    );
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      compatCompatible("H1", null),
+    );
+    expect(findLease(engine.snapshot().leases, "H1")?.dead?.reason).toBe(
+      "incompatible",
+    );
 
-    engine.ingestEvidence("A", attachA.incarnationId, compatIncompatible("H2", null, INCOMPAT_DETAIL));
-    engine.ingestEvidence("A", attachA.incarnationId, compatCompatible("H2", null));
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      compatIncompatible("H2", null, INCOMPAT_DETAIL),
+    );
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      compatCompatible("H2", null),
+    );
     expect(findLease(engine.snapshot().leases, "H2")?.status).not.toBe("dead");
 
     authority.dispose();
@@ -669,7 +958,11 @@ describe("SelectionAuthorityEngineImpl - compat freshness", () => {
   it("compat evidence for a host clears on fleet removal", () => {
     const clock = createFakeAuthorityClock(0);
     const authority = createTestAuthority({
-      initialFleet: { identityGeneration: 0, localHostId: null, hosts: [fleetHost("H", "remote")] },
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: null,
+        hosts: [fleetHost("H", "remote")],
+      },
       initialIdentityKey: "acct-1",
       clock,
     });
@@ -678,8 +971,14 @@ describe("SelectionAuthorityEngineImpl - compat freshness", () => {
     const attachA = engine.attach("A", attachRequest(seqA, []));
     if (!attachA.ok) throw new Error("expected attach to succeed");
 
-    engine.ingestEvidence("A", attachA.incarnationId, compatIncompatible("H", null, INCOMPAT_DETAIL));
-    expect(findLease(engine.snapshot().leases, "H")?.dead?.reason).toBe("incompatible");
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      compatIncompatible("H", null, INCOMPAT_DETAIL),
+    );
+    expect(findLease(engine.snapshot().leases, "H")?.dead?.reason).toBe(
+      "incompatible",
+    );
 
     fleet.publish(0, null, []);
     expect(findLease(engine.snapshot().leases, "H")).toBeUndefined();
@@ -693,18 +992,31 @@ describe("SelectionAuthorityEngineImpl - compat freshness", () => {
   it("an incompatible verdict outranks a live session", () => {
     const clock = createFakeAuthorityClock(0);
     const authority = createTestAuthority({
-      initialFleet: { identityGeneration: 0, localHostId: null, hosts: [fleetHost("H", "remote")] },
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: null,
+        hosts: [fleetHost("H", "remote")],
+      },
       initialIdentityKey: "acct-1",
       clock,
     });
     const { engine } = authority;
     const seqA = engine.allocateAttachSeq("A");
-    const attachA = engine.attach("A", attachRequest(seqA, [liveSession("H", "s1")]));
+    const attachA = engine.attach(
+      "A",
+      attachRequest(seqA, [liveSession("H", "s1")]),
+    );
     if (!attachA.ok) throw new Error("expected attach to succeed");
     expect(findLease(engine.snapshot().leases, "H")?.status).toBe("ready");
 
-    engine.ingestEvidence("A", attachA.incarnationId, compatIncompatible("H", null, INCOMPAT_DETAIL));
-    expect(findLease(engine.snapshot().leases, "H")?.dead?.reason).toBe("incompatible");
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      compatIncompatible("H", null, INCOMPAT_DETAIL),
+    );
+    expect(findLease(engine.snapshot().leases, "H")?.dead?.reason).toBe(
+      "incompatible",
+    );
 
     authority.dispose();
   });
@@ -815,7 +1127,11 @@ describe("SelectionAuthorityEngineImpl - restart-intent episodes", () => {
   it("a tombstone opens a restarting-expected hold that refusals cannot escape, and lapses on the engine's own deadline", () => {
     const clock = createFakeAuthorityClock(0);
     const authority = createTestAuthority({
-      initialFleet: { identityGeneration: 0, localHostId: null, hosts: [fleetHost("H", "remote")] },
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: null,
+        hosts: [fleetHost("H", "remote")],
+      },
       initialIdentityKey: "acct-1",
       clock,
     });
@@ -824,16 +1140,30 @@ describe("SelectionAuthorityEngineImpl - restart-intent episodes", () => {
     const attachA = engine.attach("A", attachRequest(seqA, []));
     if (!attachA.ok) throw new Error("expected attach to succeed");
 
-    engine.ingestEvidence("A", attachA.incarnationId, restartIntent("H", "tomb-1", null, 0));
-    expect(findLease(engine.snapshot().leases, "H")?.status).toBe("restarting-expected");
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      restartIntent("H", "tomb-1", null, 0),
+    );
+    expect(findLease(engine.snapshot().leases, "H")?.status).toBe(
+      "restarting-expected",
+    );
 
     for (let i = 0; i < CONFIRMED_DEATH_REFUSAL_STREAK; i += 1) {
-      engine.ingestEvidence("A", attachA.incarnationId, dialRefusal("H", `during-${i}`, null, i));
+      engine.ingestEvidence(
+        "A",
+        attachA.incarnationId,
+        dialRefusal("H", `during-${i}`, null, i),
+      );
     }
-    expect(findLease(engine.snapshot().leases, "H")?.status).toBe("restarting-expected");
+    expect(findLease(engine.snapshot().leases, "H")?.status).toBe(
+      "restarting-expected",
+    );
 
     clock.advance(RESTART_INTENT_EPISODE_MS + 1);
-    expect(findLease(engine.snapshot().leases, "H")?.status).not.toBe("restarting-expected");
+    expect(findLease(engine.snapshot().leases, "H")?.status).not.toBe(
+      "restarting-expected",
+    );
     // The streak crossed the threshold while held; the deadline firing with no
     // new evidence is what surfaces it.
     expect(findLease(engine.snapshot().leases, "H")?.status).toBe("dead");
@@ -844,7 +1174,11 @@ describe("SelectionAuthorityEngineImpl - restart-intent episodes", () => {
   it("SEAM: a tombstone replay after the episode has lapsed opens no new episode", () => {
     const clock = createFakeAuthorityClock(0);
     const authority = createTestAuthority({
-      initialFleet: { identityGeneration: 0, localHostId: null, hosts: [fleetHost("H", "remote")] },
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: null,
+        hosts: [fleetHost("H", "remote")],
+      },
       initialIdentityKey: "acct-1",
       clock,
     });
@@ -853,12 +1187,24 @@ describe("SelectionAuthorityEngineImpl - restart-intent episodes", () => {
     const attachA = engine.attach("A", attachRequest(seqA, []));
     if (!attachA.ok) throw new Error("expected attach to succeed");
 
-    engine.ingestEvidence("A", attachA.incarnationId, restartIntent("H", "tomb-1", null, 0));
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      restartIntent("H", "tomb-1", null, 0),
+    );
     clock.advance(RESTART_INTENT_EPISODE_MS + 1);
-    expect(findLease(engine.snapshot().leases, "H")?.status).not.toBe("restarting-expected");
+    expect(findLease(engine.snapshot().leases, "H")?.status).not.toBe(
+      "restarting-expected",
+    );
 
-    engine.ingestEvidence("A", attachA.incarnationId, restartIntent("H", "tomb-1", null, 0));
-    expect(findLease(engine.snapshot().leases, "H")?.status).not.toBe("restarting-expected");
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      restartIntent("H", "tomb-1", null, 0),
+    );
+    expect(findLease(engine.snapshot().leases, "H")?.status).not.toBe(
+      "restarting-expected",
+    );
 
     authority.dispose();
   });
@@ -866,7 +1212,11 @@ describe("SelectionAuthorityEngineImpl - restart-intent episodes", () => {
   it("a duplicate tombstone from another window mid-episode does not extend it", () => {
     const clock = createFakeAuthorityClock(0);
     const authority = createTestAuthority({
-      initialFleet: { identityGeneration: 0, localHostId: null, hosts: [fleetHost("H", "remote")] },
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: null,
+        hosts: [fleetHost("H", "remote")],
+      },
       initialIdentityKey: "acct-1",
       clock,
     });
@@ -875,13 +1225,24 @@ describe("SelectionAuthorityEngineImpl - restart-intent episodes", () => {
     const attachA = engine.attach("A", attachRequest(seqA, []));
     const seqB = engine.allocateAttachSeq("B");
     const attachB = engine.attach("B", attachRequest(seqB, []));
-    if (!attachA.ok || !attachB.ok) throw new Error("expected both attaches to succeed");
+    if (!attachA.ok || !attachB.ok)
+      throw new Error("expected both attaches to succeed");
 
-    engine.ingestEvidence("A", attachA.incarnationId, restartIntent("H", "tomb-1", null, 0));
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      restartIntent("H", "tomb-1", null, 0),
+    );
     clock.advance(RESTART_INTENT_EPISODE_MS / 2);
-    engine.ingestEvidence("B", attachB.incarnationId, restartIntent("H", "tomb-1", null, 0));
+    engine.ingestEvidence(
+      "B",
+      attachB.incarnationId,
+      restartIntent("H", "tomb-1", null, 0),
+    );
     clock.advance(RESTART_INTENT_EPISODE_MS / 2 + 1);
-    expect(findLease(engine.snapshot().leases, "H")?.status).not.toBe("restarting-expected");
+    expect(findLease(engine.snapshot().leases, "H")?.status).not.toBe(
+      "restarting-expected",
+    );
 
     authority.dispose();
   });
@@ -936,7 +1297,10 @@ describe("SelectionAuthorityEngineImpl - local outage signal", () => {
       localHostId: "local-1",
       hosts: [fleetHost("local-1", "local")],
     });
-    const identity = { current: () => ({ identityKey: "acct-1", generation: 0 }), onChanged: () => ({ dispose: () => undefined }) };
+    const identity = {
+      current: () => ({ identityKey: "acct-1", generation: 0 }),
+      onChanged: () => ({ dispose: () => undefined }),
+    };
     let outageState = false;
     const outageListeners = new Set<(inExpectedOutage: boolean) => void>();
     const outage: LocalHostOutageSignal = {
@@ -971,18 +1335,26 @@ describe("SelectionAuthorityEngineImpl - local outage signal", () => {
 
     outageState = true;
     for (const listener of Array.from(outageListeners)) listener(true);
-    expect(findLease(engine.snapshot().leases, "local-1")?.status).toBe("restarting-expected");
+    expect(findLease(engine.snapshot().leases, "local-1")?.status).toBe(
+      "restarting-expected",
+    );
 
     outageState = false;
     for (const listener of Array.from(outageListeners)) listener(false);
-    expect(findLease(engine.snapshot().leases, "local-1")?.status).not.toBe("restarting-expected");
+    expect(findLease(engine.snapshot().leases, "local-1")?.status).not.toBe(
+      "restarting-expected",
+    );
 
     outageState = true;
     for (const listener of Array.from(outageListeners)) listener(true);
-    expect(findLease(engine.snapshot().leases, "local-1")?.status).toBe("restarting-expected");
+    expect(findLease(engine.snapshot().leases, "local-1")?.status).toBe(
+      "restarting-expected",
+    );
 
     clock.advance(LOCAL_EXPECTED_OUTAGE_CEILING_MS + 1);
-    expect(findLease(engine.snapshot().leases, "local-1")?.status).not.toBe("restarting-expected");
+    expect(findLease(engine.snapshot().leases, "local-1")?.status).not.toBe(
+      "restarting-expected",
+    );
 
     engine.dispose();
   });
@@ -1063,17 +1435,41 @@ describe("SelectionAuthorityEngineImpl - local outage signal", () => {
 
 describe("isUsableForSelection", () => {
   it("is false for every dead reason and restarting-expected, true for ready/degraded/connecting", () => {
-    const usable: HostLeaseSnapshot = { hostId: "h", status: "connecting", dead: null };
-    const ready: HostLeaseSnapshot = { hostId: "h", status: "ready", dead: null };
-    const degraded: HostLeaseSnapshot = { hostId: "h", status: "degraded", dead: null };
-    const restarting: HostLeaseSnapshot = { hostId: "h", status: "restarting-expected", dead: null };
-    const deadOffline: HostLeaseSnapshot = { hostId: "h", status: "dead", dead: { reason: "offline" } };
+    const usable: HostLeaseSnapshot = {
+      hostId: "h",
+      status: "connecting",
+      dead: null,
+    };
+    const ready: HostLeaseSnapshot = {
+      hostId: "h",
+      status: "ready",
+      dead: null,
+    };
+    const degraded: HostLeaseSnapshot = {
+      hostId: "h",
+      status: "degraded",
+      dead: null,
+    };
+    const restarting: HostLeaseSnapshot = {
+      hostId: "h",
+      status: "restarting-expected",
+      dead: null,
+    };
+    const deadOffline: HostLeaseSnapshot = {
+      hostId: "h",
+      status: "dead",
+      dead: { reason: "offline" },
+    };
     const deadPlanRestricted: HostLeaseSnapshot = {
       hostId: "h",
       status: "dead",
       dead: { reason: "plan-restricted" },
     };
-    const deadRemoved: HostLeaseSnapshot = { hostId: "h", status: "dead", dead: { reason: "removed" } };
+    const deadRemoved: HostLeaseSnapshot = {
+      hostId: "h",
+      status: "dead",
+      dead: { reason: "removed" },
+    };
     const deadIncompatible: HostLeaseSnapshot = {
       hostId: "h",
       status: "dead",
@@ -1124,23 +1520,38 @@ describe("SelectionAuthorityEngineImpl - identity transitions", () => {
     const { events } = recordEngineEvents(engine);
 
     const seqA = engine.allocateAttachSeq("A");
-    const attachA = engine.attach("A", attachRequest(seqA, [liveSession("H", "s1")]));
+    const attachA = engine.attach(
+      "A",
+      attachRequest(seqA, [liveSession("H", "s1")]),
+    );
     if (!attachA.ok) throw new Error("expected attach to succeed");
     const oldIncarnation = attachA.incarnationId;
 
     for (let i = 0; i < CONFIRMED_DEATH_REFUSAL_STREAK; i += 1) {
-      engine.ingestEvidence("A", oldIncarnation, dialRefusal("H2", `dead-${i}`, null, i));
+      engine.ingestEvidence(
+        "A",
+        oldIncarnation,
+        dialRefusal("H2", `dead-${i}`, null, i),
+      );
     }
     expect(findLease(engine.snapshot().leases, "H2")?.status).toBe("dead");
-    engine.ingestEvidence("A", oldIncarnation, restartIntent("H2", "tomb-x", null, 0));
+    engine.ingestEvidence(
+      "A",
+      oldIncarnation,
+      restartIntent("H2", "tomb-x", null, 0),
+    );
 
     // The new-generation fleet is already available by the time the identity
     // transition runs, so it is adopted as part of the SAME transaction.
-    fleet.publish(1, null, [fleetHost("H", "remote"), fleetHost("H2", "remote")]);
+    fleet.publish(1, null, [
+      fleetHost("H", "remote"),
+      fleetHost("H2", "remote"),
+    ]);
 
     const eventsBeforeTransition = events.length;
     identityState = { identityKey: "acct-B", generation: 1 };
-    for (const listener of Array.from(identityListeners)) listener(identityState);
+    for (const listener of Array.from(identityListeners))
+      listener(identityState);
 
     const transitionEvents = events.slice(eventsBeforeTransition);
     expect(transitionEvents.length).toBeGreaterThan(0);
@@ -1151,10 +1562,16 @@ describe("SelectionAuthorityEngineImpl - identity transitions", () => {
     }
 
     // (a) evidence is gone: H2, which was dead, comes back as ordinary connecting.
-    expect(findLease(engine.snapshot().leases, "H2")?.status).toBe("connecting");
+    expect(findLease(engine.snapshot().leases, "H2")?.status).toBe(
+      "connecting",
+    );
 
     // (c) every incarnation is void.
-    engine.ingestEvidence("A", oldIncarnation, dialRefusal("H", "post-transition", null, 0));
+    engine.ingestEvidence(
+      "A",
+      oldIncarnation,
+      dialRefusal("H", "post-transition", null, 0),
+    );
     expect(findLease(engine.snapshot().leases, "H")?.status).not.toBe("dead");
     expect(await engine.activate("A", oldIncarnation, "H")).toEqual({
       ok: false,
@@ -1163,7 +1580,10 @@ describe("SelectionAuthorityEngineImpl - identity transitions", () => {
 
     // (d) a late fleet completion stamped with the OLD generation is rejected.
     const revisionBeforeLateFleet = engine.snapshot().revision;
-    fleet.publish(0, null, [fleetHost("H", "remote"), fleetHost("H2", "remote")]);
+    fleet.publish(0, null, [
+      fleetHost("H", "remote"),
+      fleetHost("H2", "remote"),
+    ]);
     expect(engine.snapshot().revision).toBe(revisionBeforeLateFleet);
 
     // (e) the generation-1 snapshot published before the transition is in effect.
@@ -1205,7 +1625,8 @@ describe("SelectionAuthorityEngineImpl - identity transitions", () => {
     const { events } = recordEngineEvents(engine);
 
     identityState = { identityKey: "acct-B", generation: 1 };
-    for (const listener of Array.from(identityListeners)) listener(identityState);
+    for (const listener of Array.from(identityListeners))
+      listener(identityState);
     expect(events.filter((event) => event.kind === "reattach").length).toBe(1);
     const revisionAfterTransition = engine.snapshot().revision;
 
@@ -1243,16 +1664,33 @@ describe("SelectionAuthorityEngineImpl - revision discipline", () => {
     const afterFleetShift = events.length;
     expect(events[afterFleetShift - 2].kind).toBe("selection");
     expect(events[afterFleetShift - 1].kind).toBe("leases");
-    expect(events[afterFleetShift - 1].revision).toBe(events[afterFleetShift - 2].revision + 1);
+    expect(events[afterFleetShift - 1].revision).toBe(
+      events[afterFleetShift - 2].revision + 1,
+    );
 
     const seqA = engine.allocateAttachSeq("A");
-    const attachA = engine.attach("A", attachRequest(seqA, [liveSession("L", "s1")]));
+    const attachA = engine.attach(
+      "A",
+      attachRequest(seqA, [liveSession("L", "s1")]),
+    );
     if (!attachA.ok) throw new Error("expected attach to succeed");
-    engine.ingestEvidence("A", attachA.incarnationId, sessionEvidence("L", "s1", "lost", 0));
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      sessionEvidence("L", "s1", "lost", 0),
+    );
     for (let i = 0; i < CONFIRMED_DEATH_REFUSAL_STREAK; i += 1) {
-      engine.ingestEvidence("A", attachA.incarnationId, dialRefusal("L", `d-${i}`, null, i));
+      engine.ingestEvidence(
+        "A",
+        attachA.incarnationId,
+        dialRefusal("L", `d-${i}`, null, i),
+      );
     }
-    engine.ingestEvidence("A", attachA.incarnationId, restartIntent("L", "tomb-1", null, 0));
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      restartIntent("L", "tomb-1", null, 0),
+    );
     identity.set("acct-2");
 
     const revisions = events.map((event) => event.revision);
@@ -1269,17 +1707,28 @@ describe("SelectionAuthorityEngineImpl - realistic redial cadence", () => {
   it("SEAM: confirms death within the target window using a realistic redial cadence", () => {
     const clock = createFakeAuthorityClock(0);
     const authority = createTestAuthority({
-      initialFleet: { identityGeneration: 0, localHostId: null, hosts: [fleetHost("H", "remote")] },
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: null,
+        hosts: [fleetHost("H", "remote")],
+      },
       initialIdentityKey: "acct-1",
       clock,
     });
     const { engine } = authority;
     const seqA = engine.allocateAttachSeq("A");
-    const attachA = engine.attach("A", attachRequest(seqA, [liveSession("H", "s1")]));
+    const attachA = engine.attach(
+      "A",
+      attachRequest(seqA, [liveSession("H", "s1")]),
+    );
     if (!attachA.ok) throw new Error("expected attach to succeed");
     expect(findLease(engine.snapshot().leases, "H")?.status).toBe("ready");
 
-    engine.ingestEvidence("A", attachA.incarnationId, sessionEvidence("H", "s1", "lost", clock.now()));
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      sessionEvidence("H", "s1", "lost", clock.now()),
+    );
     expect(findLease(engine.snapshot().leases, "H")?.status).not.toBe("ready");
 
     const cadenceMs = [1000, 2000, 4000];
@@ -1305,7 +1754,11 @@ describe("SelectionAuthorityEngineImpl - reporter detach", () => {
   it("drops the reporter's sessions but keeps the supersession fence", () => {
     const clock = createFakeAuthorityClock(0);
     const authority = createTestAuthority({
-      initialFleet: { identityGeneration: 0, localHostId: null, hosts: [fleetHost("H", "remote")] },
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: null,
+        hosts: [fleetHost("H", "remote")],
+      },
       initialIdentityKey: "acct-1",
       clock,
     });
@@ -1363,7 +1816,9 @@ describe("SelectionAuthorityEngineImpl - activate (P1.2)", () => {
     // Persisted under the signed-in identity, and re-derivation has already
     // been emitted by the time `ok: true` resolves.
     expect(preferredStore.load("acct-1")).toBe("H");
-    const selectionEvents = events.filter((event) => event.kind === "selection");
+    const selectionEvents = events.filter(
+      (event) => event.kind === "selection",
+    );
     const last = selectionEvents[selectionEvents.length - 1];
     if (last === undefined || last.kind !== "selection") {
       throw new Error("expected a selection event");
@@ -1418,9 +1873,12 @@ describe("SelectionAuthorityEngineImpl - fleet shift", () => {
 
     fleet.publish(0, "L", [fleetHost("L", "local")]);
 
-    const selectionEvents = events.filter((event) => event.kind === "selection");
+    const selectionEvents = events.filter(
+      (event) => event.kind === "selection",
+    );
     const last = selectionEvents[selectionEvents.length - 1];
-    if (last.kind !== "selection") throw new Error("expected a selection event");
+    if (last.kind !== "selection")
+      throw new Error("expected a selection event");
     expect(last.change.cause).toBe("fleet-shift");
     expect(last.change.targetHostId).toBe("L");
     // Derivation is real from P1.2: with no preference, the usable local host
@@ -1478,7 +1936,11 @@ describe("SelectionAuthorityEngineImpl - A1: re-entrancy during attach", () => {
   it("seals attach's result BEFORE draining, so a listener-driven identity transition mints its reattachRequired at a revision ABOVE the sealed snapshot", () => {
     const clock = createFakeAuthorityClock(0);
     const authority = createTestAuthority({
-      initialFleet: { identityGeneration: 0, localHostId: null, hosts: [fleetHost("H", "remote")] },
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: null,
+        hosts: [fleetHost("H", "remote")],
+      },
       initialIdentityKey: "acct-1",
       clock,
     });
@@ -1497,12 +1959,17 @@ describe("SelectionAuthorityEngineImpl - A1: re-entrancy during attach", () => {
     const seqA = engine.allocateAttachSeq("A");
     // The live session moves the leases slice too (H flips to ready), so the
     // attach's own transaction actually reaches the lease listener above.
-    const result = engine.attach("A", attachRequest(seqA, [liveSession("H", "s1")]));
+    const result = engine.attach(
+      "A",
+      attachRequest(seqA, [liveSession("H", "s1")]),
+    );
     if (!result.ok) throw new Error("expected attach to succeed");
 
     const reattachEvent = events.find((event) => event.kind === "reattach");
     if (reattachEvent === undefined) {
-      throw new Error("expected the nested identity transition to mint a reattachRequired");
+      throw new Error(
+        "expected the nested identity transition to mint a reattachRequired",
+      );
     }
     expect(reattachEvent.revision).toBeGreaterThan(result.snapshot.revision);
 
@@ -1525,7 +1992,10 @@ describe("SelectionAuthorityEngineImpl - A2: nested commit does not split a sibl
       selectionCallbackCount += 1;
       if (selectionCallbackCount === 1) {
         // A nested fleet-shift, driven from inside the parent's own delivery.
-        fleet.publish(0, "L", [fleetHost("L", "local"), fleetHost("H2", "remote")]);
+        fleet.publish(0, "L", [
+          fleetHost("L", "local"),
+          fleetHost("H2", "remote"),
+        ]);
       }
     });
 
@@ -1557,10 +2027,14 @@ describe("SelectionAuthorityEngineImpl - A2: nested commit does not split a sibl
 });
 
 describe("SelectionAuthorityEngineImpl - A3: compat ranks are incarnation-scoped", () => {
-  it("two windows that both call their session \"s1\" rank by the authority's own observation order, not a shared ordinal", () => {
+  it('two windows that both call their session "s1" rank by the authority\'s own observation order, not a shared ordinal', () => {
     const clock = createFakeAuthorityClock(0);
     const authority = createTestAuthority({
-      initialFleet: { identityGeneration: 0, localHostId: null, hosts: [fleetHost("H", "remote")] },
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: null,
+        hosts: [fleetHost("H", "remote")],
+      },
       initialIdentityKey: "acct-1",
       clock,
     });
@@ -1574,16 +2048,32 @@ describe("SelectionAuthorityEngineImpl - A3: compat ranks are incarnation-scoped
 
     // A establishes its "s1" first; B's "s1" is observed later, so B's ordinal
     // is strictly newer even though the session ids collide.
-    engine.ingestEvidence("A", attachA.incarnationId, sessionEvidence("H", "s1", "established", 0));
-    engine.ingestEvidence("B", attachB.incarnationId, sessionEvidence("H", "s1", "established", 0));
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      sessionEvidence("H", "s1", "established", 0),
+    );
+    engine.ingestEvidence(
+      "B",
+      attachB.incarnationId,
+      sessionEvidence("H", "s1", "established", 0),
+    );
 
-    engine.ingestEvidence("B", attachB.incarnationId, compatCompatible("H", "s1"));
+    engine.ingestEvidence(
+      "B",
+      attachB.incarnationId,
+      compatCompatible("H", "s1"),
+    );
     expect(findLease(engine.snapshot().leases, "H")?.status).not.toBe("dead");
 
     // A's older session reports incompatible on ITS "s1". If ranks were
     // shared by session id, this would tie (latest-received wins) and flip
     // B's live host to dead.
-    engine.ingestEvidence("A", attachA.incarnationId, compatIncompatible("H", "s1", INCOMPAT_DETAIL));
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      compatIncompatible("H", "s1", INCOMPAT_DETAIL),
+    );
     expect(findLease(engine.snapshot().leases, "H")?.status).not.toBe("dead");
 
     authority.dispose();
@@ -1635,7 +2125,9 @@ describe("SelectionAuthorityEngineImpl - A4: identity transition keeps an active
 
     outageState = true;
     for (const listener of Array.from(outageListeners)) listener(true);
-    expect(findLease(engine.snapshot().leases, "local-1")?.status).toBe("restarting-expected");
+    expect(findLease(engine.snapshot().leases, "local-1")?.status).toBe(
+      "restarting-expected",
+    );
 
     clock.advance(1000);
 
@@ -1644,18 +2136,25 @@ describe("SelectionAuthorityEngineImpl - A4: identity transition keeps an active
     // outage edge fires.
     fleet.publish(1, "local-1", [fleetHost("local-1", "local")]);
     identityState = { identityKey: "acct-B", generation: 1 };
-    for (const listener of Array.from(identityListeners)) listener(identityState);
+    for (const listener of Array.from(identityListeners))
+      listener(identityState);
 
-    expect(findLease(engine.snapshot().leases, "local-1")?.status).toBe("restarting-expected");
+    expect(findLease(engine.snapshot().leases, "local-1")?.status).toBe(
+      "restarting-expected",
+    );
 
     // The ceiling counts from the ORIGINAL start (t=0), not from the
     // transition (t=1000): 1000ms elapsed already, so only CEILING - 1000
     // more is needed to lapse it.
     clock.advance(LOCAL_EXPECTED_OUTAGE_CEILING_MS - 1000 - 1);
-    expect(findLease(engine.snapshot().leases, "local-1")?.status).toBe("restarting-expected");
+    expect(findLease(engine.snapshot().leases, "local-1")?.status).toBe(
+      "restarting-expected",
+    );
 
     clock.advance(2);
-    expect(findLease(engine.snapshot().leases, "local-1")?.status).not.toBe("restarting-expected");
+    expect(findLease(engine.snapshot().leases, "local-1")?.status).not.toBe(
+      "restarting-expected",
+    );
 
     engine.dispose();
   });
@@ -1665,7 +2164,11 @@ describe("SelectionAuthorityEngineImpl - closure round: drain guard orders deliv
   it("every listener receives revision N before ANY listener receives revision N+1, even when listener 1 re-enters synchronously", () => {
     const clock = createFakeAuthorityClock(0);
     const authority = createTestAuthority({
-      initialFleet: { identityGeneration: 0, localHostId: null, hosts: [fleetHost("H1", "remote")] },
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: null,
+        hosts: [fleetHost("H1", "remote")],
+      },
       initialIdentityKey: "acct-1",
       clock,
     });
@@ -1692,7 +2195,10 @@ describe("SelectionAuthorityEngineImpl - closure round: drain guard orders deliv
       delivered.push({ listenerIndex: 1, revision: event.revision });
     });
 
-    fleet.publish(0, null, [fleetHost("H1", "remote"), fleetHost("H2", "remote")]);
+    fleet.publish(0, null, [
+      fleetHost("H1", "remote"),
+      fleetHost("H2", "remote"),
+    ]);
 
     expect(delivered.length).toBe(4);
     const firstRevision = delivered[0].revision;
@@ -1713,7 +2219,11 @@ describe("SelectionAuthorityEngineImpl - A5: tombstone seen-ids are pruned on fl
   it("a replayed tombstoneId opens a NEW episode once the host has left and rejoined the fleet", () => {
     const clock = createFakeAuthorityClock(0);
     const authority = createTestAuthority({
-      initialFleet: { identityGeneration: 0, localHostId: null, hosts: [fleetHost("H", "remote")] },
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: null,
+        hosts: [fleetHost("H", "remote")],
+      },
       initialIdentityKey: "acct-1",
       clock,
     });
@@ -1722,11 +2232,19 @@ describe("SelectionAuthorityEngineImpl - A5: tombstone seen-ids are pruned on fl
     const attachA = engine.attach("A", attachRequest(seqA, []));
     if (!attachA.ok) throw new Error("expected attach to succeed");
 
-    engine.ingestEvidence("A", attachA.incarnationId, restartIntent("H", "tomb-1", null, 0));
-    expect(findLease(engine.snapshot().leases, "H")?.status).toBe("restarting-expected");
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      restartIntent("H", "tomb-1", null, 0),
+    );
+    expect(findLease(engine.snapshot().leases, "H")?.status).toBe(
+      "restarting-expected",
+    );
 
     clock.advance(RESTART_INTENT_EPISODE_MS + 1);
-    expect(findLease(engine.snapshot().leases, "H")?.status).not.toBe("restarting-expected");
+    expect(findLease(engine.snapshot().leases, "H")?.status).not.toBe(
+      "restarting-expected",
+    );
 
     fleet.publish(0, null, []);
     expect(findLease(engine.snapshot().leases, "H")).toBeUndefined();
@@ -1736,8 +2254,14 @@ describe("SelectionAuthorityEngineImpl - A5: tombstone seen-ids are pruned on fl
 
     // Same tombstoneId, replayed after the host rejoined: without pruning the
     // seen-id set on removal, this would be a no-op forever.
-    engine.ingestEvidence("A", attachA.incarnationId, restartIntent("H", "tomb-1", null, clock.now()));
-    expect(findLease(engine.snapshot().leases, "H")?.status).toBe("restarting-expected");
+    engine.ingestEvidence(
+      "A",
+      attachA.incarnationId,
+      restartIntent("H", "tomb-1", null, clock.now()),
+    );
+    expect(findLease(engine.snapshot().leases, "H")?.status).toBe(
+      "restarting-expected",
+    );
 
     authority.dispose();
   });
@@ -1790,7 +2314,8 @@ describe("SelectionAuthorityEngineImpl - derivation precedence (P1.2)", () => {
     // pins ORDER (the preferred arm runs before the local arm), not merely
     // "local was unusable so preferred won by default".
     const localLeaseAfter = findLease(engine.snapshot().leases, "L");
-    if (localLeaseAfter === undefined) throw new Error("expected a lease for L");
+    if (localLeaseAfter === undefined)
+      throw new Error("expected a lease for L");
     expect(isUsableForSelection(localLeaseAfter)).toBe(true);
 
     authority.dispose();
@@ -1825,7 +2350,9 @@ describe("SelectionAuthorityEngineImpl - F14 deregister-clear (P1.2)", () => {
     fleet.publish(0, null, []);
     expect(engine.snapshot().preferredHostId).toBe("H");
     expect(preferredStore.load("acct-1")).toBe("H");
-    const selectionEvents = events.filter((event) => event.kind === "selection");
+    const selectionEvents = events.filter(
+      (event) => event.kind === "selection",
+    );
     const afterEmptyFleet = selectionEvents[selectionEvents.length - 1];
     if (afterEmptyFleet === undefined || afterEmptyFleet.kind !== "selection") {
       throw new Error("expected a selection event");
@@ -2110,10 +2637,12 @@ describe("SelectionAuthorityEngineImpl - P1.3 failover scenarios", () => {
     // can still keep the window on L instead of jumping to the third usable
     // host C.
     expect(
-      Math.max(FAILOVER_CANDIDATE_STABILITY_MS, RETURN_TO_TARGET_STABILITY_MS) + 5_000,
+      Math.max(FAILOVER_CANDIDATE_STABILITY_MS, RETURN_TO_TARGET_STABILITY_MS) +
+        5_000,
     ).toBeLessThan(RESTART_INTENT_EPISODE_MS);
     clock.advance(
-      Math.max(FAILOVER_CANDIDATE_STABILITY_MS, RETURN_TO_TARGET_STABILITY_MS) + 5_000,
+      Math.max(FAILOVER_CANDIDATE_STABILITY_MS, RETURN_TO_TARGET_STABILITY_MS) +
+        5_000,
     );
     expect(engine.snapshot().effectiveHostId).toBe("L");
 
@@ -2181,7 +2710,9 @@ describe("SelectionAuthorityEngineImpl - P1.3 failover scenarios", () => {
     fleet.publish(0, "L", [fleetHost("L", "local")]);
     expect(engine.snapshot().preferredHostId).toBeNull();
     expect(engine.snapshot().targetHostId).toBe("L");
-    expect(lastSelectionChange(authority.events).cause).toBe("deregister-clear");
+    expect(lastSelectionChange(authority.events).cause).toBe(
+      "deregister-clear",
+    );
 
     authority.dispose();
   });
@@ -2570,7 +3101,9 @@ describe("SelectionAuthorityEngineImpl - P1.3 F14 clear on identity adopt (H)", 
     });
     ports.transition();
     expect(ports.engine.snapshot().preferredHostId).toBe("GONE");
-    expect(lastSelectionChange(ports.events).cause).not.toBe("deregister-clear");
+    expect(lastSelectionChange(ports.events).cause).not.toBe(
+      "deregister-clear",
+    );
     ports.engine.dispose();
   });
 });
@@ -2596,7 +3129,11 @@ describe("SelectionAuthorityEngineImpl - P3.2 D13: incompatible is never a candi
       initialFleet: {
         identityGeneration: 0,
         localHostId: null,
-        hosts: [fleetHost("P", "remote"), fleetHost("X", "remote"), fleetHost("Y", "remote")],
+        hosts: [
+          fleetHost("P", "remote"),
+          fleetHost("X", "remote"),
+          fleetHost("Y", "remote"),
+        ],
       },
       initialIdentityKey: "acct-1",
       clock,
@@ -2692,9 +3229,300 @@ describe("SelectionAuthorityEngineImpl - P3.2 D13: incompatible is never a candi
     expect(snapshot.targetHostId).toBe("P");
     const lease = findLease(snapshot.leases, "P");
     expect(lease?.dead?.reason).toBe("incompatible");
-    expect(lease?.dead?.reason === "incompatible" ? lease.dead.detail : null).toEqual(
-      INCOMPAT_DETAIL,
+    expect(
+      lease?.dead?.reason === "incompatible" ? lease.dead.detail : null,
+    ).toEqual(INCOMPAT_DETAIL);
+
+    authority.dispose();
+  });
+});
+
+describe("SelectionAuthorityEngineImpl - local proof-of-life clears the ensure cooldown (P5.2)", () => {
+  it("T1/P1: a dial success for the local host during cooldown clears the dead(offline) lease", async () => {
+    const clock = createFakeAuthorityClock(0);
+    const ensure = createDeferredEnsure();
+    const authority = createTestAuthority({
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: "L",
+        hosts: [fleetHost("L", "local")],
+      },
+      initialIdentityKey: "acct-1",
+      clock,
+      localHostEnsure: ensure.port,
+    });
+    const { engine } = authority;
+    const incarnation = attachReporter(engine, "A");
+    killHostWithRefusals(engine, "A", incarnation, "L");
+    await ensure.resolve(false);
+    const before = findLease(engine.snapshot().leases, "L");
+    expect(before?.status).toBe("dead");
+    expect(before?.dead?.reason).toBe("offline");
+
+    engine.ingestEvidence(
+      "A",
+      incarnation,
+      dialOutcome("L", "recover-1", "success", 1),
     );
+
+    const after = findLease(engine.snapshot().leases, "L");
+    expect(after?.status).not.toBe("dead");
+
+    authority.dispose();
+  });
+
+  it("T2/P2: an ensure failure that lands AFTER a local proof of life does not re-arm the cooldown", async () => {
+    const clock = createFakeAuthorityClock(0);
+    const ensure = createDeferredEnsure();
+    const authority = createTestAuthority({
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: "L",
+        hosts: [fleetHost("L", "local")],
+      },
+      initialIdentityKey: "acct-1",
+      clock,
+      localHostEnsure: ensure.port,
+    });
+    const { engine } = authority;
+    const incarnation = attachReporter(engine, "A");
+    killHostWithRefusals(engine, "A", incarnation, "L");
+    expect(ensure.calls.count).toBe(1);
+
+    // Proof of life lands while the ensure request is still in flight.
+    engine.ingestEvidence(
+      "A",
+      incarnation,
+      dialOutcome("L", "recover-1", "success", 1),
+    );
+
+    // The ensure completes afterwards with a failure that post-dates the proof.
+    await ensure.resolve(false);
+
+    const after = findLease(engine.snapshot().leases, "L");
+    expect(after?.status).not.toBe("dead");
+
+    authority.dispose();
+  });
+
+  it("T3a/P3: a remote proof of life does not clear the local host's cooldown", async () => {
+    const clock = createFakeAuthorityClock(0);
+    const ensure = createDeferredEnsure();
+    const authority = createTestAuthority({
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: "L",
+        hosts: [fleetHost("L", "local"), fleetHost("R", "remote")],
+      },
+      initialIdentityKey: "acct-1",
+      clock,
+      localHostEnsure: ensure.port,
+    });
+    const { engine } = authority;
+    const incarnation = attachReporter(engine, "A");
+    killHostWithRefusals(engine, "A", incarnation, "L");
+    await ensure.resolve(false);
+    expect(findLease(engine.snapshot().leases, "L")?.dead?.reason).toBe(
+      "offline",
+    );
+
+    engine.ingestEvidence(
+      "A",
+      incarnation,
+      dialOutcome("R", "r-proof-1", "success", 1),
+    );
+
+    const after = findLease(engine.snapshot().leases, "L");
+    expect(after?.status).toBe("dead");
+    expect(after?.dead?.reason).toBe("offline");
+
+    authority.dispose();
+  });
+
+  it("T3b/P3: a proof of life on a fleet with no local host does not crash and clears nothing local-specific", () => {
+    const clock = createFakeAuthorityClock(0);
+    const authority = createTestAuthority({
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: null,
+        hosts: [fleetHost("R", "remote")],
+      },
+      initialIdentityKey: "acct-1",
+      clock,
+    });
+    const { engine } = authority;
+    const incarnation = attachReporter(engine, "A");
+
+    expect(() => {
+      engine.ingestEvidence(
+        "A",
+        incarnation,
+        dialOutcome("R", "r-1", "success", 1),
+      );
+    }).not.toThrow();
+
+    const after = findLease(engine.snapshot().leases, "R");
+    expect(after?.status).toBe("connecting");
+    expect(after?.dead).toBeNull();
+
+    authority.dispose();
+  });
+
+  it("T4/addendum: a cooldown cleared by a live session does not resurface once that session is lost", async () => {
+    const clock = createFakeAuthorityClock(0);
+    const ensure = createDeferredEnsure();
+    const authority = createTestAuthority({
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: "L",
+        hosts: [fleetHost("L", "local")],
+      },
+      initialIdentityKey: "acct-1",
+      clock,
+      localHostEnsure: ensure.port,
+    });
+    const { engine } = authority;
+    const incarnation = attachReporter(engine, "A");
+    killHostWithRefusals(engine, "A", incarnation, "L");
+    await ensure.resolve(false);
+    expect(findLease(engine.snapshot().leases, "L")?.dead?.reason).toBe(
+      "offline",
+    );
+
+    // A session establishes for the local host - stronger evidence than a
+    // dial, and it clears the cooldown the same as T1. While it lives the
+    // live-session arm pins the lease `ready` regardless of the cooldown, so
+    // this window alone proves nothing about whether the cooldown was
+    // actually cleared.
+    engine.ingestEvidence(
+      "A",
+      incarnation,
+      sessionEvidence("L", "s1", "established", 1),
+    );
+    expect(findLease(engine.snapshot().leases, "L")?.status).toBe("ready");
+
+    // The discriminator: once the session goes away, the cooldown must not
+    // resurface. If the clear had not happened, losing the session would fall
+    // straight through to the still-armed dead(offline) lease.
+    engine.ingestEvidence(
+      "A",
+      incarnation,
+      sessionEvidence("L", "s1", "lost", 1),
+    );
+    const after = findLease(engine.snapshot().leases, "L");
+    expect(after?.status).not.toBe("dead");
+
+    authority.dispose();
+  });
+
+  it("T4/addendum: an attach-inventory announcement for the local host also clears the cooldown", async () => {
+    const clock = createFakeAuthorityClock(0);
+    const ensure = createDeferredEnsure();
+    const authority = createTestAuthority({
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: "L",
+        hosts: [fleetHost("L", "local")],
+      },
+      initialIdentityKey: "acct-1",
+      clock,
+      localHostEnsure: ensure.port,
+    });
+    const { engine } = authority;
+    const incarnationA = attachReporter(engine, "A");
+    killHostWithRefusals(engine, "A", incarnationA, "L");
+    await ensure.resolve(false);
+    expect(findLease(engine.snapshot().leases, "L")?.dead?.reason).toBe(
+      "offline",
+    );
+
+    // A second reporter attaches with the local host already live in its
+    // inventory - `installInventory` runs the same proof-of-life path for it.
+    const seqB = engine.allocateAttachSeq("B");
+    const attachB = engine.attach(
+      "B",
+      attachRequest(seqB, [liveSession("L", "s-inv")]),
+    );
+    if (!attachB.ok) throw new Error("expected attach B to succeed");
+
+    const after = findLease(engine.snapshot().leases, "L");
+    expect(after?.status).not.toBe("dead");
+
+    authority.dispose();
+  });
+});
+
+describe("SelectionAuthorityEngineImpl - compat anchor must displace, not merely differ (P5.2 T5/P7)", () => {
+  it("T5a/P7: a fresh incompatible verdict anchored to a later session displaces a held compatible verdict", () => {
+    const clock = createFakeAuthorityClock(0);
+    const authority = createTestAuthority({
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: null,
+        hosts: [fleetHost("H", "remote")],
+      },
+      initialIdentityKey: "acct-1",
+      clock,
+    });
+    const { engine } = authority;
+    const incarnation = attachReporter(engine, "A");
+
+    engine.ingestEvidence(
+      "A",
+      incarnation,
+      sessionEvidence("H", "s1", "established", 0),
+    );
+    engine.ingestEvidence("A", incarnation, compatCompatible("H", "s1"));
+    expect(findLease(engine.snapshot().leases, "H")?.status).not.toBe("dead");
+
+    engine.ingestEvidence(
+      "A",
+      incarnation,
+      sessionEvidence("H", "s2", "established", 0),
+    );
+    engine.ingestEvidence(
+      "A",
+      incarnation,
+      compatIncompatible("H", "s2", INCOMPAT_DETAIL),
+    );
+
+    const after = findLease(engine.snapshot().leases, "H");
+    expect(after?.status).toBe("dead");
+    expect(after?.dead?.reason).toBe("incompatible");
+
+    authority.dispose();
+  });
+
+  it("T5b/P7: an incompatible verdict with no session anchor is dropped against a held session-anchored compatible", () => {
+    const clock = createFakeAuthorityClock(0);
+    const authority = createTestAuthority({
+      initialFleet: {
+        identityGeneration: 0,
+        localHostId: null,
+        hosts: [fleetHost("H", "remote")],
+      },
+      initialIdentityKey: "acct-1",
+      clock,
+    });
+    const { engine } = authority;
+    const incarnation = attachReporter(engine, "A");
+
+    engine.ingestEvidence(
+      "A",
+      incarnation,
+      sessionEvidence("H", "s1", "established", 0),
+    );
+    engine.ingestEvidence("A", incarnation, compatCompatible("H", "s1"));
+    expect(findLease(engine.snapshot().leases, "H")?.status).not.toBe("dead");
+
+    engine.ingestEvidence(
+      "A",
+      incarnation,
+      compatIncompatible("H", null, INCOMPAT_DETAIL),
+    );
+
+    const after = findLease(engine.snapshot().leases, "H");
+    expect(after?.status).not.toBe("dead");
 
     authority.dispose();
   });

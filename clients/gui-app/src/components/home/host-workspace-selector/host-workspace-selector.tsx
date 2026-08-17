@@ -63,7 +63,12 @@ import { locateReplaceBoundFolder } from "./locate-replace-bound-folder";
 import {
   useLocateAndReplaceWorkspaceFolder,
   usePickAndAddWorkspaceFolders,
+  usePickAndCreateProject,
 } from "./use-pick-and-add-folders";
+import {
+  selectActiveProjectProfile,
+  useProjectProfilesStore,
+} from "@/stores/workspace/project-profiles-store";
 import {
   readStagedWorktreeIntent,
   stagedWorktreeIntentIsSuspended,
@@ -673,6 +678,13 @@ function HomeWorkspaceRows(props: {
     activeHostClient,
     workspaceSource,
   );
+  const pickAndCreateProject = usePickAndCreateProject(
+    activeHostClient,
+    workspaceSource,
+  );
+  const activeProject = useProjectProfilesStore((state) =>
+    selectActiveProjectProfile(state, props.activeHostId),
+  );
   // Locate on an absent row must REPLACE the dead path — add-only left it
   // blocking readiness until the user manually removed it.
   const locateAndReplaceFolder = useLocateAndReplaceWorkspaceFolder(
@@ -1089,6 +1101,13 @@ function HomeWorkspaceRows(props: {
     if (props.disabled) return false;
     return pickAndAddFolders();
   }, [pickAndAddFolders, props.disabled]);
+  const addProject = useCallback(async (): Promise<boolean> => {
+    if (props.disabled) return false;
+    return pickAndCreateProject();
+  }, [pickAndCreateProject, props.disabled]);
+  const emptyUnscoped = items.length === 0 && activeProject === null;
+  const addFolderLabel = emptyUnscoped ? "Add project" : "Add folder";
+  const addFolderAction = emptyUnscoped ? addProject : addFolders;
   const scriptsTarget = useMemo<WorktreeScriptsTarget | null>(() => {
     if (scriptsTargetPath === null) return null;
     const summary = summariesByPath.get(scriptsTargetPath);
@@ -1131,7 +1150,8 @@ function HomeWorkspaceRows(props: {
           items={items}
           hostSlot={props.hostSlot}
           addFolderPending={addFolderPending}
-          onAddFolder={addFolders}
+          onAddFolder={addFolderAction}
+          addFolderLabel={addFolderLabel}
           onEditEnvironment={handleEditEnvironment}
           refresh={summariesRefresh}
           disabled={props.disabled}
@@ -1146,7 +1166,8 @@ function HomeWorkspaceRows(props: {
           addFolderPending={addFolderPending}
           addFolderDisabled={props.disabled}
           addFolderDisabledReason={null}
-          onAddFolder={addFolders}
+          addFolderLabel={addFolderLabel}
+          onAddFolder={addFolderAction}
           // Landing has no live PTY to resume: edits apply inline, no Update.
           onUpdate={null}
           updateEnabled={false}
@@ -1180,6 +1201,7 @@ function HomeWorkspaceSummaryControl(props: {
   readonly items: ReadonlyArray<WorkspaceRunItem>;
   readonly hostSlot: ReactNode;
   readonly addFolderPending: boolean;
+  readonly addFolderLabel: string;
   readonly onAddFolder: AddFolderHandler;
   readonly onEditEnvironment: (workspacePath: string) => void;
   readonly refresh: WorktreeWorkspacesRefresh;
@@ -1206,6 +1228,7 @@ function HomeWorkspaceSummaryControl(props: {
           addFolderPending={props.addFolderPending}
           addFolderDisabled={props.disabled}
           addFolderDisabledReason={null}
+          addFolderLabel={props.addFolderLabel}
           onAddFolder={props.onAddFolder}
           onUpdate={null}
           updateEnabled={false}
@@ -2836,6 +2859,7 @@ function InEpicSurface(props: InEpicSurfaceProps) {
             addFolderDisabledReason={
               activeRunLocksBinding ? activeRunNotice : null
             }
+            addFolderLabel="Add folder"
             onAddFolder={addFoldersToOwnerBinding}
             onUpdate={
               surface.kind === "terminal-agent"

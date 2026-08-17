@@ -1569,16 +1569,26 @@ export const providersListV60 = defineRpcContract({
 // line's ENTIRE serialized shape, so any growth of the live schemas (or of any
 // sub-schema they reach) fails `frozen-catalog-lines.test.ts` in a plain
 // `bun run test`, with no tags to resolve. When it fails, do not regenerate to
-// green: hand-freeze this line (`providersListRequestSchemaV80` /
-// `providersListResponseSchemaV80` + `providerCliStateBaseShapeV80` + a
-// `providerIdSchemaV80`), open v8.0 against the live shape, and only then let
-// the new field land.
+// green: hand-freeze THIS line, then open v8.0 against the live shape, and
+// only then let the new field land.
 //
-// The `providersList*SchemaV70` exports are NOT that freeze. They are the
-// pre-image this line had before the version-manager fields arrived; no peer
-// ever negotiated it, so no contract binds them any more. They survive as the
-// shared "v7-era" shape that the provider compat suites and
-// `rate-limit/schemas.ts` still parse through.
+// Mind which line the freeze names. A `VN0` schema is the shape line N.0
+// SERIALIZES - that is what `providerIdSchemaV40` / `V50` / `V60` each are. The
+// line that stops being head when v8.0 opens is v7.0, so the freeze that has to
+// be taken is a v7.0 one and takes `V70` names. `V80` names belong to the new
+// head, which keeps pointing at the canonical schemas; freezing under `V80`
+// would leave v7.0 bound to a schema that keeps moving.
+//
+// That name is currently OCCUPIED, and this is the trap: the existing
+// `providersListRequestSchemaV70` / `providersListResponseSchemaV70` /
+// `providerCliStateSchemaV70` exports are NOT the v7.0 wire. They are the
+// pre-image this line had BEFORE the version-manager fields arrived, back when
+// those fields sat on a v8.0 above it. No peer ever negotiated that shape and
+// no contract binds it now; it survives only as the shared "v7-era" fixture the
+// provider compat suites and `rate-limit/schemas.ts` parse through. Whoever
+// opens v8.0 must therefore rename that pre-image for what it is (it is a
+// fixture, not a line) before taking the real v7.0 freeze under the `V70`
+// names - not add a third naming scheme beside it.
 export const providersListV70 = defineRpcContract({
   method: "providers.list",
   schemaVersion: { major: 7, minor: 0 } as const,

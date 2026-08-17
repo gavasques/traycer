@@ -11,7 +11,6 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import type { QueryClient } from "@tanstack/react-query";
-import type { HostUnavailability } from "@traycer-clients/shared/host-client/remote-fetcher";
 import type {
   GitListChangedFilesResponse,
   GitListChangedFilesResponseV11,
@@ -20,11 +19,9 @@ import type {
 import { useWorktreeListBindingsForEpicForClient } from "@/hooks/worktree/use-worktree-list-bindings-for-epic-query";
 import {
   useGitDiffPanelSurfaceKey,
-  usePinnedSurfaceDead,
   useSurfaceHostClient,
   useSurfaceHostPin,
 } from "@/hooks/host/use-surface-host-pin";
-import { PinnedSurfaceDeadState } from "@/components/host/pinned-surface-dead-state";
 import { useGitPrefetchWorktreeStatus } from "@/hooks/git/use-git-prefetch-worktree-status";
 import { useGitCapabilitiesQuery } from "@/hooks/git/use-git-capabilities-query";
 import { useGitListChangedFilesSubscription } from "@/hooks/git/use-git-list-changed-files-subscription";
@@ -140,39 +137,22 @@ function useUnavailableGitRootKeys(
   );
 }
 
-function GitDiffPanelPinnedDead(props: {
-  readonly surfaceKey: string;
-  readonly hostLabel: string;
-  readonly unavailability: HostUnavailability | null;
-  readonly vanished: boolean;
-  readonly onUseActiveHost: () => void;
-}): ReactNode {
-  return (
-    <div className="flex h-full min-h-0 flex-col">
-      <WorktreePickerHostSection surfaceKey={props.surfaceKey} />
-      <PinnedSurfaceDeadState
-        hostLabel={props.hostLabel}
-        unavailability={props.unavailability}
-        vanished={props.vanished}
-        onUseActiveHost={props.onUseActiveHost}
-        testId="git-diff-panel-pinned-host-dead"
-      />
-    </div>
-  );
-}
-
 export function GitDiffPanelBodyLive(
   props: GitDiffPanelBodyLiveProps,
 ): ReactNode {
   const surfaceKey = useGitDiffPanelSurfaceKey(props.tabId);
   const pin = useSurfaceHostPin(surfaceKey);
   const { latchOnFirstUse } = pin;
-  const dead = usePinnedSurfaceDead(pin);
   const client = useSurfaceHostClient(pin.resolvedHostId);
+  // No dead arm: a pinned host that dies resolves to `effective`, so the panel
+  // re-points instead of blanking. The selected repo is (hostId, path), so the
+  // default-pick effect below finds it absent from the new host's rows and
+  // re-picks - the panel can never render the dead host's repo against a live
+  // one's diffs.
   const bindingsQuery = useWorktreeListBindingsForEpicForClient({
     client,
     epicId: props.epicId,
-    enabled: pin.resolvedHostId !== null && !dead.isDead,
+    enabled: pin.resolvedHostId !== null,
   });
   const selectedRepo = useGitPanelStore(
     (s) => selectGitPanelEpicState(props.epicId)(s).selectedRepo,
@@ -331,9 +311,7 @@ export function GitDiffPanelBodyLive(
   ]);
 
   return renderGitDiffPanelBody({
-    dead,
     surfaceKey,
-    followEffective: pin.followEffective,
     latchOnFirstUse: pin.latchOnFirstUse,
     bindingsPending: bindingsQuery.isPending,
     bindingsError: bindingsQuery.error !== null,
@@ -349,14 +327,7 @@ export function GitDiffPanelBodyLive(
 }
 
 function renderGitDiffPanelBody(input: {
-  readonly dead: {
-    readonly isDead: boolean;
-    readonly hostLabel: string;
-    readonly unavailability: HostUnavailability | null;
-    readonly vanished: boolean;
-  };
   readonly surfaceKey: string;
-  readonly followEffective: () => void;
   readonly latchOnFirstUse: () => void;
   readonly bindingsPending: boolean;
   readonly bindingsError: boolean;
@@ -369,17 +340,6 @@ function renderGitDiffPanelBody(input: {
   readonly retryUnavailableRoots: () => void;
   readonly unavailableGitRootKeys: ReadonlySet<string>;
 }): ReactNode {
-  if (input.dead.isDead) {
-    return (
-      <GitDiffPanelPinnedDead
-        surfaceKey={input.surfaceKey}
-        hostLabel={input.dead.hostLabel}
-        unavailability={input.dead.unavailability}
-        vanished={input.dead.vanished}
-        onUseActiveHost={input.followEffective}
-      />
-    );
-  }
   if (input.bindingsPending) return <DiffLoadingSkeleton variant="panel" />;
   if (input.bindingsError) return <NoGitWorktrees />;
   if (input.gitRows.length === 0) {
@@ -394,9 +354,7 @@ function renderGitDiffPanelBody(input: {
     return <NoGitWorktrees />;
   }
   if (input.selectedRepo === null || input.selectedRootRow === null) {
-    if (
-      allRowsKnownUnavailable(input.gitRows, input.unavailableGitRootKeys)
-    ) {
+    if (allRowsKnownUnavailable(input.gitRows, input.unavailableGitRootKeys)) {
       // Every bound root probed unavailable: an explicit, recoverable degrade -
       // never the transient skeleton, which with zero available roots would
       // never resolve and read as "still loading" forever.

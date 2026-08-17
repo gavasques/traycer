@@ -20,9 +20,7 @@ import { ReportIssueAction } from "@/components/report-issue/report-issue-action
 import { createReportIssueContext } from "@/lib/report-issue-context";
 import { WorktreeFolderListBody } from "@/components/worktree/worktree-folder-list-body";
 import { WorktreePickerHostSection } from "@/components/worktree/worktree-picker-host-section";
-import { PinnedSurfaceDeadState } from "@/components/host/pinned-surface-dead-state";
 import {
-  usePinnedSurfaceDead,
   useSurfaceHostClient,
   useSurfaceHostPin,
 } from "@/hooks/host/use-surface-host-pin";
@@ -44,12 +42,11 @@ export function NewTerminalPickerBody(props: NewTerminalPickerBodyProps) {
   const [explicitRow, setExplicitRow] =
     useState<WorktreeBindingSelectorRowV12 | null>(null);
   const pin = useSurfaceHostPin(surfaceKey);
-  const dead = usePinnedSurfaceDead(pin);
   const client = useSurfaceHostClient(pin.resolvedHostId);
   const bindingsQuery = useWorktreeListBindingsForEpicForClient({
     client,
     epicId,
-    enabled: pin.resolvedHostId !== null && !dead.isDead,
+    enabled: pin.resolvedHostId !== null,
   });
   // Host-proven-missing rows are hidden here (a deleted worktree can't host a
   // terminal); the explicit pick is exempt so a worktree deleted while this
@@ -123,27 +120,24 @@ export function NewTerminalPickerBody(props: NewTerminalPickerBodyProps) {
 
   return (
     <>
+      {/*
+        The host section renders the RESOLVED host, which is what keeps this
+        create surface honest without a banner: a pin whose host died resolves
+        to `effective`, and the chip says so before Launch is pressed. The dead
+        host's own row is still in the list, worded `offline` by the shared
+        health vocabulary, so the pin is reselectable the moment it returns.
+      */}
       <WorktreePickerHostSection surfaceKey={surfaceKey} />
-      {dead.isDead ? (
-        <PinnedSurfaceDeadState
-          hostLabel={dead.hostLabel}
-          unavailability={dead.unavailability}
-          vanished={dead.vanished}
-          onUseActiveHost={pin.followEffective}
-          testId="new-terminal-pinned-host-dead"
-        />
-      ) : (
-        <WorktreeFolderListBody
-          isPending={bindingsQuery.isPending}
-          isError={bindingsQuery.isError}
-          rows={rows}
-          selectedRow={selectedRow}
-          secondaryLabel={(row) => row.runningDir}
-          onSelect={setExplicitRow}
-          autoFocusSearch
-          emptyMessage="No directories available. Open a workspace in the epic first."
-        />
-      )}
+      <WorktreeFolderListBody
+        isPending={bindingsQuery.isPending}
+        isError={bindingsQuery.isError}
+        rows={rows}
+        selectedRow={selectedRow}
+        secondaryLabel={(row) => row.runningDir}
+        onSelect={setExplicitRow}
+        autoFocusSearch
+        emptyMessage="No directories available. Open a workspace in the epic first."
+      />
       <div className="flex items-center justify-between gap-3 border-t border-border/60 bg-muted/20 px-2.5 py-2.5">
         <div className="min-w-0 text-xs text-muted-foreground">
           {folderlessCwdStatus}
@@ -153,7 +147,7 @@ export function NewTerminalPickerBody(props: NewTerminalPickerBodyProps) {
           size="sm"
           aria-label="Launch"
           aria-keyshortcuts="Meta+Enter Control+Enter"
-          disabled={launchTarget === null || dead.isDead}
+          disabled={launchTarget === null}
           onClick={handleLaunch}
         >
           Launch

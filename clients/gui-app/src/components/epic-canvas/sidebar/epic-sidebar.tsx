@@ -42,12 +42,10 @@ import { WorkspacePickerWithOpener } from "@/components/worktree/workspace-picke
 import { useEpicNestedFocusNavigation } from "@/hooks/epic/use-epic-nested-focus-navigation";
 import { useWorktreeListBindingsForEpicForClient } from "@/hooks/worktree/use-worktree-list-bindings-for-epic-query";
 import {
-  usePinnedSurfaceDead,
   useSurfaceHostClient,
   useSurfaceHostPin,
   useTabSurfaceKey,
 } from "@/hooks/host/use-surface-host-pin";
-import { PinnedSurfaceDeadState } from "@/components/host/pinned-surface-dead-state";
 import { isBrowsable } from "@/lib/worktree/worktree-row-browsable";
 import { useAddressableHostId } from "@/hooks/host/use-addressable-host-id";
 import { requestArtifactEditorFocus } from "@/lib/artifacts/pending-editor-focus";
@@ -1112,43 +1110,19 @@ function FileTreePanelBody(props: LeftPanelBodyProps) {
 function FileTreePanelBodyLive(props: LeftPanelBodyProps) {
   const surfaceKey = useTabSurfaceKey("file-tree", props.tabId);
   const pin = useSurfaceHostPin(surfaceKey);
-  const dead = usePinnedSurfaceDead(pin);
+  // No dead arm: a pinned host that dies resolves to `effective`, so this
+  // panel always has a host to browse. The workspace selection is stored per
+  // (epic, host) and reset on a host change, so the tree it shows is always
+  // the resolved host's own - never the dead one's paths against a live box.
   const selection = useFileTreeWorkspaceSelection(
     props.epicId,
     pin.resolvedHostId,
-    pin.resolvedHostId !== null && !dead.isDead,
+    pin.resolvedHostId !== null,
   );
   const handleSelectPath = (workspacePath: string): void => {
     pin.latchOnFirstUse();
     selection.setSelectedWorkspacePath(workspacePath);
   };
-  if (dead.isDead) {
-    return (
-      <div className="flex h-full min-h-0 flex-col">
-        <div className="shrink-0 px-2 pb-1.5 pt-0.5">
-          <WorkspacePickerWithOpener
-            picker={
-              <FileTreeWorkspacePicker
-                epicId={props.epicId}
-                hostId={selection.hostId}
-                selectedPath={selection.selectedWorkspacePath}
-                onSelectPath={handleSelectPath}
-                surfaceKey={surfaceKey}
-              />
-            }
-            openTarget={null}
-          />
-        </div>
-        <PinnedSurfaceDeadState
-          hostLabel={dead.hostLabel}
-          unavailability={dead.unavailability}
-          vanished={dead.vanished}
-          onUseActiveHost={pin.followEffective}
-          testId="file-tree-pinned-host-dead"
-        />
-      </div>
-    );
-  }
   return (
     <div className="flex h-full min-h-0 flex-col">
       {selection.selectedWorkspacePath === null ? (

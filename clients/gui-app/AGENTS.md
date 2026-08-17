@@ -84,20 +84,38 @@ is the only UI gesture that changes it; no picker anywhere writes it, and
 bridge. Surface pickers write a per-surface pin (`useSurfaceHostPin`), and a
 surface with no pin resolves to `useEffectiveHostId()`.
 
+**A pin is a preference, not a binding** — the same two-tier shape as
+preferred/effective, one tier down. `resolvedHostId` is the pin while its host
+can serve and `effective` while it cannot, so a surface whose pinned host dies
+AUTO-FOLLOWS and returns on its own when the host is usable again. The pin is
+never cleared by death; that is what makes the return sticky. Only deliberate
+deregistration clears it (the host left the account — a pointer to nothing),
+mirroring the authority's own `clearPreferredOutsideFleet`, empty-fleet guard
+included. Death is `lease.status === "dead"` and deliberately NOT
+`!isUsableForSelection`: `restarting-expected` is a hold, and an incumbent
+holds through an expected restart exactly as the app-wide failover does.
+Read `honoredSelection`, never `selection`, when resolving a client — the raw
+pin still names the dead host. There is no dead-state banner: the chip renders
+the RESOLVED host, and the dead host's own picker row says `offline`.
+
 Composers have a **target host** (tab host, fork dialog's fixed host, the
 new-conversation modal's host). `null` means "follow the effective host" —
 the landing composer and the new-conversation modal opened from the app-wide
 sidebar trigger, both of which sit outside every `TabHostProvider`.
 
-**The composer is PLACEMENT.** Its resolved host (`pin ?? effective`, keyed per
+**The composer is PLACEMENT.** Its resolved host (the pin rule above, keyed per
 WINDOW) decides where a created epic/chat lives for life, so its picker writes
-that pin and never the app-wide selection. Submit re-validates: a PINNED host
-must not be dead (D6), and — pinned or following — the client the create is
-about to be sent on must still address the resolved host, else the composer
-refuses inline and creates nothing, never a silent fallback onto whatever the
-window is bound to. There is deliberately no separate reachability gate on the
-following path: usability of the effective host is the selection authority's
-call (selection model §1), and re-deriving it here would be a second decider.
+that pin and never the app-wide selection. Submit re-validates: a host the
+CALLER NAMED (the row-scoped modal's `overrideHostId`) must not be dead, and —
+named, pinned or following — the client the create is about to be sent on must
+still address the resolved host, else the composer refuses inline and creates
+nothing, never a silent fallback onto whatever the window is bound to. A PIN
+does not reach that first refusal: it re-resolves to `effective` instead, and
+the chip has been showing that host since it moved. An override does, because
+naming the machine IS the request. There is deliberately no separate
+reachability gate on the following path: usability of the effective host is the
+selection authority's call (selection model §1), and re-deriving it here would
+be a second decider.
 A create that resolves its host separately from the chip is the bug this
 structure exists to prevent; route new composer creates through the placement
 the chip is showing.

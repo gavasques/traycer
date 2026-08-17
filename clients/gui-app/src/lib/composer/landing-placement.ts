@@ -33,8 +33,18 @@ export interface LandingPlacementTarget {
   readonly client: HostClient<HostRpcRegistry> | null;
   readonly hostLabel: string;
   readonly isPinned: boolean;
-  /** D6: pinned AND unreachable. Never set for a following composer. */
-  readonly pinnedHostDead: boolean;
+  /**
+   * A caller-NAMED host that is dead.
+   *
+   * Only the row-scoped `overrideHostId` path can set this, and the
+   * distinction is the whole reason the flag survived the auto-follow ruling.
+   * A PIN is a placement preference: when its host dies the composer
+   * re-resolves to `effective`, the chip says so, and the create lands there.
+   * An OVERRIDE is an instruction naming one machine ("start this here"), and
+   * silently landing it somewhere else is the behind-the-back class the
+   * ruling was protecting against, not an instance of it.
+   */
+  readonly namedHostDead: boolean;
 }
 
 export type LandingPlacement =
@@ -60,9 +70,12 @@ export type LandingPlacement =
  * bound to.
  *
  * Both refusable states are real and distinct:
- *  - a PINNED host that went offline while the user typed (D6) - the pin is
- *    retained, so the remedy is naming another host or following again, not
- *    a silent substitution;
+ *  - a host the CALLER NAMED that went offline while the user typed - the
+ *    row-scoped modal's `overrideHostId`, where the machine is the request,
+ *    so the remedy is naming another one rather than a silent substitution.
+ *    A PIN no longer reaches this arm: a pinned surface whose host dies
+ *    re-resolves to `effective` before submit is ever reached, and the chip
+ *    has been showing that host since the moment it moved;
  *  - a resolved host the transport cannot address yet, which includes the
  *    window's own effective host during a switch (the authority names the new
  *    host before the directory row that makes it dialable arrives).
@@ -77,10 +90,14 @@ export function resolveLandingPlacement(
         "No device is available right now. Connect a device before starting a task.",
     };
   }
-  if (target.isPinned && target.pinnedHostDead) {
+  if (target.namedHostDead) {
     return {
       kind: "refused",
-      message: `${target.hostLabel} is offline. Pick another device, or switch this composer back to the active one.`,
+      // Deliberately offers no in-place remedy: this arm is reachable only
+      // from a request that NAMED this device, and that surface's picker is
+      // inert (§55), so "pick another device" would point at a control the
+      // reader cannot use.
+      message: `${target.hostLabel} is offline. Start this from another device, or try again once it's back.`,
     };
   }
   if (target.client === null) {

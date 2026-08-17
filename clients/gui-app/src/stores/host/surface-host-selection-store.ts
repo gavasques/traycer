@@ -1,9 +1,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import {
-  basePersistOptions,
-  surfaceHostSelectionKey,
-} from "@/lib/persist";
+import type { HostLeaseSnapshot } from "@traycer-clients/shared/host-selection/selection-authority-contract";
+import { basePersistOptions, surfaceHostSelectionKey } from "@/lib/persist";
 
 /**
  * Per-surface host pin. `null` means follow `effective` (selection model §2).
@@ -18,10 +16,7 @@ export type SurfaceHostSelection = string | null;
  * windows keeps its pins. `composer` is reserved for P1.2 (window-keyed).
  */
 export type SurfaceKind =
-  | "git-diff"
-  | "file-tree"
-  | "new-terminal"
-  | "composer";
+  "git-diff" | "file-tree" | "new-terminal" | "composer";
 
 const SURFACE_KEY_SEP = "\u001f";
 
@@ -33,10 +28,7 @@ export function resolveSurfaceWindowId(windowId: string | null): string {
     : BROWSER_SURFACE_WINDOW_ID;
 }
 
-export function surfaceHostKey(
-  kind: SurfaceKind,
-  instanceId: string,
-): string {
+export function surfaceHostKey(kind: SurfaceKind, instanceId: string): string {
   return `${kind}${SURFACE_KEY_SEP}${instanceId}`;
 }
 
@@ -58,11 +50,93 @@ export function composerSurfaceKey(windowId: string | null): string {
   return surfaceHostKey("composer", resolveSurfaceWindowId(windowId));
 }
 
+/**
+ * What this window's selection authority has published about the fleet, as
+ * the pin resolver needs it. Passed in rather than read here so the rule
+ * below stays a pure function a test can drive without a store.
+ */
+export interface SurfacePinFleetView {
+  /** `useSelectionAuthorityAttached()` - false before the kernel speaks. */
+  readonly authorityAttached: boolean;
+  /** `useHostLeases()` - one lease per fleet host, empty before attach. */
+  readonly leases: readonly HostLeaseSnapshot[];
+}
+
+/**
+ * Whether a pin has been DEPOSED - the pinned host cannot serve this surface
+ * right now, so resolution falls through to `effective` until it can again.
+ *
+ * This is the per-surface miniature of the app's preferred/effective pair, and
+ * it derives from exactly the vocabulary the app-wide failover derives from:
+ * the lease. Three rules, each load-bearing in a different direction.
+ *
+ * **Positive evidence only.** A `null` lease is not death - it is what every
+ * host reads before the kernel attaches, and what a host outside the account's
+ * fleet reads forever. Reading absence as death would re-point every pinned
+ * surface to `effective` during every cold start, which is both the
+ * false-Offline class this epic exists to delete and a silent discard of the
+ * user's placement. Hence the `authorityAttached` and non-empty guards: they
+ * are the same "absence of an answer is not an answer" rule the engine writes
+ * as `clearPreferredOutsideFleet`'s empty-fleet guard.
+ *
+ * **`dead` only, never `!isUsableForSelection`.** That predicate is also false
+ * for `restarting-expected`, and the difference is the whole point: the engine
+ * HOLDS its effective host across an expected restart rather than dragging the
+ * user onto a third machine for 15-30s. A pin is an incumbent, not a
+ * candidate, so it holds too. "Auto switch just like the global host failover"
+ * means the failover's behaviour, and the failover does not move here.
+ *
+ * **A host absent from a known fleet is gone, not merely quiet.** Leases are
+ * enumerated from the fleet, and a deregistered host's lease VANISHES rather
+ * than turning `dead("removed")` - that is the contract's design, with
+ * `clearPreferredOutsideFleet` owning the selection consequence. Without this
+ * arm a pin whose host was deregistered while its surface was unmounted would
+ * be served on the next mount, addressing a machine that no longer exists,
+ * until the prune effect caught up a render later.
+ *
+ * Known exposure, deliberately mirrored rather than fixed here: the fleet is
+ * the ACCOUNT REGISTRY plus this machine's synthesized local id, so a host the
+ * runtime directory can dial but the registry has not listed ("hasn't reported
+ * to your account yet") reads as absent. `clearPreferredOutsideFleet` has the
+ * same exposure for the preferred host and accepts it; diverging here would
+ * give the two tiers different membership rules.
+ */
+export function isSurfacePinDeposed(
+  pinnedHostId: string,
+  fleet: SurfacePinFleetView,
+): boolean {
+  if (!fleet.authorityAttached) return false;
+  if (fleet.leases.length === 0) return false;
+  const lease = fleet.leases.find((entry) => entry.hostId === pinnedHostId);
+  if (lease === undefined) return true;
+  return lease.status === "dead";
+}
+
+/**
+ * The host a surface acts on: its pin while that pin can serve, `effective`
+ * while it cannot.
+ *
+ * The pin itself is NEVER cleared by death - that is what makes the return
+ * sticky. When the pinned host's lease is usable again this answers the pin
+ * again, with no user gesture and nothing to restore.
+ */
 export function resolvedSurfaceHostId(
   selection: SurfaceHostSelection,
   effectiveHostId: string | null,
+  fleet: SurfacePinFleetView,
 ): string | null {
-  return selection ?? effectiveHostId;
+  if (selection === null) return effectiveHostId;
+  if (isSurfacePinDeposed(selection, fleet)) return effectiveHostId;
+  return selection;
+}
+
+/**
+ * Whether the fleet is known well enough to conclude a host has LEFT it.
+ * The prune below and {@link isSurfacePinDeposed}'s absence arm must agree on
+ * this, or a pin could resolve away without ever being cleared.
+ */
+export function isSurfacePinFleetKnown(fleet: SurfacePinFleetView): boolean {
+  return fleet.authorityAttached && fleet.leases.length > 0;
 }
 
 export type FollowingSurfaceResetListener = (input: {
@@ -116,6 +190,19 @@ interface SurfaceHostSelectionStoreState {
     surfaceKey: string,
     resolvedHostId: string,
   ) => void;
+  /**
+   * Deliberate deregistration clears pins; mere death never does. The pair is
+   * the whole product rule: a host that went offline is coming back, so the
+   * pin waits for it, while a host removed from the account is not, so a pin
+   * naming it is a pointer to nothing.
+   *
+   * Every surface pinned to `hostId` is cleared, not just the caller's - the
+   * host left the account for all of them at once.
+   *
+   * The CALLER owns the "is it really gone" question
+   * ({@link isSurfacePinFleetKnown}); this is the write.
+   */
+  readonly clearPinsForHost: (hostId: string) => void;
   readonly resetForTests: () => void;
 }
 
@@ -162,6 +249,24 @@ export const useSurfaceHostSelectionStore =
           const current = get().selections;
           if (current[surfaceKey] !== undefined) return;
           set({ selections: { ...current, [surfaceKey]: resolvedHostId } });
+        },
+        clearPinsForHost: (hostId) => {
+          if (hostId.length === 0) return;
+          const current = get().selections;
+          const next: Record<string, string> = {};
+          let removed = false;
+          for (const [surfaceKey, pinnedHostId] of Object.entries(current)) {
+            if (pinnedHostId === undefined) continue;
+            if (pinnedHostId === hostId) {
+              removed = true;
+              continue;
+            }
+            next[surfaceKey] = pinnedHostId;
+          }
+          // No-op writes would notify every subscribed surface on every fleet
+          // publish, which is most of them, most of the time.
+          if (!removed) return;
+          set({ selections: next });
         },
         resetForTests: () => {
           set({ selections: {} });

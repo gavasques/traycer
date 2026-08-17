@@ -2,10 +2,10 @@ import { useCallback, useMemo } from "react";
 import { useComposerSurfaceHostPin } from "@/hooks/host/use-composer-surface-host-pin";
 import { useHostClientForHostId } from "@/hooks/host/use-host-client-for-host-id";
 import { useHostDirectoryList } from "@/hooks/host/use-host-directory-list-query";
-import {
-  usePinnedSurfaceDead,
-  type SurfaceHostPin,
-} from "@/hooks/host/use-surface-host-pin";
+import { useHostLeases } from "@/hooks/host/use-host-lease";
+import { useSelectionAuthorityAttached } from "@/hooks/host/use-selection-authority-attached";
+import type { SurfaceHostPin } from "@/hooks/host/use-surface-host-pin";
+import { isSurfacePinDeposed } from "@/stores/host/surface-host-selection-store";
 import {
   composerHostLabel,
   type LandingPlacementTarget,
@@ -43,9 +43,10 @@ export interface ComposerPlacement {
  *
  * **Two clients, deliberately.**
  *
- * `target.client` follows `pin.selection`, so an unpinned composer reads
- * through the app-wide bound client and re-points when derivation moves. That
- * is right for queries and wrong for creates: the app-wide client rebinds IN
+ * `target.client` follows `pin.honoredSelection`, so a composer that is
+ * unpinned - or pinned to a host that has died, which resolves the same way -
+ * reads through the app-wide bound client and re-points when derivation moves.
+ * That is right for queries and wrong for creates: the app-wide client rebinds IN
  * PLACE, so a multi-RPC submit chain (`epic.create` → `agent.tui.prepareLaunch`
  * → `epic.createTuiAgent`) that awaits between steps can have later steps land
  * on host B against an epic created on host A. Nothing in the chain would
@@ -64,19 +65,26 @@ export function useComposerPlacement(
 ): ComposerPlacement {
   const pin = useComposerSurfaceHostPin();
   const resolvedHostId = overrideHostId ?? pin.resolvedHostId;
-  const readClient = useHostClientForHostId(overrideHostId ?? pin.selection);
-  const submitClient = useHostClientForHostId(resolvedHostId);
-  // D6 applies to a caller-supplied host too: a row-scoped modal aimed at a
-  // dead machine must refuse, not create. `usePinnedSurfaceDead` reads only
-  // `selection` / `isPinned`, so an override presents as a pin to it.
-  const deadProbePin = useMemo<SurfaceHostPin>(
-    () =>
-      overrideHostId === null
-        ? pin
-        : { ...pin, selection: overrideHostId, isPinned: true },
-    [overrideHostId, pin],
+  // `honoredSelection`, not `selection`: a deposed pin reads through the
+  // ambient client (which is the effective host) exactly as a following
+  // composer does, so the reads land where the chip says. Reading `selection`
+  // here would point every composer query at the dead machine.
+  const readClient = useHostClientForHostId(
+    overrideHostId ?? pin.honoredSelection,
   );
-  const pinnedDead = usePinnedSurfaceDead(deadProbePin);
+  const submitClient = useHostClientForHostId(resolvedHostId);
+  // OVERRIDE ONLY. A pin that dies has already re-resolved to `effective` by
+  // the time submit runs - `pin.resolvedHostId` is the live host, so there is
+  // nothing here to refuse. A caller-NAMED host does not re-resolve (naming it
+  // is the request), so it is the one thing left that can be dead at submit.
+  //
+  // Derived from the lease, on the same rule the pin resolver uses, so the two
+  // cannot disagree about what "dead" means.
+  const leases = useHostLeases();
+  const authorityAttached = useSelectionAuthorityAttached();
+  const namedHostDead =
+    overrideHostId !== null &&
+    isSurfacePinDeposed(overrideHostId, { authorityAttached, leases });
   const directory = useHostDirectoryList();
   const entries = directory.data ?? null;
   const hostLabelFor = useCallback(
@@ -90,18 +98,9 @@ export function useComposerPlacement(
       client: readClient,
       hostLabel: composerHostLabel(entries, resolvedHostId),
       isPinned,
-      // A pin whose host left the directory entirely is dead in the same way
-      // an unreachable one is: there is nothing to create on.
-      pinnedHostDead: pinnedDead.isDead || pinnedDead.vanished,
+      namedHostDead,
     }),
-    [
-      entries,
-      isPinned,
-      pinnedDead.isDead,
-      pinnedDead.vanished,
-      readClient,
-      resolvedHostId,
-    ],
+    [entries, isPinned, namedHostDead, readClient, resolvedHostId],
   );
   const submitTarget = useMemo<LandingPlacementTarget>(
     () => ({ ...target, client: submitClient }),

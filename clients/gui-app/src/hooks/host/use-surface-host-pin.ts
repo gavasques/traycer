@@ -1,30 +1,60 @@
-import { useCallback } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { useHostClientForHostId } from "@/hooks/host/use-host-client-for-host-id";
 import { useEffectiveHostId } from "@/hooks/host/use-effective-host-id";
-import { useHostReachability } from "@/hooks/agent/use-host-reachability";
-import { useHostDirectoryList } from "@/hooks/host/use-host-directory-list-query";
-import { UNKNOWN_HOST_PLACEHOLDER } from "@/lib/host/constants";
+import { useHostLeases } from "@/hooks/host/use-host-lease";
+import { useSelectionAuthorityAttached } from "@/hooks/host/use-selection-authority-attached";
 import {
   gitDiffPanelSurfaceKey,
+  isSurfacePinDeposed,
+  isSurfacePinFleetKnown,
   resolvedSurfaceHostId,
   tabSurfaceKey,
   useSurfaceHostSelectionStore,
   type SurfaceHostSelection,
   type SurfaceKind,
+  type SurfacePinFleetView,
 } from "@/stores/host/surface-host-selection-store";
-import type { HostUnavailability } from "@traycer-clients/shared/host-client/remote-fetcher";
 import type { HostClient } from "@traycer-clients/shared/host-client/host-client";
 import type { HostRpcRegistry } from "@/lib/host";
 
 export interface SurfaceHostPin {
+  /**
+   * The stored pin - this surface's PREFERRED host. Survives that host's
+   * death, which is what makes the return sticky. Write it from the picker;
+   * read {@link SurfaceHostPin.honoredSelection} to act on it.
+   */
   readonly selection: SurfaceHostSelection;
+  /**
+   * The pin currently IN FORCE: `selection` while its host can serve, `null`
+   * while it cannot. The exact `preferred` → `target` relationship the
+   * app-wide authority has, one tier down.
+   *
+   * Anything resolving a CLIENT must read this rather than `selection`, or it
+   * addresses the dead host while the chip shows the live one - the
+   * chip/client divergence the placement layer exists to prevent.
+   */
+  readonly honoredSelection: SurfaceHostSelection;
   readonly setSelection: (selection: SurfaceHostSelection) => void;
+  /**
+   * Where this surface acts: the pin while it can serve, `effective` while it
+   * cannot. ALWAYS what the surface's chip renders - a create surface must
+   * never be silent about which machine it is about to create on.
+   */
   readonly resolvedHostId: string | null;
   readonly isPinned: boolean;
   readonly latchOnFirstUse: () => void;
-  readonly followEffective: () => void;
 }
 
+/**
+ * This surface's host pin, resolved.
+ *
+ * A pinned surface whose host dies AUTO-FOLLOWS to `effective` and returns to
+ * its pin when the host's lease is usable again - the same shape, one tier
+ * down, as the app-wide preferred/effective pair, and deliberately as silent
+ * as the app-wide failover is. The pin survives the death; only the resolution
+ * moves. See {@link resolvedSurfaceHostId} for why the death test is what it
+ * is.
+ */
 export function useSurfaceHostPin(surfaceKey: string): SurfaceHostPin {
   const stored = useSurfaceHostSelectionStore(
     (state) => state.selections[surfaceKey],
@@ -36,8 +66,36 @@ export function useSurfaceHostPin(surfaceKey: string): SurfaceHostPin {
   const latchRaw = useSurfaceHostSelectionStore(
     (state) => state.latchOnFirstUse,
   );
+  const clearPinsForHost = useSurfaceHostSelectionStore(
+    (state) => state.clearPinsForHost,
+  );
   const effectiveHostId = useEffectiveHostId();
-  const resolvedHostId = resolvedSurfaceHostId(selection, effectiveHostId);
+  const leases = useHostLeases();
+  const authorityAttached = useSelectionAuthorityAttached();
+  const fleet = useMemo<SurfacePinFleetView>(
+    () => ({ authorityAttached, leases }),
+    [authorityAttached, leases],
+  );
+  const honoredSelection: SurfaceHostSelection =
+    selection !== null && isSurfacePinDeposed(selection, fleet)
+      ? null
+      : selection;
+  const resolvedHostId = resolvedSurfaceHostId(
+    selection,
+    effectiveHostId,
+    fleet,
+  );
+
+  // Deregistration clears the pin; death never does. Runs as an effect rather
+  // than at an app-wide mount so this stays out of the composition root - a
+  // pin whose surface is unmounted is pruned the next time it mounts, and the
+  // resolver's own absence arm means it is never SERVED in the meantime.
+  useEffect(() => {
+    if (selection === null) return;
+    if (!isSurfacePinFleetKnown(fleet)) return;
+    if (fleet.leases.some((lease) => lease.hostId === selection)) return;
+    clearPinsForHost(selection);
+  }, [clearPinsForHost, fleet, selection]);
 
   const setSelection = useCallback(
     (next: SurfaceHostSelection) => {
@@ -49,17 +107,13 @@ export function useSurfaceHostPin(surfaceKey: string): SurfaceHostPin {
     if (resolvedHostId === null) return;
     latchRaw(surfaceKey, resolvedHostId);
   }, [latchRaw, resolvedHostId, surfaceKey]);
-  const followEffective = useCallback(() => {
-    setSelectionRaw(surfaceKey, null);
-  }, [setSelectionRaw, surfaceKey]);
-
   return {
     selection,
+    honoredSelection,
     setSelection,
     resolvedHostId,
     isPinned: selection !== null,
     latchOnFirstUse,
-    followEffective,
   };
 }
 
@@ -67,35 +121,6 @@ export function useSurfaceHostClient(
   resolvedHostId: string | null,
 ): HostClient<HostRpcRegistry> | null {
   return useHostClientForHostId(resolvedHostId);
-}
-
-export interface PinnedSurfaceDead {
-  readonly isDead: boolean;
-  readonly hostLabel: string;
-  readonly unavailability: HostUnavailability | null;
-  readonly vanished: boolean;
-}
-
-/** D6: pinned + unreachable. Following surfaces never take this arm. */
-export function usePinnedSurfaceDead(pin: SurfaceHostPin): PinnedSurfaceDead {
-  const reachability = useHostReachability(
-    pin.selection ?? UNKNOWN_HOST_PLACEHOLDER,
-  );
-  const directory = useHostDirectoryList();
-  const listed =
-    pin.selection !== null &&
-    (directory.data ?? []).some((entry) => entry.hostId === pin.selection);
-  const vanished =
-    pin.isPinned &&
-    directory.data !== undefined &&
-    directory.data.length > 0 &&
-    !listed;
-  return {
-    isDead: pin.isPinned && reachability.status === "unreachable",
-    hostLabel: vanished ? "The pinned host" : reachability.hostLabel,
-    unavailability: reachability.unavailability,
-    vanished,
-  };
 }
 
 export function useTabSurfaceKey(

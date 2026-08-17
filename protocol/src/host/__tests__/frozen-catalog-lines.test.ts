@@ -71,7 +71,11 @@ const LIVE_FROZEN_EXPORTS = {
   // ships the growth. It names the LIVE schema because that is what the v7.0
   // contract binds - the head tracks live - and the dump is deep, so growth in
   // any sub-schema it reaches goes red here too. When it does, hand-freeze this
-  // line and open v8.0 against live; do not regenerate to green.
+  // line and open v8.0 against live; do not regenerate to green. The freeze
+  // takes `V70` names, not `V80`, and the pre-image holding those names has to
+  // be renamed first - `host/registry.ts` (above `providersListV70`) is the
+  // canonical statement of the procedure; this is the third copy of it, so
+  // change it there and keep these in step.
   "providers.list@7.0": providersListResponseSchema,
   "providers.list@1.0..6.0 request": providersListRequestSchemaBeforeV70,
   "providers.list@7.0 request": providersListRequestSchema,

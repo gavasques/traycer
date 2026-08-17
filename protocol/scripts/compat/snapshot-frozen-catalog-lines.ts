@@ -87,7 +87,15 @@ const FIXTURES = {
   // `nativeListResultSchema` and every other sub-schema this line reaches - so
   // growth ANYWHERE beneath it fails this snapshot rather than quietly changing
   // what v7.0 serializes. When it fails, do not regenerate to green: hand-freeze
-  // this line as `providersList*SchemaV80` and open v8.0 against live.
+  // this line and open v8.0 against live.
+  //
+  // The freeze is a v7.0 one and takes `V70` names - v7.0 is the line that
+  // stops being head - NOT `V80`, which belongs to the new head still pointing
+  // at the canonical schemas. Those `V70` names are currently held by the
+  // pre-image this line had before the version-manager fields arrived, so it
+  // has to be renamed out of the way first; `providersListRequestSchemaBeforeV70`
+  // below is the naming precedent for that. `host/registry.ts` (above
+  // `providersListV70`) states this procedure in full - keep the two in step.
   "providers.list@7.0": dump(providersListResponseSchema),
   // The REQUEST lines carry their own freeze history (`native` grew the
   // already-shipped v4.0/v5.0/v6.0 requests before `host-v1.1.10` re-pinned

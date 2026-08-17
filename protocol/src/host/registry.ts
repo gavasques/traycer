@@ -352,6 +352,7 @@ import {
   epicSetPinnedV10,
   epicSubscribeV10,
   epicSubscribeV11,
+  epicSubscribeV12,
   epicUpdateArtifactStatusV10,
   epicUpdateTitleV10,
 } from "@traycer/protocol/host/epic/contracts";
@@ -7726,13 +7727,22 @@ const HOST_STREAM_RPC_REGISTRY_OTHER_DEFINITION = {
       // negotiated it never receives the new kinds, and the resolver gates
       // emission on the negotiated version rather than assuming the peer will
       // tolerate an unknown frame.
-      latestMinor: 1,
+      //
+      // @1.2 adds `roomId` to the snapshot frame's `meta`. Unlike the @1.1
+      // frame KINDS, this one needs no emission gate - a peer on an older
+      // minor parses with its own frozen schema and strips the unknown key
+      // (see the @1.2 note in `epic/subscribe.ts` for the full asymmetry).
+      // @1.0 and @1.1 keep the pre-roomId meta shape.
+      latestMinor: 2,
       versions: {
         0: {
           contract: epicSubscribeV10,
         },
         1: {
           contract: epicSubscribeV11,
+        },
+        2: {
+          contract: epicSubscribeV12,
         },
       },
     },

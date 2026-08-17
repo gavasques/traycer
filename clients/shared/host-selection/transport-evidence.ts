@@ -184,11 +184,42 @@ export class TransportEvidenceRelay implements TransportEvidenceReporter {
    * this map from outside, it exists only to be replayed at {@link bind}. A
    * getter would make it a second source of truth about liveness, competing
    * with the kernel's, and the whole point is that there is one.
+   *
+   * That prohibition is about LIVENESS, and it still stands - see
+   * {@link currentSessionIdFor}, which is a read of a different map answering
+   * a different question (what is this host's session CALLED), and which no
+   * caller may turn into a liveness test.
    */
   private readonly liveSessions = new Map<
     string,
     { readonly hostId: string; readonly transportKind: SelectionTransportKind }
   >();
+  /**
+   * Per host, the id of the session most recently established through it.
+   *
+   * NAMES THE CURRENT SESSION FOR ANCHOR-BINDING; NEVER CONSULTED FOR
+   * LIVENESS - THE KERNEL OWNS THAT. The distinction is what keeps this from
+   * being the second opinion {@link liveSessions} refuses to become: a
+   * consumer asks "what should I call the session my verdict was produced on",
+   * never "is this host up". A caller that branches on `!== null` to decide
+   * reachability has reintroduced exactly the competing source of truth the
+   * map above exists to deny, whatever this one is named.
+   *
+   * Its consumer is the compat probe, which must stamp each verdict with the
+   * session it actually ran on so the authority can order two verdicts by
+   * session recency instead of by arrival (`rankForCompatAnchor`). A verdict
+   * that names a session the authority no longer tracks is precisely what that
+   * ordering is built to rank correctly, so a stale-looking answer here is
+   * useful data, not a bug to paper over.
+   *
+   * SEPARATE from `liveSessions` rather than derived from it, because the two
+   * hold different invariants: that one is keyed by session and holds EVERY
+   * live session for replay, this one is keyed by host and holds ONE - the
+   * newest. Deriving would mean re-deciding "which is newest" on every read
+   * from a map whose ordering exists for another purpose entirely, and would
+   * put one maintenance bug where it could be mistaken for the other's.
+   */
+  private readonly currentSessionIds = new Map<string, string>();
   /**
    * Restart tombstones observed while no kernel was bound, keyed by host.
    *
@@ -264,6 +295,10 @@ export class TransportEvidenceRelay implements TransportEvidenceReporter {
     transportKind: SelectionTransportKind,
   ): void {
     this.liveSessions.set(sessionId, { hostId, transportKind });
+    // Newest established wins outright: a host that opens a second session
+    // while the first is still up is a host whose CURRENT session is the new
+    // one, and a verdict produced from here on names it.
+    this.currentSessionIds.set(hostId, sessionId);
     // RETENTION RULE 1: the host is back, so the restart it announced is over.
     // This agrees with the engine by construction rather than by coincidence -
     // the same evidence drives `onHostProvedAlive`, which closes the episode
@@ -284,7 +319,30 @@ export class TransportEvidenceRelay implements TransportEvidenceReporter {
     // absence this fix exists to close: a phantom session suppresses the death
     // streak for its host indefinitely.
     this.liveSessions.delete(sessionId);
+    // CLEARED ONLY BY ITS OWN ID. Teardown and setup interleave - an old
+    // session's `lost` routinely arrives AFTER the replacement's
+    // `established`, which is the whole reason reconnection looks seamless -
+    // and an unconditional delete here would blank the newer session's name on
+    // the strength of the older one's departure, leaving verdicts produced
+    // over a live connection anchored to nothing.
+    if (this.currentSessionIds.get(hostId) === sessionId) {
+      this.currentSessionIds.delete(hostId);
+    }
     this.target?.sessionLost(hostId, sessionId, transportKind);
+  }
+
+  /**
+   * What to call the session `hostId` is currently connected through, or
+   * `null` when this relay knows of none.
+   *
+   * READ IT TO NAME A SESSION, NEVER TO TEST ONE. See
+   * {@link currentSessionIds} for why that line is where it is: `null` here
+   * means "I have no name to give you", which is emphatically not "the host is
+   * down" - a relay that has never been told about a session answers `null`
+   * for a host that is up and serving.
+   */
+  currentSessionIdFor(hostId: string): string | null {
+    return this.currentSessionIds.get(hostId) ?? null;
   }
 
   reportDialSuccess(

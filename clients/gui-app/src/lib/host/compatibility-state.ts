@@ -5,14 +5,63 @@ import {
   HostTransportFailureError,
   RetryableTransportError,
   type HostRpcError,
+  type ResponseOfMethod,
 } from "@traycer-clients/shared/host-transport/host-messenger";
 import type { HostRpcRegistry } from "@traycer/protocol/host/index";
-import { useHostQuery } from "@/hooks/host/use-host-query";
+import { useHostQueryWithResponseMap } from "@/hooks/host/use-host-query";
+import { useReactiveHostReadiness } from "@/hooks/host/use-reactive-host-readiness";
 import { useHostClient } from "@/lib/host/runtime";
 import { queryKeys } from "@/lib/query-keys";
 import { transportEvidenceRelay } from "@/lib/host/transport-evidence";
 
 const HOST_STATUS_PROBE = {};
+
+/**
+ * The session id each host's compat probe was riding WHEN IT RESOLVED, in two
+ * slots - one written by a success, one by a rejection.
+ *
+ * ## Why capture at resolution rather than look up at report time
+ *
+ * The verdict below is reported from an effect, one or more renders after the
+ * probe actually ran, and it is deliberately SERVED FROM HELD DATA across a
+ * failed refetch (`staleTime: Infinity` plus TanStack's last-successful
+ * `data`). A lookup at report time would therefore stamp whatever session is
+ * live NOW onto a verdict produced on an earlier one - the flip window - and
+ * that over-claim is worse than no anchor at all: the authority ranks compat
+ * verdicts by session recency (`rankForCompatAnchor`), so a held verdict
+ * wearing the current session's name outranks the fresh probe that should
+ * have superseded it. Binding at resolution makes a held verdict carry its
+ * TRUE ORIGIN, which is exactly what that ranking is built to order correctly.
+ *
+ * ## Why TWO slots
+ *
+ * The two arms of this probe resolve through different channels and must not
+ * share one. A `compatible` verdict rides `probe.data`, which SURVIVES a
+ * failed refetch; an `incompatible` verdict rides `probe.error`, which is
+ * replaced by every new failure. One slot would let a failed refetch's
+ * rejection re-stamp the held success with the live session id - re-anchoring
+ * a held verdict to a session it never ran on, which is the precise defect
+ * capture-at-resolution exists to prevent.
+ *
+ * So: the success slot is written only from inside the queryFn (a failed
+ * refetch never touches it, which is what preserves a held verdict's origin),
+ * and the failure slot only at rejection (fresh every time, which is correct -
+ * that IS when the failing probe ran).
+ *
+ * ## Why the incompatible arm must be anchored at all
+ *
+ * Anchoring only the success arm would INVERT a safety property. The
+ * authority drops a verdict whose rank is below the one it holds, and a
+ * null-anchored verdict ranks below every session-anchored one - so a fresh
+ * `incompatible` at the null floor would be silently discarded behind a held
+ * `compatible` at a real rank, and a genuinely incompatible host would keep a
+ * `compatible` lease. Both arms carry an anchor, or neither may.
+ *
+ * Module-scoped, matching `transportEvidenceRelay`'s own scope: one window is
+ * one renderer is one probe.
+ */
+const compatAnchorAtSuccess = new Map<string, string | null>();
+const compatAnchorAtFailure = new Map<string, string | null>();
 
 /**
  * The cache slot the compat probe below owns for one host.
@@ -192,11 +241,36 @@ export function useHostCompatibility(): HostCompatibility {
 
 export function useHostCompatibilityProbe(): HostCompatibility {
   const client = useHostClient();
-  const probe = useHostQuery<HostRpcRegistry, "host.status">({
+  // The same host id the query key is built from, read the same way
+  // `useHostQuery` reads it, so the anchor can never be recorded against a
+  // different host than the one whose cache slot the answer lands in.
+  const probedHostId = useReactiveHostReadiness(client).hostId;
+  const probe = useHostQueryWithResponseMap<
+    HostRpcRegistry,
+    "host.status",
+    ResponseOfMethod<HostRpcRegistry, "host.status">
+  >({
     cacheKeyIdentity: undefined,
     client,
     method: "host.status",
     params: HOST_STATUS_PROBE,
+    // THE CAPTURE POINT for a successful probe, and the reason this hook uses
+    // the response-map form at all rather than plain `useHostQuery`:
+    // `mapResponse` runs INSIDE the queryFn, in the same microtask the
+    // transport call resolves in. That is the only moment at which "the
+    // session this verdict was produced on" is a fact rather than a guess.
+    // The response itself is passed through untouched - the cached shape is
+    // deliberately unchanged, so every other reader of this slot is
+    // unaffected.
+    mapResponse: (args) => {
+      if (probedHostId !== null) {
+        compatAnchorAtSuccess.set(
+          probedHostId,
+          transportEvidenceRelay.currentSessionIdFor(probedHostId),
+        );
+      }
+      return args.response;
+    },
     options: {
       // Retry a transient failure a couple of times so a momentary blip never
       // reads as incompatible, but fail fast on a terminal compat verdict
@@ -204,10 +278,31 @@ export function useHostCompatibilityProbe(): HostCompatibility {
       // `RetryableTransportError`, which the transport layer has already retried
       // to exhaustion - retrying here would stack dial-timeout costs and block
       // the gate far longer.
-      retry: (failureCount, error) =>
-        !isTerminalHostCompatibilityError(error) &&
-        !(error instanceof RetryableTransportError) &&
-        failureCount < 2,
+      retry: (failureCount, error) => {
+        // THE CAPTURE POINT for a failed probe - a DELIBERATE side effect in a
+        // predicate, and the justification is that this is the only hook
+        // TanStack exposes at rejection time that this file owns. The queryFn
+        // and its error boundary both live in `use-host-query.ts`, and the
+        // `incompatible` verdict rides `probe.error`, so without a capture
+        // here that arm could carry no anchor at all - which would invert the
+        // safety property described on `compatAnchorAtFailure`.
+        //
+        // Runs on every failure including the intermediate retries below.
+        // That is harmless and correct: each writes the session the attempt it
+        // describes actually ran on, and the last one to write is the one
+        // whose error becomes `probe.error`.
+        if (probedHostId !== null) {
+          compatAnchorAtFailure.set(
+            probedHostId,
+            transportEvidenceRelay.currentSessionIdFor(probedHostId),
+          );
+        }
+        return (
+          !isTerminalHostCompatibilityError(error) &&
+          !(error instanceof RetryableTransportError) &&
+          failureCount < 2
+        );
+      },
       retryDelay: 0,
       // A compatible verdict must not bounce back to "checking": Infinity keeps
       // the success cached with no background refetch, so children stay mounted
@@ -325,16 +420,26 @@ export function useHostCompatibilityProbe(): HostCompatibility {
  * count, so a re-render, a remount, or a second StrictMode pass with the same
  * (host, verdict) reports once.
  *
- * `probedOnSessionId` is `null` - a NAMED INTERIM. The probe rides TanStack
- * through the app-wide `HostClient`, and no session identity surfaces to this
- * layer; for the local transport a "session" is not even a stable thing to
- * name (one socket per RPC). While every verdict is null-anchored the
- * authority's session-generation freshness rule (mechanism 6) degrades to
- * latest-received-wins, which is behaviourally what this probe already did -
- * but the downgrade and same-version-restart correctness that rule exists for
- * is inert until session identity is threaded out of the transport surface.
- * That is owed to whichever ticket first surfaces it (P4.1's registry
- * completion is the likely home), not papered over here.
+ * `probedOnSessionId` NAMES THE SESSION THE VERDICT WAS PRODUCED ON, captured
+ * as the probe resolved (see `compatAnchorAtSuccess`) rather than looked up
+ * here. This closed the named interim that shipped with P1.3: while every
+ * verdict was null-anchored the authority's session-generation freshness rule
+ * (mechanism 6) degraded to latest-received-wins, so a slow probe on an old
+ * session reporting AFTER a probe on the current one won purely by arrival
+ * order. With real anchors that pair orders by session recency instead, which
+ * is the downgrade and same-version-restart correctness the rule exists for.
+ *
+ * It stays `null` only when the relay has no name to give - a local transport
+ * that never announces a session, or a probe that resolved before any session
+ * did. Null-anchored verdicts keep exactly their old behaviour (rank floor,
+ * latest-received among themselves), so nothing regresses where no session
+ * identity exists to thread.
+ *
+ * THE ANCHOR IS PART OF THE DEDUP KEY, deliberately. Keyed on the verdict
+ * alone, a re-probe that reached the same conclusion on a NEWER session would
+ * be suppressed as a duplicate - and suppressing it would withhold the very
+ * fact the anchor exists to carry, leaving the authority ranking a stale
+ * session's verdict forever. Same verdict on a new session IS new information.
  */
 export function useHostCompatibilityAuthorityReport(
   compatibility: HostCompatibility,
@@ -354,16 +459,23 @@ export function useHostCompatibilityAuthorityReport(
       // job (invariant 5); this producer only ever speaks to compatibility.
       return;
     }
+    // Read from the slot THIS arm's resolution wrote, never from whichever was
+    // touched most recently - see `compatAnchorAtSuccess` for why the two are
+    // separate.
+    const probedOnSessionId =
+      (verdict.anchoredAt === "success"
+        ? compatAnchorAtSuccess.get(hostId)
+        : compatAnchorAtFailure.get(hostId)) ?? null;
     const key = `${hostId}\u0000${verdict.code ?? "compatible"}\u0000${
       verdict.hostVersion ?? ""
-    }`;
+    }\u0000${probedOnSessionId ?? ""}`;
     if (reportedRef.current === key) {
       return;
     }
     reportedRef.current = key;
     transportEvidenceRelay.reportCompatVerdict({
       hostId,
-      probedOnSessionId: null,
+      probedOnSessionId,
       hostVersion: verdict.hostVersion,
       incompatibility:
         verdict.code === null
@@ -386,6 +498,12 @@ function describeCompatVerdictForAuthority(compatibility: HostCompatibility): {
   readonly code: string | null;
   readonly hostVersion: string | null;
   readonly minSupportedVersion: string | null;
+  /**
+   * Which capture slot holds THIS verdict's anchor. Carried on the verdict
+   * rather than re-derived at the read, so the arm that produced the answer
+   * and the slot that was written when it resolved cannot drift apart.
+   */
+  readonly anchoredAt: "success" | "failure";
 } | null {
   if (compatibility.status === "incompatible") {
     const blocking =
@@ -406,6 +524,8 @@ function describeCompatVerdictForAuthority(compatibility: HostCompatibility): {
       // put a number in front of the user that names nothing they can act on.
       hostVersion: null,
       minSupportedVersion: null,
+      // Rides `probe.error`, so its anchor was captured at rejection.
+      anchoredAt: "failure",
     };
   }
   if (compatibility.status === "compatible") {
@@ -413,6 +533,11 @@ function describeCompatVerdictForAuthority(compatibility: HostCompatibility): {
       code: null,
       hostVersion: compatibility.hostStatus.hostVersion,
       minSupportedVersion: null,
+      // Rides `probe.data` - fresh OR held - so its anchor is whatever the
+      // last SUCCESSFUL resolution captured. A failed refetch in between
+      // leaves this slot alone, which is what makes a held verdict keep the
+      // session it was really produced on.
+      anchoredAt: "success",
     };
   }
   return null;

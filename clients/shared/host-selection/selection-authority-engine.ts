@@ -260,8 +260,7 @@ export function createIncrementingIncarnationIds(): () => string {
  * no account whose choice could be remembered.
  */
 export type PreferredHostSaveResult =
-  | { ok: true }
-  | { ok: false; reason: string };
+  { ok: true } | { ok: false; reason: string };
 
 export interface PreferredHostStore {
   /**
@@ -407,6 +406,13 @@ type QueuedAuthorityEvent =
 interface LocalEnsureToken {
   readonly generation: number;
   readonly hostId: string;
+  /**
+   * The local proof-of-life counter as it stood when this request was minted.
+   * A completion whose counter no longer matches ran ACROSS a proof of life,
+   * so its failure describes a host that has since answered - see
+   * `completeLocalEnsure`.
+   */
+  readonly proofGeneration: number;
 }
 
 /** The selection tuple the engine currently holds. */
@@ -609,6 +615,17 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
    * ensure path is unavailable or has failed".
    */
   private localEnsureFailedUntil: number | null = null;
+  /**
+   * Monotonic count of proofs of life for the host that is LOCAL at the time
+   * each one lands. Stamped onto every ensure token at mint, and the only
+   * thing that lets a completion tell "my failure is the newest word on this
+   * host" from "the host answered while I was still running".
+   *
+   * A counter rather than a timestamp deliberately: the question is ordering
+   * against one specific request, not elapsed time, so there is no clock to
+   * read and no window to tune.
+   */
+  private localProofGeneration = 0;
   private cancelDeadlineTimer: (() => void) | null = null;
   private scheduledDeadline: number | null = null;
 
@@ -1039,12 +1056,32 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
    * Firsthand proof of life (a dial success, or a session appearing) clears
    * the host's death streak and closes any restart episode: the outage the
    * episode was holding for is over.
+   *
+   * For the LOCAL host it also drops the failed-ensure cooldown, which is the
+   * one piece of death evidence that had no proof-of-life clear and so
+   * outlived the thing it described: a host that answers a dial is not a host
+   * whose ensure path is unavailable, and registry §5 is what the cooldown
+   * claims. Ingestion calls this BEFORE it commits, so the same transaction
+   * that records the proof re-derives with the cooldown already gone.
+   *
+   * GUARDED TO LOCAL, both directions. The cooldown describes the local ensure
+   * path specifically, so a REMOTE host proving alive says nothing about it -
+   * and the comparison covers a null `localHostId` for free, because no real
+   * host id equals it. Every one of the four proof kinds is honoured
+   * uniformly: an announcement or a session is strictly stronger evidence than
+   * the dial this was first written for, and a fleet whose local host is the
+   * one announcing is exactly the case the clear exists to serve.
    */
   private onHostProvedAlive(hostId: string): void {
     const evidence = this.hostEvidence(hostId);
     evidence.refusalStreak = 0;
     evidence.lastCountedRefusalDetail = null;
     evidence.restartEpisodeEndsAt = null;
+    if (hostId !== this.fleet.localHostId) return;
+    // Bumped BEFORE the clear so an ensure still in flight can tell that its
+    // own failure - whenever it lands - post-dates this moment.
+    this.localProofGeneration += 1;
+    this.localEnsureFailedUntil = null;
   }
 
   private ingestDial(
@@ -1163,7 +1200,9 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
     this.appliedFleetRevision = snapshot.revision;
     this.fleet = snapshot;
     this.pruneEvidenceOutsideFleet();
-    this.commit(this.clearPreferredOutsideFleet() ? "deregister-clear" : "fleet-shift");
+    this.commit(
+      this.clearPreferredOutsideFleet() ? "deregister-clear" : "fleet-shift",
+    );
   }
 
   /**
@@ -1646,6 +1685,7 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
     const token: LocalEnsureToken = {
       generation: this.identityGeneration,
       hostId: localHostId,
+      proofGeneration: this.localProofGeneration,
     };
     this.localEnsureToken = token;
     void this.options.localHostEnsure.ensureReady().then(
@@ -1705,6 +1745,21 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
       // Dropping the mark makes the next `trackUsability` re-stamp it at
       // completion time.
       this.usableSince.delete(token.hostId);
+    } else if (this.localProofGeneration !== token.proofGeneration) {
+      // The host proved alive WHILE this request was running (a dial answered
+      // at t+3s, this failure landing at t+5s). Arming the cooldown here would
+      // undo `onHostProvedAlive`'s clear and re-deaden a host that has since
+      // answered - a completion is the newest word only about a world nothing
+      // else has spoken about since.
+      //
+      // Not merely the clear repeated: the clear runs at proof time and cannot
+      // reach forward to a failure that has not happened yet. This is the
+      // other half, and one without the other leaves the race open in
+      // whichever direction it is missing from.
+      this.options.log.debug(
+        "[selection-authority] ensure failure post-dates proof of life",
+        { hostId: token.hostId, reason },
+      );
     } else {
       this.localEnsureFailedUntil =
         this.options.clock.now() + LOCAL_ENSURE_RETRY_COOLDOWN_MS;
@@ -1796,6 +1851,23 @@ export class SelectionAuthorityEngineImpl implements SelectionAuthorityEngine {
       // state - which is what makes the ∅ definitions one. Below the
       // live-session arm on purpose: if a session exists the host is alive
       // whatever an earlier provisioning attempt concluded.
+      //
+      // THE NARROWNESS THIS ORDER BUYS, and what it does NOT buy. Because this
+      // arm sits below the live-session one, a proof of life that LEAVES A
+      // SESSION STANDING (an attach announcement, a session established)
+      // already masks a stale cooldown here for as long as that session lives
+      // - so `onHostProvedAlive`'s clear and `completeLocalEnsure`'s
+      // re-arm suppression are not what rescue those two kinds. They are what
+      // rescue the proof kinds that leave NO session behind: a successful dial
+      // and a successful ensure, where nothing above this arm intervenes and
+      // the cooldown would otherwise render an answering host `dead`.
+      //
+      // Arm order alone was never sufficient, in two places it cannot reach:
+      // `requestLocalEnsureIfWanted` reads the cooldown DIRECTLY, under no arm
+      // ordering at all (it is separately declined under a live session, by
+      // the never-dialed conjunct), and the masking lapses the moment the
+      // session drops, resurfacing a cooldown whose premise the host has since
+      // refuted. Hence the clear, rather than a rule about which arm wins.
       return { hostId, status: "dead", dead: { reason: "offline" } };
     }
     if (

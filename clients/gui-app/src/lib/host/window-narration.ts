@@ -209,7 +209,9 @@ export function hostUpdateActionApplies(
   detail: SelectionIncompatibility,
   clientAppVersion: string | null,
 ): boolean {
-  return hostUpdateSkew(detail, clientAppVersion).direction !== "client-outdated";
+  return (
+    hostUpdateSkew(detail, clientAppVersion).direction !== "client-outdated"
+  );
 }
 
 /**
@@ -246,5 +248,9 @@ export function deriveWindowNarration(
   // while derivation was already bringing up local instead. Whatever else is
   // wrong out there is the surface chip's or the tile's to say; the window's
   // story at cold start is the host that is starting.
-  return { kind: "narrating", cause: "cold-start", variant: { kind: "offline" } };
+  return {
+    kind: "narrating",
+    cause: "cold-start",
+    variant: { kind: "offline" },
+  };
 }

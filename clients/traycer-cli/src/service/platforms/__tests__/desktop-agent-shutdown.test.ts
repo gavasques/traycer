@@ -99,7 +99,11 @@ describe("requestCooperativeShutdown", () => {
       .mockResolvedValueOnce({ granted: { token: "tok-1" } })
       .mockResolvedValueOnce({ committed: true });
 
-    const outcome = await requestCooperativeShutdown("production", "restart", "shutdown");
+    const outcome = await requestCooperativeShutdown(
+      "production",
+      "restart",
+      "shutdown",
+    );
 
     expect(outcome).toEqual({ kind: "stopped" });
     expect(MOCKS.callHostRpcAtEndpoint).toHaveBeenCalledTimes(2);
@@ -161,7 +165,11 @@ describe("requestCooperativeShutdown", () => {
   // serving, and an install swapped bytes underneath it.
   it("reports no-metadata - never the proven-absent answer - when pid metadata cannot be read", async () => {
     MOCKS.readHostPidMetadata.mockResolvedValue(null);
-    const outcome = await requestCooperativeShutdown("production", "stop", "shutdown");
+    const outcome = await requestCooperativeShutdown(
+      "production",
+      "stop",
+      "shutdown",
+    );
     expect(outcome).toEqual({ kind: "no-metadata" });
     expect(outcome).not.toEqual({ kind: "no-host" });
     expect(MOCKS.callHostRpcAtEndpoint).not.toHaveBeenCalled();
@@ -170,7 +178,11 @@ describe("requestCooperativeShutdown", () => {
   it("reports no-host without any RPC when the recorded pid is PROVEN dead", async () => {
     MOCKS.readHostPidMetadata.mockResolvedValue(LIVE_METADATA);
     MOCKS.isProcessAlive.mockReturnValue(false);
-    const outcome = await requestCooperativeShutdown("production", "stop", "shutdown");
+    const outcome = await requestCooperativeShutdown(
+      "production",
+      "stop",
+      "shutdown",
+    );
     expect(outcome).toEqual({ kind: "no-host" });
     expect(MOCKS.callHostRpcAtEndpoint).not.toHaveBeenCalled();
   });
@@ -181,7 +193,11 @@ describe("requestCooperativeShutdown", () => {
       websocketUrl: "https://example.com/rpc",
     });
     MOCKS.isProcessAlive.mockReturnValue(true);
-    const outcome = await requestCooperativeShutdown("production", "stop", "shutdown");
+    const outcome = await requestCooperativeShutdown(
+      "production",
+      "stop",
+      "shutdown",
+    );
     expect(outcome).toMatchObject({ kind: "unreachable" });
     expect(MOCKS.callHostRpcAtEndpoint).not.toHaveBeenCalled();
   });
@@ -191,7 +207,11 @@ describe("requestCooperativeShutdown", () => {
     MOCKS.isProcessAlive.mockReturnValue(true);
     MOCKS.callHostRpcAtEndpoint.mockResolvedValueOnce({ denied: "busy" });
 
-    const outcome = await requestCooperativeShutdown("production", "stop", "shutdown");
+    const outcome = await requestCooperativeShutdown(
+      "production",
+      "stop",
+      "shutdown",
+    );
 
     expect(outcome).toEqual({ kind: "busy" });
     expect(MOCKS.callHostRpcAtEndpoint).toHaveBeenCalledTimes(1);
@@ -204,7 +224,11 @@ describe("requestCooperativeShutdown", () => {
       new Error("dial timeout after 5000ms"),
     );
 
-    const outcome = await requestCooperativeShutdown("production", "restart", "shutdown");
+    const outcome = await requestCooperativeShutdown(
+      "production",
+      "restart",
+      "shutdown",
+    );
 
     expect(outcome).toEqual({
       kind: "unreachable",
@@ -220,7 +244,11 @@ describe("requestCooperativeShutdown", () => {
       .mockResolvedValueOnce({ granted: { token: "tok-2" } })
       .mockResolvedValueOnce({ denied: "expired-or-unknown" });
 
-    const outcome = await requestCooperativeShutdown("production", "stop", "shutdown");
+    const outcome = await requestCooperativeShutdown(
+      "production",
+      "stop",
+      "shutdown",
+    );
 
     expect(outcome).toEqual({
       kind: "unreachable",
@@ -236,7 +264,11 @@ describe("requestCooperativeShutdown", () => {
       .mockResolvedValueOnce({ granted: { token: "tok-3" } })
       .mockResolvedValueOnce({ committed: true });
 
-    const pending = requestCooperativeShutdown("production", "stop", "shutdown");
+    const pending = requestCooperativeShutdown(
+      "production",
+      "stop",
+      "shutdown",
+    );
     // SHUTDOWN_FORCE_EXIT_MS (30s) + STOP_EXIT_GRACE_MARGIN_MS (2s), plus
     // slack for the final poll.
     await vi.advanceTimersByTimeAsync(40_000);

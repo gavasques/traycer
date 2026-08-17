@@ -47,8 +47,8 @@ const DETACHED = {
   leases: [] as readonly HostLeaseSnapshot[],
 };
 
-export const useSelectionAuthorityStore = create<SelectionAuthorityStoreState>()(
-  (set) => ({
+export const useSelectionAuthorityStore =
+  create<SelectionAuthorityStoreState>()((set) => ({
     ...DETACHED,
     applyKernelSnapshot: (snapshot) => {
       set({
@@ -62,8 +62,7 @@ export const useSelectionAuthorityStore = create<SelectionAuthorityStoreState>()
     reset: () => {
       set(DETACHED);
     },
-  }),
-);
+  }));
 
 /**
  * The app-wide pointer for a caller with no render to hang a hook on.

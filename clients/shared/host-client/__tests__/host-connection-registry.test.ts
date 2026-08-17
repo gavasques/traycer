@@ -156,7 +156,10 @@ describe("subscribeHostRowChanged — per-host precision", () => {
     const hostB = freshHostId();
     directory.setEntry(hostA, localEntry(hostA, {}));
     directory.setEntry(hostB, localEntry(hostB, {}));
-    installHostConnectionRegistrySource({ directory: directory.source, leases: null });
+    installHostConnectionRegistrySource({
+      directory: directory.source,
+      leases: null,
+    });
 
     const listenerA = vi.fn();
     subscribeHostRowChanged(hostA, listenerA);
@@ -176,7 +179,10 @@ describe("subscribeHostRowChanged — per-host precision", () => {
     const directory = stubDirectory();
     const hostId = freshHostId();
     directory.setEntry(hostId, localEntry(hostId, {}));
-    installHostConnectionRegistrySource({ directory: directory.source, leases: null });
+    installHostConnectionRegistrySource({
+      directory: directory.source,
+      leases: null,
+    });
 
     const listener = vi.fn();
     subscribeHostRowChanged(hostId, listener);
@@ -190,7 +196,10 @@ describe("subscribeHostRowChanged — per-host precision", () => {
 
   it("the coarse arm fires even for a host with NO record — the host nobody has named yet", () => {
     const directory = stubDirectory();
-    installHostConnectionRegistrySource({ directory: directory.source, leases: null });
+    installHostConnectionRegistrySource({
+      directory: directory.source,
+      leases: null,
+    });
 
     const coarseListener = vi.fn();
     subscribeAnyHostRowChanged(coarseListener);
@@ -209,7 +218,10 @@ describe("subscribeHostRowChanged — per-host precision", () => {
     const directory = stubDirectory();
     const hostId = freshHostId();
     directory.setEntry(hostId, localEntry(hostId, {}));
-    installHostConnectionRegistrySource({ directory: directory.source, leases: null });
+    installHostConnectionRegistrySource({
+      directory: directory.source,
+      leases: null,
+    });
 
     const perHostListener = vi.fn();
     subscribeHostRowChanged(hostId, perHostListener);
@@ -235,7 +247,10 @@ describe("subscribeHostRowChanged — per-host precision", () => {
     const hostId = freshHostId();
     // Deliberately no `directory.setEntry(hostId, ...)` yet - `findById`
     // answers `null` for this host at subscribe time.
-    installHostConnectionRegistrySource({ directory: directory.source, leases: null });
+    installHostConnectionRegistrySource({
+      directory: directory.source,
+      leases: null,
+    });
 
     const perHostListener = vi.fn();
     subscribeHostRowChanged(hostId, perHostListener);
@@ -261,7 +276,10 @@ describe("subscribeHostRowChanged — per-host precision", () => {
     const directory = stubDirectory();
     const hostId = freshHostId();
     directory.setEntry(hostId, localEntry(hostId, {}));
-    installHostConnectionRegistrySource({ directory: directory.source, leases: null });
+    installHostConnectionRegistrySource({
+      directory: directory.source,
+      leases: null,
+    });
 
     const perHostListener = vi.fn();
     subscribeHostRowChanged(hostId, perHostListener);
@@ -347,9 +365,9 @@ describe("hostDirectoryEntryEquals — each field is load-bearing", () => {
     const hostId = freshHostId();
     const withinFuseWindow = remoteEntry(hostId, { relayFuseGrace: true });
     const pastFuseWindow = { ...withinFuseWindow, relayFuseGrace: false };
-    expect(
-      hostDirectoryEntryEquals(withinFuseWindow, pastFuseWindow),
-    ).toBe(false);
+    expect(hostDirectoryEntryEquals(withinFuseWindow, pastFuseWindow)).toBe(
+      false,
+    );
   });
 
   it("breaks on the remote publicKey — a same-host key rotation leaves every base field byte-identical", () => {
@@ -388,9 +406,9 @@ describe("hostLeaseSnapshotEquals", () => {
       status: "ready",
       dead: null,
     };
-    expect(
-      hostLeaseSnapshotEquals(ready, { ...ready, hostId: "other" }),
-    ).toBe(false);
+    expect(hostLeaseSnapshotEquals(ready, { ...ready, hostId: "other" })).toBe(
+      false,
+    );
     expect(
       hostLeaseSnapshotEquals(ready, { ...ready, status: "degraded" }),
     ).toBe(false);
@@ -493,7 +511,11 @@ describe("hostLeaseSnapshotEquals", () => {
 
   it("null vs null is equal; null vs a value is not", () => {
     expect(hostLeaseSnapshotEquals(null, null)).toBe(true);
-    const lease: HostLeaseSnapshot = { hostId: "h", status: "ready", dead: null };
+    const lease: HostLeaseSnapshot = {
+      hostId: "h",
+      status: "ready",
+      dead: null,
+    };
     expect(hostLeaseSnapshotEquals(null, lease)).toBe(false);
     expect(hostLeaseSnapshotEquals(lease, null)).toBe(false);
   });
@@ -504,7 +526,10 @@ describe("acquireHostConnection — ref-count and keep-warm linger", () => {
     const directory = stubDirectory();
     const hostId = freshHostId();
     directory.setEntry(hostId, localEntry(hostId, {}));
-    installHostConnectionRegistrySource({ directory: directory.source, leases: null });
+    installHostConnectionRegistrySource({
+      directory: directory.source,
+      leases: null,
+    });
 
     const first = acquireHostConnection(hostId);
     const second = acquireHostConnection(hostId);
@@ -523,7 +548,10 @@ describe("acquireHostConnection — ref-count and keep-warm linger", () => {
     const directory = stubDirectory();
     const hostId = freshHostId();
     directory.setEntry(hostId, localEntry(hostId, {}));
-    installHostConnectionRegistrySource({ directory: directory.source, leases: null });
+    installHostConnectionRegistrySource({
+      directory: directory.source,
+      leases: null,
+    });
 
     const lease = acquireHostConnection(hostId);
     lease.release();
@@ -550,7 +578,10 @@ describe("acquireHostConnection — ref-count and keep-warm linger", () => {
     const directory = stubDirectory();
     const hostId = freshHostId();
     directory.setEntry(hostId, localEntry(hostId, {}));
-    installHostConnectionRegistrySource({ directory: directory.source, leases: null });
+    installHostConnectionRegistrySource({
+      directory: directory.source,
+      leases: null,
+    });
 
     const first = acquireHostConnection(hostId);
     first.release();
@@ -571,7 +602,10 @@ describe("acquireHostConnection — ref-count and keep-warm linger", () => {
     const directory = stubDirectory();
     const hostId = freshHostId();
     directory.setEntry(hostId, localEntry(hostId, {}));
-    installHostConnectionRegistrySource({ directory: directory.source, leases: null });
+    installHostConnectionRegistrySource({
+      directory: directory.source,
+      leases: null,
+    });
 
     const other = acquireHostConnection(hostId);
     const view = acquireHostConnection(hostId);
@@ -624,7 +658,10 @@ describe("resetHostConnectionRegistry — production StrictMode-remount semantic
     // The install's own silent adopt does not notify (by design), so drive
     // an actual subsequent change through the new source to prove the
     // listener is still attached and reachable.
-    newDirectory.setEntry(hostId, localEntry(hostId, { label: "renamed-again" }));
+    newDirectory.setEntry(
+      hostId,
+      localEntry(hostId, { label: "renamed-again" }),
+    );
     newDirectory.emitChanged();
 
     expect(listener).toHaveBeenCalledTimes(1);
@@ -634,7 +671,10 @@ describe("resetHostConnectionRegistry — production StrictMode-remount semantic
     const directory = stubDirectory();
     const hostId = freshHostId();
     directory.setEntry(hostId, localEntry(hostId, {}));
-    installHostConnectionRegistrySource({ directory: directory.source, leases: null });
+    installHostConnectionRegistrySource({
+      directory: directory.source,
+      leases: null,
+    });
 
     acquireHostConnection(hostId).release();
     resetHostConnectionRegistry();
@@ -642,7 +682,10 @@ describe("resetHostConnectionRegistry — production StrictMode-remount semantic
     // Nothing kept this record alive (no subscriber, no holder), so it was
     // dropped - a fresh acquire starts a clean ref-count rather than
     // inheriting stale bookkeeping.
-    installHostConnectionRegistrySource({ directory: directory.source, leases: null });
+    installHostConnectionRegistrySource({
+      directory: directory.source,
+      leases: null,
+    });
     const lease = acquireHostConnection(hostId);
     expect(hostConnectionRefCountForTest(hostId)).toBe(1);
     lease.release();
@@ -652,13 +695,19 @@ describe("resetHostConnectionRegistry — production StrictMode-remount semantic
     const directory = stubDirectory();
     const hostId = freshHostId();
     directory.setEntry(hostId, localEntry(hostId, {}));
-    installHostConnectionRegistrySource({ directory: directory.source, leases: null });
+    installHostConnectionRegistrySource({
+      directory: directory.source,
+      leases: null,
+    });
 
     acquireHostConnection(hostId).release();
     // Linger armed, not yet expired.
     resetHostConnectionRegistry();
 
-    installHostConnectionRegistrySource({ directory: directory.source, leases: null });
+    installHostConnectionRegistrySource({
+      directory: directory.source,
+      leases: null,
+    });
     // If the old timer were still armed it would delete a record that
     // doesn't exist under the new registration - advancing time must not
     // throw or corrupt a fresh acquire made in the meantime.
@@ -674,7 +723,10 @@ describe("resetHostConnectionRegistryForTest — full clear (test-only)", () => 
     const directory = stubDirectory();
     const hostId = freshHostId();
     directory.setEntry(hostId, localEntry(hostId, {}));
-    installHostConnectionRegistrySource({ directory: directory.source, leases: null });
+    installHostConnectionRegistrySource({
+      directory: directory.source,
+      leases: null,
+    });
 
     const perHostListener = vi.fn();
     subscribeHostRowChanged(hostId, perHostListener);
@@ -736,7 +788,10 @@ describe("lease reads come from the installed source, never a cached copy", () =
     const directory = stubDirectory();
     const hostId = freshHostId();
     directory.setEntry(hostId, localEntry(hostId, {}));
-    installHostConnectionRegistrySource({ directory: directory.source, leases: null });
+    installHostConnectionRegistrySource({
+      directory: directory.source,
+      leases: null,
+    });
 
     const lease = acquireHostConnection(hostId);
     expect(lease.status()).toBeNull();

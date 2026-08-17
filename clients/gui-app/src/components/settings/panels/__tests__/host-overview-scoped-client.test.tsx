@@ -4,9 +4,8 @@ const scopeOverrides = vi.hoisted((): { current: Record<string, unknown> } => ({
   current: {},
 }));
 vi.mock("@/components/settings/host-scope/use-host-scope", async () => {
-  const { hostScopeFixture } = await import(
-    "@/components/settings/host-scope/host-scope-fixture"
-  );
+  const { hostScopeFixture } =
+    await import("@/components/settings/host-scope/host-scope-fixture");
   return {
     useHostScope: () => hostScopeFixture(scopeOverrides.current),
   };

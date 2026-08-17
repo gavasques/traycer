@@ -23,7 +23,8 @@ function readSource(relativePath: string): string {
 
 /** Matches a 1-second-cadence `setInterval` or `refetchInterval`, spelled
  * either `1000` or `1_000`. */
-const ONE_SECOND_CADENCE = /(?:setInterval\s*\([^,]*,\s*1_?000\s*\)|refetchInterval:\s*1_?000\b)/;
+const ONE_SECOND_CADENCE =
+  /(?:setInterval\s*\([^,]*,\s*1_?000\s*\)|refetchInterval:\s*1_?000\b)/;
 
 describe("poll census — 1s readiness polls stay gone", () => {
   it("has ZERO 1-second-cadence setInterval/refetchInterval in use-host-reachability.ts", () => {
@@ -44,9 +45,7 @@ describe("poll census — 1s readiness polls stay gone", () => {
 describe("poll census — exactly one 60s registry poller in production", () => {
   it("HOST_DIRECTORY_REFRESH_POLL_MS is the sole surviving 60s registry poller", () => {
     const source = readSource("lib/host/host-directory-service.ts");
-    expect(source).toMatch(
-      /const HOST_DIRECTORY_REFRESH_POLL_MS\s*=\s*60_000/,
-    );
+    expect(source).toMatch(/const HOST_DIRECTORY_REFRESH_POLL_MS\s*=\s*60_000/);
     expect(source).toMatch(/window\.setInterval\(/);
   });
 
@@ -139,9 +138,7 @@ describe("positive controls — the search machinery can still find something re
       (relativePath) => !relativePath.includes("__tests__"),
     );
     expect(anyFile.length).toBeGreaterThan(10);
-    expect(
-      anyFile.includes("lib/host/host-directory-service.ts"),
-    ).toBe(true);
+    expect(anyFile.includes("lib/host/host-directory-service.ts")).toBe(true);
   });
 });
 

@@ -38,7 +38,7 @@ describe("in-process selection authority - end to end over a real engine", () =>
       identity,
       localHostEnsure: unavailableLocalHostEnsurePort,
       localOutage: inertLocalHostOutageSignal,
-    preferredStore: new InMemoryPreferredHostStore(),
+      preferredStore: new InMemoryPreferredHostStore(),
       clock,
       newIncarnationId: createIncrementingIncarnationIds(),
       log: silentAuthorityLog,
@@ -46,11 +46,16 @@ describe("in-process selection authority - end to end over a real engine", () =>
 
     // The in-process adapter uses ONE constant reporter id: a second client
     // built over the same engine acts as a fresh load replacing the first.
-    const clientA = createInProcessSelectionAuthorityClient(engine, silentAuthorityLog);
+    const clientA = createInProcessSelectionAuthorityClient(
+      engine,
+      silentAuthorityLog,
+    );
     const attachA = await clientA.attach(1, []);
     expect(attachA.ok).toBe(true);
 
-    const leaseEvents: Array<SelectionRevisioned<readonly HostLeaseSnapshot[]>> = [];
+    const leaseEvents: Array<
+      SelectionRevisioned<readonly HostLeaseSnapshot[]>
+    > = [];
     clientA.onLeasesChanged((event) => leaseEvents.push(event));
 
     await clientA.reportEvidence({
@@ -62,10 +67,15 @@ describe("in-process selection authority - end to end over a real engine", () =>
       at: 0,
     });
     expect(leaseEvents.length).toBeGreaterThan(0);
-    expect(findLease(leaseEvents[leaseEvents.length - 1].change, "H")?.status).toBe("ready");
+    expect(
+      findLease(leaseEvents[leaseEvents.length - 1].change, "H")?.status,
+    ).toBe("ready");
 
     // A second client instance, same constant reporter id: supersedes clientA.
-    const clientB = createInProcessSelectionAuthorityClient(engine, silentAuthorityLog);
+    const clientB = createInProcessSelectionAuthorityClient(
+      engine,
+      silentAuthorityLog,
+    );
     const attachB = await clientB.attach(1, []);
     expect(attachB.ok).toBe(true);
 
@@ -96,18 +106,23 @@ describe("in-process selection authority - end to end over a real engine", () =>
       identity,
       localHostEnsure: unavailableLocalHostEnsurePort,
       localOutage: inertLocalHostOutageSignal,
-    preferredStore: new InMemoryPreferredHostStore(),
+      preferredStore: new InMemoryPreferredHostStore(),
       clock,
       newIncarnationId: createIncrementingIncarnationIds(),
       log: silentAuthorityLog,
     });
-    const client = createInProcessSelectionAuthorityClient(engine, silentAuthorityLog);
+    const client = createInProcessSelectionAuthorityClient(
+      engine,
+      silentAuthorityLog,
+    );
     const firstAttach = await client.attach(1, []);
-    if (!firstAttach.ok) throw new Error("expected the first attach to succeed");
+    if (!firstAttach.ok)
+      throw new Error("expected the first attach to succeed");
 
-    const pendingReattach: { promise: Promise<SelectionAttachResult> | null } = {
-      promise: null,
-    };
+    const pendingReattach: { promise: Promise<SelectionAttachResult> | null } =
+      {
+        promise: null,
+      };
     client.onReattachRequired(() => {
       pendingReattach.promise = client.attach(1, []);
     });
@@ -116,10 +131,13 @@ describe("in-process selection authority - end to end over a real engine", () =>
 
     const reattachPromise = pendingReattach.promise;
     if (reattachPromise === null) {
-      throw new Error("expected reattachRequired to fire the client's re-attach");
+      throw new Error(
+        "expected reattachRequired to fire the client's re-attach",
+      );
     }
     const secondAttach = await reattachPromise;
-    if (!secondAttach.ok) throw new Error("expected the second attach to succeed");
+    if (!secondAttach.ok)
+      throw new Error("expected the second attach to succeed");
     expect(secondAttach.incarnationId).not.toBe(firstAttach.incarnationId);
 
     engine.dispose();
@@ -142,14 +160,18 @@ describe("InMemoryHostFleetSource / InMemoryAuthorityIdentitySource", () => {
 
     expect(received).toEqual([1, 2]);
     expect(source.snapshot().revision).toBe(2);
-    expect(source.snapshot().hosts.map((entry) => entry.hostId)).toEqual(["L", "H"]);
+    expect(source.snapshot().hosts.map((entry) => entry.hostId)).toEqual([
+      "L",
+      "H",
+    ]);
   });
 
   it("set increments the identity generation and hands the new identity to listeners", () => {
     const source = new InMemoryAuthorityIdentitySource("acct-1");
     expect(source.current()).toEqual({ identityKey: "acct-1", generation: 0 });
 
-    const received: Array<{ identityKey: string | null; generation: number }> = [];
+    const received: Array<{ identityKey: string | null; generation: number }> =
+      [];
     source.onChanged((identity) => received.push(identity));
 
     source.set("acct-2");

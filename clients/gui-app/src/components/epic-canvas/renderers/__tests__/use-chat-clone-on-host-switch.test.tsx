@@ -36,7 +36,10 @@ vi.mock("@/lib/commands/actions/clone-chat-on-host-switch", () => ({
   cloneChatOnHostSwitch: (...args: unknown[]) => cloneOnHostSwitchMock(...args),
 }));
 
-const cloneTargetState = { hostId: "host-B" as string | null, client: {} as object | null };
+const cloneTargetState = {
+  hostId: "host-B" as string | null,
+  client: {} as object | null,
+};
 
 const ARGS = {
   epicId: "epic-1",

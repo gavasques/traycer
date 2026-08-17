@@ -533,9 +533,9 @@ describe("<NewTerminalPicker />", () => {
       useSurfaceHostSelectionStore.getState().selections,
     )[0];
     expect(surfaceKey).toMatch(/^new-terminal/);
-    expect(
-      useSurfaceHostSelectionStore.getState().selections[surfaceKey],
-    ).toBe("host-1");
+    expect(useSurfaceHostSelectionStore.getState().selections[surfaceKey]).toBe(
+      "host-1",
+    );
     const tiles = tabTiles(tabId);
     expect(tiles.filter((tile) => tile.type === "terminal")).toHaveLength(0);
   });

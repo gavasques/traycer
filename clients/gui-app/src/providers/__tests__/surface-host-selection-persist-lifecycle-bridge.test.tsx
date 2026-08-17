@@ -68,9 +68,9 @@ describe("<SurfaceHostSelectionPersistLifecycleBridge />", () => {
     });
 
     await waitFor(() => {
-      expect(
-        useSurfaceHostSelectionStore.getState().selections[GIT_KEY],
-      ).toBe("host-alice");
+      expect(useSurfaceHostSelectionStore.getState().selections[GIT_KEY]).toBe(
+        "host-alice",
+      );
     });
   });
 
@@ -85,9 +85,9 @@ describe("<SurfaceHostSelectionPersistLifecycleBridge />", () => {
       resetAuth("signed-in", "a@b.com");
     });
     await waitFor(() => {
-      expect(
-        useSurfaceHostSelectionStore.getState().selections[GIT_KEY],
-      ).toBe("host-alice");
+      expect(useSurfaceHostSelectionStore.getState().selections[GIT_KEY]).toBe(
+        "host-alice",
+      );
     });
 
     act(() => {
@@ -97,9 +97,9 @@ describe("<SurfaceHostSelectionPersistLifecycleBridge />", () => {
     await waitFor(() => {
       expect(useSurfaceHostSelectionStore.getState().selections).toEqual({});
     });
-    expect(window.localStorage.getItem(surfaceHostSelectionKey("a@b.com"))).toBe(
-      null,
-    );
+    expect(
+      window.localStorage.getItem(surfaceHostSelectionKey("a@b.com")),
+    ).toBe(null);
   });
 
   it("retargets the persist bucket on user switch", async () => {
@@ -116,18 +116,18 @@ describe("<SurfaceHostSelectionPersistLifecycleBridge />", () => {
       resetAuth("signed-in", "a@b.com");
     });
     await waitFor(() => {
-      expect(
-        useSurfaceHostSelectionStore.getState().selections[GIT_KEY],
-      ).toBe("host-alice");
+      expect(useSurfaceHostSelectionStore.getState().selections[GIT_KEY]).toBe(
+        "host-alice",
+      );
     });
 
     act(() => {
       resetAuth("signed-in", "b@b.com");
     });
     await waitFor(() => {
-      expect(
-        useSurfaceHostSelectionStore.getState().selections[GIT_KEY],
-      ).toBe("host-bob");
+      expect(useSurfaceHostSelectionStore.getState().selections[GIT_KEY]).toBe(
+        "host-bob",
+      );
     });
   });
 });

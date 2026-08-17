@@ -398,7 +398,9 @@ class FakeWindowRegistry implements IpcWindowRegistry {
     return windowId === undefined ? null : this.getRecordById(windowId);
   }
   getMruRecord(): IpcWindowRecord | null {
-    return this.mruWindowId === null ? null : this.getRecordById(this.mruWindowId);
+    return this.mruWindowId === null
+      ? null
+      : this.getRecordById(this.mruWindowId);
   }
   mostRecentlyFocusedId(): string | null {
     return this.mruWindowId;
@@ -485,8 +487,16 @@ interface Snapshot {
 }
 
 type AttachResult =
-  | { readonly ok: true; readonly incarnationId: string; readonly snapshot: Snapshot }
-  | { readonly ok: false; readonly kind: string; readonly [key: string]: unknown };
+  | {
+      readonly ok: true;
+      readonly incarnationId: string;
+      readonly snapshot: Snapshot;
+    }
+  | {
+      readonly ok: false;
+      readonly kind: string;
+      readonly [key: string]: unknown;
+    };
 
 function isOkAttach(
   result: unknown,
@@ -558,7 +568,9 @@ async function buildBridge(options: {
 }
 
 function attachHandler(): InvokeHandler {
-  const handler = ipcMainState.handlers.get(SelectionAuthorityChannels.invoke.attach);
+  const handler = ipcMainState.handlers.get(
+    SelectionAuthorityChannels.invoke.attach,
+  );
   if (handler === undefined) throw new Error("attach handler missing");
   return handler;
 }
@@ -594,7 +606,10 @@ describe("selection authority IPC binding", () => {
     const first = invokeSyncWithSender(RunnerHostSync.selectionAttachSeq, 101);
     expect(typeof first).toBe("number");
 
-    const unknown = invokeSyncWithSender(RunnerHostSync.selectionAttachSeq, 999);
+    const unknown = invokeSyncWithSender(
+      RunnerHostSync.selectionAttachSeq,
+      999,
+    );
     expect(unknown).toBeNull();
 
     const second = invokeSyncWithSender(RunnerHostSync.selectionAttachSeq, 101);
@@ -617,12 +632,16 @@ describe("selection authority IPC binding", () => {
       // later real attach coming back `superseded` instead of `ok: true`.
       const seq = invokeSyncWithSender(RunnerHostSync.selectionAttachSeq, 101);
 
-      await expect(
-        handler(sender(101), {}),
-      ).resolves.toEqual({ ok: false, kind: "malformed-request", claimed: false });
-      await expect(
-        handler(sender(101), { attachSeq: 1.5 }),
-      ).resolves.toEqual({ ok: false, kind: "malformed-request", claimed: false });
+      await expect(handler(sender(101), {})).resolves.toEqual({
+        ok: false,
+        kind: "malformed-request",
+        claimed: false,
+      });
+      await expect(handler(sender(101), { attachSeq: 1.5 })).resolves.toEqual({
+        ok: false,
+        kind: "malformed-request",
+        claimed: false,
+      });
 
       const result = await handler(sender(101), {
         attachSeq: seq,
@@ -645,12 +664,20 @@ describe("selection authority IPC binding", () => {
 
       await expect(
         handler(sender(101), { attachSeq: seq, callerContractVersion: 1 }),
-      ).resolves.toEqual({ ok: false, kind: "malformed-request", claimed: true });
+      ).resolves.toEqual({
+        ok: false,
+        kind: "malformed-request",
+        claimed: true,
+      });
 
       // Replay with the SAME (now-consumed) seq, still malformed.
       await expect(
         handler(sender(101), { attachSeq: seq, callerContractVersion: 1 }),
-      ).resolves.toEqual({ ok: false, kind: "malformed-request", claimed: false });
+      ).resolves.toEqual({
+        ok: false,
+        kind: "malformed-request",
+        claimed: false,
+      });
 
       // No corrected-envelope replay either: the same seq, now with a
       // well-formed envelope, is refused as superseded (the generation is
@@ -963,10 +990,7 @@ describe("selection authority IPC binding", () => {
     ]);
     const revisions = windowA.sentMessages
       .filter((message) => revisionedChannels.has(message.channel))
-      .map(
-        (message) =>
-          (message.payload as { revision: number }).revision,
-      );
+      .map((message) => (message.payload as { revision: number }).revision);
     const lastFannedOutRevision = Math.max(...revisions);
 
     expect(late.snapshot.revision).toBe(lastFannedOutRevision);
@@ -1036,7 +1060,12 @@ describe("selection authority IPC binding", () => {
     ]);
 
     const seqB = invokeSyncWithSender(RunnerHostSync.selectionAttachSeq, 202);
-    const { incarnationId: incarnationB } = await attachOk(attach, 202, seqB, []);
+    const { incarnationId: incarnationB } = await attachOk(
+      attach,
+      202,
+      seqB,
+      [],
+    );
 
     const evidence = evidenceHandler();
     // While A's live session exists, B's refusals are suppressed - never
@@ -1092,26 +1121,29 @@ describe("selection authority IPC binding", () => {
     bridge.install();
     await flushIo();
 
-    expect(ipcMainState.handlers.has(SelectionAuthorityChannels.invoke.attach)).toBe(
-      true,
-    );
+    expect(
+      ipcMainState.handlers.has(SelectionAuthorityChannels.invoke.attach),
+    ).toBe(true);
     expect(
       ipcMainState.syncListeners.get(RunnerHostSync.selectionAttachSeq)?.size,
     ).toBeGreaterThan(0);
 
     bridge.dispose();
 
-    expect(ipcMainState.handlers.has(SelectionAuthorityChannels.invoke.attach)).toBe(
-      false,
-    );
     expect(
-      ipcMainState.handlers.has(SelectionAuthorityChannels.invoke.reportEvidence),
+      ipcMainState.handlers.has(SelectionAuthorityChannels.invoke.attach),
+    ).toBe(false);
+    expect(
+      ipcMainState.handlers.has(
+        SelectionAuthorityChannels.invoke.reportEvidence,
+      ),
     ).toBe(false);
     expect(
       ipcMainState.handlers.has(SelectionAuthorityChannels.invoke.activate),
     ).toBe(false);
     expect(
-      ipcMainState.syncListeners.get(RunnerHostSync.selectionAttachSeq)?.size ?? 0,
+      ipcMainState.syncListeners.get(RunnerHostSync.selectionAttachSeq)?.size ??
+        0,
     ).toBe(0);
 
     windowA.sentMessages.length = 0;
@@ -1143,11 +1175,20 @@ describe("selection authority IPC binding", () => {
       const attach = attachHandler();
       const seqA = invokeSyncWithSender(RunnerHostSync.selectionAttachSeq, 101);
       await attachOk(attach, 101, seqA, [
-        { hostId: "crash-host", sessionId: "sess-a", transportKind: "local-ws" },
+        {
+          hostId: "crash-host",
+          sessionId: "sess-a",
+          transportKind: "local-ws",
+        },
       ]);
 
       const seqB = invokeSyncWithSender(RunnerHostSync.selectionAttachSeq, 202);
-      const { incarnationId: incarnationB } = await attachOk(attach, 202, seqB, []);
+      const { incarnationId: incarnationB } = await attachOk(
+        attach,
+        202,
+        seqB,
+        [],
+      );
 
       const evidence = evidenceHandler();
       // Window A's live session suppresses B's refusals while it is announced.
@@ -1216,14 +1257,18 @@ describe("selection authority IPC binding", () => {
       const attach = attachHandler();
 
       // An unknown sender BEFORE any known-window allocation.
-      expect(invokeSyncWithSender(RunnerHostSync.selectionAttachSeq, 999)).toBeNull();
+      expect(
+        invokeSyncWithSender(RunnerHostSync.selectionAttachSeq, 999),
+      ).toBeNull();
 
       const seq1 = invokeSyncWithSender(RunnerHostSync.selectionAttachSeq, 101);
       expect(seq1).toBe(1);
 
       // Another unknown-sender call interleaved between two known
       // allocations must not consume a slot of window-a's counter.
-      expect(invokeSyncWithSender(RunnerHostSync.selectionAttachSeq, 999)).toBeNull();
+      expect(
+        invokeSyncWithSender(RunnerHostSync.selectionAttachSeq, 999),
+      ).toBeNull();
 
       const seq2 = invokeSyncWithSender(RunnerHostSync.selectionAttachSeq, 101);
       expect(seq2).toBe(2);
@@ -1254,12 +1299,26 @@ describe("selection authority IPC binding", () => {
 
       const attach = attachHandler();
       const seqA = invokeSyncWithSender(RunnerHostSync.selectionAttachSeq, 101);
-      const { incarnationId: incarnationA } = await attachOk(attach, 101, seqA, [
-        { hostId: "detach-host", sessionId: "sess-a", transportKind: "local-ws" },
-      ]);
+      const { incarnationId: incarnationA } = await attachOk(
+        attach,
+        101,
+        seqA,
+        [
+          {
+            hostId: "detach-host",
+            sessionId: "sess-a",
+            transportKind: "local-ws",
+          },
+        ],
+      );
 
       const seqB = invokeSyncWithSender(RunnerHostSync.selectionAttachSeq, 202);
-      const { incarnationId: incarnationB } = await attachOk(attach, 202, seqB, []);
+      const { incarnationId: incarnationB } = await attachOk(
+        attach,
+        202,
+        seqB,
+        [],
+      );
 
       // Close window A: drop it from the registry and fire the registry
       // change - the engine retires A's incarnation via reporterDetached.

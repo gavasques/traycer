@@ -226,8 +226,7 @@ export function useCreateTuiAgent(): {
   // so the bound host id is not yet known. Stamp the renderer's current
   // default; once the projection lands, the per-tile binding rides on the
   // `TuiAgentProjection.hostId` rather than this placeholder value.
-  const placeholderHostId =
-    useAddressableHostId() ?? UNKNOWN_HOST_PLACEHOLDER;
+  const placeholderHostId = useAddressableHostId() ?? UNKNOWN_HOST_PLACEHOLDER;
   return useCreateTuiAgentForClient(hostClient, placeholderHostId);
 }
 

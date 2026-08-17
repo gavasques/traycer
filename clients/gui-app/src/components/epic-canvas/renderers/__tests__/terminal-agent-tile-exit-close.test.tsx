@@ -451,15 +451,15 @@ describe("<TuiAgentTile /> basis notification gate", () => {
     // The render branch does not key on `basis` - the dead banner fires off
     // `status` alone - so it must still appear even though the notification
     // is withheld.
-    expect(await screen.findByRole("button", { name: "Close tab" })).toBeDefined();
+    expect(
+      await screen.findByRole("button", { name: "Close tab" }),
+    ).toBeDefined();
 
     await act(async () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(useAppLocalNotificationsStore.getState().orderedIds).toHaveLength(
-      0,
-    );
+    expect(useAppLocalNotificationsStore.getState().orderedIds).toHaveLength(0);
   });
 });
 

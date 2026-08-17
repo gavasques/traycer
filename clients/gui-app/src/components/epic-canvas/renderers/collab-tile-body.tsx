@@ -208,7 +208,11 @@ function CollabTileSkeleton(props: {
           <div className="h-3 w-1/2 animate-pulse rounded bg-muted" />
         </>
       ) : (
-        <p role="status" aria-live="polite" className="text-ui-sm text-muted-foreground">
+        <p
+          role="status"
+          aria-live="polite"
+          className="text-ui-sm text-muted-foreground"
+        >
           {notice}
         </p>
       )}

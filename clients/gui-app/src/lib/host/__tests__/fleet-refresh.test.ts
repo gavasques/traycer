@@ -15,7 +15,9 @@ import {
  * cannot escape into the caller's success path.
  */
 
-function shell(refreshHostFleet: () => Promise<void>): FleetRefreshCapableShell {
+function shell(
+  refreshHostFleet: () => Promise<void>,
+): FleetRefreshCapableShell {
   return { refreshHostFleet };
 }
 

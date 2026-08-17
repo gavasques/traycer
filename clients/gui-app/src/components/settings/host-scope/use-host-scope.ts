@@ -239,7 +239,9 @@ export async function requestActivate(
     });
     return;
   }
-  toast.error(activateRefusalMessage(result.reason, option?.name ?? "That host"));
+  toast.error(
+    activateRefusalMessage(result.reason, option?.name ?? "That host"),
+  );
 }
 
 /**

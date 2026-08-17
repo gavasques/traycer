@@ -636,9 +636,7 @@ export const taskContextResolutionSchema = z.discriminatedUnion("status", [
     reason: taskContextUnknownReasonSchema,
   }),
 ]);
-export type TaskContextResolution = z.infer<
-  typeof taskContextResolutionSchema
->;
+export type TaskContextResolution = z.infer<typeof taskContextResolutionSchema>;
 
 // Older-host values are parsed by their v1.0 schema and upgraded at the
 // transport boundary. Canonical v1.1 data therefore stays exhaustive here:

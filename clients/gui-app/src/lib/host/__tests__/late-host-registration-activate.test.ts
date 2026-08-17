@@ -181,5 +181,4 @@ describe("a host registered late becomes activatable", () => {
     await world.directory.refresh();
     expect(world.fleetRefreshes()).toBe(1);
   });
-
 });

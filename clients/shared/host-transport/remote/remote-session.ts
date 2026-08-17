@@ -195,7 +195,6 @@ function sessionFatalProvenance(
     : "host-transport-plane";
 }
 
-
 export interface RemoteSessionOptions<
   RpcRegistry extends VersionedRpcRegistry,
   StreamRegistry extends VersionedStreamRpcRegistry,
@@ -1066,7 +1065,11 @@ export class RemoteSession<
     if (this.phase === "closed" || this.phase === "idle") {
       return;
     }
-    this.handleConnectionLost(this.connectGeneration, reason, "not-host-evidence");
+    this.handleConnectionLost(
+      this.connectGeneration,
+      reason,
+      "not-host-evidence",
+    );
   }
 
   closeStream(streamId: number, reason: string): void {
@@ -1123,7 +1126,10 @@ export class RemoteSession<
       // is an upgrade. Unlike every other mint failure this is a stable
       // per-host entitlement verdict, not a fleet-correlated outage, which is
       // why it counts as host evidence at all.
-      this.reportEvidenceOutcome(this.dialAttemptId(generation), "plan-restricted");
+      this.reportEvidenceOutcome(
+        this.dialAttemptId(generation),
+        "plan-restricted",
+      );
       return;
     }
     if (provision.kind === "unavailable") {
@@ -1141,7 +1147,10 @@ export class RemoteSession<
       // over to local, which is the false-Offline class invariant 5 exists to
       // prevent. A host that really is down still produces its refusal at the
       // `handleConnectionLost` funnel, which observes the host's own plane.
-      this.reportEvidenceOutcome(this.dialAttemptId(generation), "indeterminate");
+      this.reportEvidenceOutcome(
+        this.dialAttemptId(generation),
+        "indeterminate",
+      );
       const retryInMs = this.scheduleReconnect();
       this.dialFailures.recordFailure({
         cause: `could not mint an attach grant: ${provision.detail}`,
@@ -1160,7 +1169,12 @@ export class RemoteSession<
 
     const scheduler = new PriorityScheduler({
       write: (frame) => this.writeFrame(generation, frame),
-      onWriteError: () => this.handleConnectionLost(generation, "write-failed", "host-transport-plane"),
+      onWriteError: () =>
+        this.handleConnectionLost(
+          generation,
+          "write-failed",
+          "host-transport-plane",
+        ),
       initialBulkCredits: INITIAL_BULK_SEND_CREDITS,
       now: undefined,
     });
@@ -1421,7 +1435,11 @@ export class RemoteSession<
       // before the host was ever asked anything. Counting it would let a
       // signed-out moment march every remote host toward confirmed death at
       // once.
-      this.handleConnectionLost(generation, "missing-bearer", "not-host-evidence");
+      this.handleConnectionLost(
+        generation,
+        "missing-bearer",
+        "not-host-evidence",
+      );
       return;
     }
     this.phase = "opening";
@@ -1976,7 +1994,11 @@ export class RemoteSession<
       // A transient host blip must not count toward the credential give-up
       // bound - clear any streak left by a prior genuine UNAUTHORIZED episode.
       this.noProgressUnauthorizedReconnects = 0;
-      this.handleConnectionLost(generation, "session-fatal-retryable", provenance);
+      this.handleConnectionLost(
+        generation,
+        "session-fatal-retryable",
+        provenance,
+      );
       return;
     }
     const auth = this.revalidator();
@@ -2059,10 +2081,7 @@ export class RemoteSession<
       // Credential-plane, so INDETERMINATE: the host is answering (it rejected
       // a bearer, which a dead host cannot do) and what failed is our own
       // revalidation. Neither half is evidence that the host is gone.
-      this.reportEvidenceOutcome(
-        this.credentialAttemptId(),
-        "indeterminate",
-      );
+      this.reportEvidenceOutcome(this.credentialAttemptId(), "indeterminate");
       return;
     }
     // outcome === "rotated": authn accepts the credential. If the bearer the

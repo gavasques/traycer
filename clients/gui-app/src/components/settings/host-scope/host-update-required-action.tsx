@@ -49,7 +49,8 @@ export function HostUpdateRequiredAction(props: {
   readonly pending: boolean;
 }): ReactNode {
   if (!props.canManageHost) return null;
-  if (!hostUpdateActionApplies(props.detail, getClientAppVersion())) return null;
+  if (!hostUpdateActionApplies(props.detail, getClientAppVersion()))
+    return null;
   return (
     <Button
       type="button"

@@ -72,9 +72,9 @@ describe("isServingLease", () => {
     expect(
       isServingLease(lease({ status: "restarting-expected", dead: null })),
     ).toBe(false);
-    expect(
-      isServingLease(deadLease("host-a", { reason: "offline" })),
-    ).toBe(false);
+    expect(isServingLease(deadLease("host-a", { reason: "offline" }))).toBe(
+      false,
+    );
   });
 });
 

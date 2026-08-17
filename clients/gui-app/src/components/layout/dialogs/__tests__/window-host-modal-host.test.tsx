@@ -247,7 +247,9 @@ describe("<WindowHostModalHost />", () => {
       attached: true,
       effectiveHostId: LOCAL_HOST_ID,
       targetHostId: LOCAL_HOST_ID,
-      leases: [lease({ hostId: LOCAL_HOST_ID, status: "connecting", dead: null })],
+      leases: [
+        lease({ hostId: LOCAL_HOST_ID, status: "connecting", dead: null }),
+      ],
     });
 
     renderHost(
@@ -401,7 +403,11 @@ describe("<WindowHostModalHost />", () => {
     // legacy install card used, and it is why a restart or an update running
     // under a window that nothing can serve rendered a silent card.
     controllerStatus.data = {
-      mutation: { kind: "respawn", progress: null, startedAt: "2026-01-01T00:00:00.000Z" },
+      mutation: {
+        kind: "respawn",
+        progress: null,
+        startedAt: "2026-01-01T00:00:00.000Z",
+      },
     };
     applySnapshot({
       attached: true,

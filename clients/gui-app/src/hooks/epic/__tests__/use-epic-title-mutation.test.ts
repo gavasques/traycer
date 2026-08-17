@@ -123,9 +123,10 @@ describe("useEpicUpdateTitle", () => {
       queryClient.getQueryData<ListTasksResponse>(listKey)?.tasks[0]?.epic
         ?.light?.title,
     ).toBe("Renamed");
-    const taskContext = queryClient.getQueryData<GetTaskContextsResponse>(
-      batchKey,
-    )?.tasks["epic-1"];
+    const taskContext =
+      queryClient.getQueryData<GetTaskContextsResponse>(batchKey)?.tasks[
+        "epic-1"
+      ];
     expect(
       isFoundTaskContext(taskContext)
         ? taskContext.task.epic?.light?.title

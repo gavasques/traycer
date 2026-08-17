@@ -522,7 +522,7 @@ describe("managed-command output window", () => {
     // host's label) - so the two arms' bounded words differ in exactly this
     // one respect, and both must still be WORDS, never a bare skeleton.
     ["checking", "the host"],
-    ["host-starting", 'Work laptop'],
+    ["host-starting", "Work laptop"],
   ] as const)(
     "names the host it is waiting on, worded and bounded, for reachability %s",
     (status, expectedNaming) => {

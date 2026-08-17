@@ -1013,7 +1013,11 @@ describe("WsStreamClient", () => {
       const session = client.subscribe("epic.subscribe", { epicId: "epic-1" });
       let closedCode: string | null = null;
       session.onStatusChange((status, reason) => {
-        if (status === "closed" && reason !== null && reason.kind === "fatalError") {
+        if (
+          status === "closed" &&
+          reason !== null &&
+          reason.kind === "fatalError"
+        ) {
           closedCode = reason.details.code;
         }
       });

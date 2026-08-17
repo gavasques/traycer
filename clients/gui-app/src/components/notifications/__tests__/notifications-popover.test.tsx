@@ -1178,23 +1178,27 @@ describe("NotificationsPopover", () => {
     };
     const { router } = buildRouterWithCapture(captured, () => undefined);
 
-    openNotificationsStream(reconnectEngine, (callbacks) => {
-      act(() => {
-        seedEntries(callbacks, [
-          {
-            id: "ts-row",
-            createdAt: twoMinutesAgo,
-            readAt: null,
-            event: {
-              kind: NOTIFICATION_EVENT_TYPES.INVITED,
-              epicId: "epic-alpha",
-              actorName: "Alice",
+    openNotificationsStream(
+      reconnectEngine,
+      (callbacks) => {
+        act(() => {
+          seedEntries(callbacks, [
+            {
+              id: "ts-row",
+              createdAt: twoMinutesAgo,
+              readAt: null,
+              event: {
+                kind: NOTIFICATION_EVENT_TYPES.INVITED,
+                epicId: "epic-alpha",
+                actorName: "Alice",
+              },
             },
-          },
-        ]);
-      });
-      return { applyUpdate: () => {}, close: () => {} };
-    }, null);
+          ]);
+        });
+        return { applyUpdate: () => {}, close: () => {} };
+      },
+      null,
+    );
 
     renderRouter(router);
 
@@ -1373,14 +1377,18 @@ describe("NotificationsPopover", () => {
   });
 
   it("renders navigable unread rows with one primary button and sibling mark-read, never nested buttons", async () => {
-    openNotificationsStream(reconnectEngine, (callbacks) => {
-      act(() => {
-        seedEntries(callbacks, [
-          threadEntry("route-1", "epic-xyz", "art-7", "thread-9"),
-        ]);
-      });
-      return { applyUpdate: () => {}, close: () => {} };
-    }, null);
+    openNotificationsStream(
+      reconnectEngine,
+      (callbacks) => {
+        act(() => {
+          seedEntries(callbacks, [
+            threadEntry("route-1", "epic-xyz", "art-7", "thread-9"),
+          ]);
+        });
+        return { applyUpdate: () => {}, close: () => {} };
+      },
+      null,
+    );
 
     const captured: TargetCapture = {
       epicId: null,
@@ -1420,21 +1428,25 @@ describe("NotificationsPopover", () => {
       ],
       { unreadCount: 2, attentionCount: 1 },
     );
-    openNotificationsStream(reconnectEngine, (callbacks) => {
-      act(() => {
-        seedEntries(callbacks, [
-          threadEntryWithState({
-            id: "collab",
-            epicId: "epic-1",
-            artifactId: "art-1",
-            threadId: "thread-1",
-            createdAt: 60,
-            readAt: null,
-          }),
-        ]);
-      });
-      return { applyUpdate: () => {}, close: () => {} };
-    }, null);
+    openNotificationsStream(
+      reconnectEngine,
+      (callbacks) => {
+        act(() => {
+          seedEntries(callbacks, [
+            threadEntryWithState({
+              id: "collab",
+              epicId: "epic-1",
+              artifactId: "art-1",
+              threadId: "thread-1",
+              createdAt: 60,
+              readAt: null,
+            }),
+          ]);
+        });
+        return { applyUpdate: () => {}, close: () => {} };
+      },
+      null,
+    );
 
     const captured: TargetCapture = {
       epicId: null,
@@ -1652,14 +1664,18 @@ describe("NotificationsPopover", () => {
     const onNavigate = vi.fn();
     const { router } = buildRouterWithCapture(captured, onNavigate);
 
-    openNotificationsStream(reconnectEngine, (callbacks) => {
-      act(() => {
-        seedEntries(callbacks, [
-          threadEntry("route-1", "epic-xyz", "art-7", "thread-9"),
-        ]);
-      });
-      return { applyUpdate: () => {}, close: () => {} };
-    }, null);
+    openNotificationsStream(
+      reconnectEngine,
+      (callbacks) => {
+        act(() => {
+          seedEntries(callbacks, [
+            threadEntry("route-1", "epic-xyz", "art-7", "thread-9"),
+          ]);
+        });
+        return { applyUpdate: () => {}, close: () => {} };
+      },
+      null,
+    );
 
     renderRouter(router);
 
@@ -1745,15 +1761,19 @@ describe("NotificationsPopover", () => {
     };
     const { router } = buildRouterWithCapture(captured, () => undefined);
 
-    openNotificationsStream(reconnectEngine, (callbacks) => {
-      act(() => {
-        seedEntries(callbacks, [
-          threadEntry("all-1", "epic-1", "art-1", "thread-1"),
-          threadEntry("all-2", "epic-2", "art-2", "thread-2"),
-        ]);
-      });
-      return { applyUpdate: () => {}, close: () => {} };
-    }, null);
+    openNotificationsStream(
+      reconnectEngine,
+      (callbacks) => {
+        act(() => {
+          seedEntries(callbacks, [
+            threadEntry("all-1", "epic-1", "art-1", "thread-1"),
+            threadEntry("all-2", "epic-2", "art-2", "thread-2"),
+          ]);
+        });
+        return { applyUpdate: () => {}, close: () => {} };
+      },
+      null,
+    );
 
     renderRouter(router);
 
@@ -1854,14 +1874,18 @@ describe("NotificationsPopover", () => {
 
   it("on activation success closes the center, marks read, and analytics stay category-only", async () => {
     const trackSpy = vi.spyOn(Analytics.getInstance(), "track");
-    openNotificationsStream(reconnectEngine, (callbacks) => {
-      act(() => {
-        seedEntries(callbacks, [
-          threadEntry("route-success", "epic-xyz", "art-7", "thread-9"),
-        ]);
-      });
-      return { applyUpdate: () => {}, close: () => {} };
-    }, null);
+    openNotificationsStream(
+      reconnectEngine,
+      (callbacks) => {
+        act(() => {
+          seedEntries(callbacks, [
+            threadEntry("route-success", "epic-xyz", "art-7", "thread-9"),
+          ]);
+        });
+        return { applyUpdate: () => {}, close: () => {} };
+      },
+      null,
+    );
 
     const onNavigate = vi.fn();
     const captured: TargetCapture = {

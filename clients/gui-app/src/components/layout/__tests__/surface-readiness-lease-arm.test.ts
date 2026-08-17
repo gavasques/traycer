@@ -96,19 +96,18 @@ describe("resolveSurfaceReadiness — the default-host arm reads the lease", () 
    * SERVING — or deliberately restarting — is not "unavailable" merely because
    * its directory row is not dialable this instant.
    */
-  it.each([
-    ["ready"],
-    ["degraded"],
-    ["restarting-expected"],
-  ] as const)("calls a %s host loading, not unavailable", (status) => {
-    expect(
-      resolve({
-        activeHostId: "host-a",
-        leases: [{ hostId: "host-a", status, dead: null }],
-        authorityAttached: true,
-      }),
-    ).toEqual({ kind: "loading-host" });
-  });
+  it.each([["ready"], ["degraded"], ["restarting-expected"]] as const)(
+    "calls a %s host loading, not unavailable",
+    (status) => {
+      expect(
+        resolve({
+          activeHostId: "host-a",
+          leases: [{ hostId: "host-a", status, dead: null }],
+          authorityAttached: true,
+        }),
+      ).toEqual({ kind: "loading-host" });
+    },
+  );
 });
 
 describe("resolveSurfaceReadiness — absence of evidence keeps the old answer", () => {

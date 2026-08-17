@@ -544,7 +544,9 @@ describe("<TerminalTile /> basis notification gate", () => {
     // notification below is withheld. A test that only checked the
     // notification's absence could not tell "gate correctly withheld" apart
     // from "tile crashed and rendered nothing".
-    expect(await screen.findByRole("button", { name: "Close tab" })).toBeDefined();
+    expect(
+      await screen.findByRole("button", { name: "Close tab" }),
+    ).toBeDefined();
 
     // Give the exit/reachability effect the same couple of ticks the other
     // notification-asserting cases in this file await, then assert the feed
@@ -554,9 +556,7 @@ describe("<TerminalTile /> basis notification gate", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(useAppLocalNotificationsStore.getState().orderedIds).toHaveLength(
-      0,
-    );
+    expect(useAppLocalNotificationsStore.getState().orderedIds).toHaveLength(0);
   });
 });
 

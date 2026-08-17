@@ -177,9 +177,7 @@ function EpicTabExistenceProbe(props: { readonly run: ReconcileRun }) {
     // by `EpicAccessCoordinator` (via the live session's `epicDeleted` /
     // `accessLost` / unavailable-`snapshotFetchError` signals), not here, so
     // this exclusion cannot hide a real "epic is gone" signal.
-    const staleEpicIds = closableStaleEpicIds(
-      [...confirmedAbsentEpicIds],
-    );
+    const staleEpicIds = closableStaleEpicIds([...confirmedAbsentEpicIds]);
     if (staleEpicIds.length > 0) {
       useComposerRunSettingsStore.getState().clearEpicRunSettings(staleEpicIds);
       tabCommandCoordinator.handleEpicAccessLoss(staleEpicIds);

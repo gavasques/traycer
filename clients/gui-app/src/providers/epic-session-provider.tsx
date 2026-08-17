@@ -473,7 +473,7 @@ export function EpicSessionProvider(
     };
   }, [epicId]);
 
-  const handle = ownershipClaimed ? session?.handle ?? null : null;
+  const handle = ownershipClaimed ? (session?.handle ?? null) : null;
   const sessionPresentation = useMemo(
     () => ({
       ...presentation,

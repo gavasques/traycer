@@ -687,7 +687,10 @@ describe("armFirstInstallOnSignIn", () => {
   it("installs once for a signed-in user on a machine that has never had a host", async () => {
     const controller = fakeHostController(
       neverInstalled(false),
-      { kind: "ok", value: { appliedVersion: "1.4.1", runningActivated: true } },
+      {
+        kind: "ok",
+        value: { appliedVersion: "1.4.1", runningActivated: true },
+      },
       { kind: "ok", value: { activated: true } },
     );
 
@@ -704,7 +707,10 @@ describe("armFirstInstallOnSignIn", () => {
   it("CONSENT: a signed-out launch installs nothing, and waits rather than giving up", async () => {
     const controller = fakeHostController(
       neverInstalled(false),
-      { kind: "ok", value: { appliedVersion: "1.4.1", runningActivated: true } },
+      {
+        kind: "ok",
+        value: { appliedVersion: "1.4.1", runningActivated: true },
+      },
       { kind: "ok", value: { activated: true } },
     );
     const gate = fakeSignedInGate(false);
@@ -724,7 +730,10 @@ describe("armFirstInstallOnSignIn", () => {
   it("installs on the sign-in TRANSITION - the pre-retirement timing", async () => {
     const controller = fakeHostController(
       neverInstalled(false),
-      { kind: "ok", value: { appliedVersion: "1.4.1", runningActivated: true } },
+      {
+        kind: "ok",
+        value: { appliedVersion: "1.4.1", runningActivated: true },
+      },
       { kind: "ok", value: { activated: true } },
     );
     const gate = fakeSignedInGate(false);
@@ -742,7 +751,10 @@ describe("armFirstInstallOnSignIn", () => {
   it("CONSENT: a host the user removed is never reinstalled, even signed in", async () => {
     const controller = fakeHostController(
       neverInstalled(true),
-      { kind: "ok", value: { appliedVersion: "1.4.1", runningActivated: true } },
+      {
+        kind: "ok",
+        value: { appliedVersion: "1.4.1", runningActivated: true },
+      },
       { kind: "ok", value: { activated: true } },
     );
 
@@ -760,7 +772,10 @@ describe("armFirstInstallOnSignIn", () => {
   it("does nothing when a host is already installed - that debt is the reconciler's", async () => {
     const controller = fakeHostController(
       fakeStatus(false, "activated", false),
-      { kind: "ok", value: { appliedVersion: "1.4.1", runningActivated: true } },
+      {
+        kind: "ok",
+        value: { appliedVersion: "1.4.1", runningActivated: true },
+      },
       { kind: "ok", value: { activated: true } },
     );
 

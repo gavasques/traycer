@@ -59,7 +59,8 @@ export interface TileHostLoadStateProps {
 
 export function TileHostLoadState(props: TileHostLoadStateProps): ReactNode {
   const noun = tileLoadNoun(props.subject);
-  const pending = props.load.kind === "loading" || props.load.kind === "connecting";
+  const pending =
+    props.load.kind === "loading" || props.load.kind === "connecting";
 
   return (
     <div
@@ -74,7 +75,11 @@ export function TileHostLoadState(props: TileHostLoadStateProps): ReactNode {
       className="flex h-full w-full flex-col items-center justify-center gap-3 bg-canvas px-6 text-center text-ui-sm text-muted-foreground"
     >
       {pending ? (
-        <AgentSpinningDots className="shrink-0" testId={undefined} variant={undefined} />
+        <AgentSpinningDots
+          className="shrink-0"
+          testId={undefined}
+          variant={undefined}
+        />
       ) : null}
       <p className="max-w-md">{tileHostLoadMessage(props.load, noun)}</p>
       {props.load.kind === "timed-out" || props.load.kind === "dead" ? (

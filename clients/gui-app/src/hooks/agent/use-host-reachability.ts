@@ -292,7 +292,9 @@ export function useHostReachability(hostId: string): HostReachability {
  * once, rather than each of the six tile families inventing its own fallback
  * phrase.
  */
-export function resolvedHostLabel(reachability: HostReachability): string | null {
+export function resolvedHostLabel(
+  reachability: HostReachability,
+): string | null {
   return reachability.status === "checking" ? null : reachability.hostLabel;
 }
 
@@ -320,7 +322,8 @@ export function resolvedHostLabel(reachability: HostReachability): string | null
  */
 export function useRemoteSessionPollReadiness(hostId: string): boolean {
   const subscribe = useCallback(
-    (onStoreChange: () => void) => subscribeRemoteSessionReadiness(onStoreChange),
+    (onStoreChange: () => void) =>
+      subscribeRemoteSessionReadiness(onStoreChange),
     [],
   );
   const getSnapshot = useCallback(

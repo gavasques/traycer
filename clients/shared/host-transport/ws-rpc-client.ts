@@ -997,7 +997,9 @@ function openSession(options: SessionOptions): Session {
    * by `onclose`, and both describe the same failed dial.
    */
   let dialOutcomeReported = false;
-  const reportDialOutcome = (outcome: "success" | "refusal" | "timeout"): void => {
+  const reportDialOutcome = (
+    outcome: "success" | "refusal" | "timeout",
+  ): void => {
     if (dialOutcomeReported) return;
     dialOutcomeReported = true;
     if (outcome === "success") {

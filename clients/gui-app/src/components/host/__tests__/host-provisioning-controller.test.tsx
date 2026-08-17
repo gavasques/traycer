@@ -281,7 +281,9 @@ describe("HostProvisioningController - staged wait and localHostState derivation
   });
 
   it("derives ready immediately when the initial snapshot has both URLs", async () => {
-    const { readLifecycle } = mountProvisioningLifecycle(makeHost(validSnapshot));
+    const { readLifecycle } = mountProvisioningLifecycle(
+      makeHost(validSnapshot),
+    );
 
     await waitFor(() => {
       expect(readLifecycle()?.localHostState).toBe("ready");
@@ -435,13 +437,12 @@ describe("HostProvisioningController - retry/force gestures and the busy-keep la
       { userId: "test-user", username: "Test User" },
       [],
     );
-    const convergeReady = vi.fn(
-      (): Promise<MutationOutcome<ConvergeReadyOk>> =>
-        Promise.resolve({
-          kind: "busy",
-          continuation: "retry-with-force",
-          message: "The running host has work in progress.",
-        }),
+    const convergeReady = vi.fn((): Promise<MutationOutcome<ConvergeReadyOk>> =>
+      Promise.resolve({
+        kind: "busy",
+        continuation: "retry-with-force",
+        message: "The running host has work in progress.",
+      }),
     );
     const host = new MockRunnerHost({
       signInUrl: "https://auth.traycer.invalid/sign-in",
@@ -500,9 +501,8 @@ describe("HostProvisioningController - removed-by-user latch", () => {
   // Kills: deleting `setRemoved(isRemovedOutcome)` in `markBusyKeep`, or the
   // removal-state cache mirror write beside it.
   it("a running:false convergeReady outcome latches removed and mirrors the removal-state cache; a running:true settle clears both", async () => {
-    const convergeReady = vi.fn(
-      (): Promise<MutationOutcome<ConvergeReadyOk>> =>
-        Promise.resolve({ kind: "ok", value: { running: false, version: null } }),
+    const convergeReady = vi.fn((): Promise<MutationOutcome<ConvergeReadyOk>> =>
+      Promise.resolve({ kind: "ok", value: { running: false, version: null } }),
     );
     const management = makeHostManagement(convergeReady);
     const host = new MockRunnerHost({
@@ -532,7 +532,10 @@ describe("HostProvisioningController - removed-by-user latch", () => {
     // clears the latch and its cache mirror - it must not survive an
     // unrelated success the way the busy-keep latch's own settle would.
     convergeReady.mockImplementationOnce(() =>
-      Promise.resolve({ kind: "ok", value: { running: true, version: "1.2.3" } }),
+      Promise.resolve({
+        kind: "ok",
+        value: { running: true, version: "1.2.3" },
+      }),
     );
     act(() => {
       readLifecycle()?.provisioning.retry();
@@ -550,9 +553,8 @@ describe("HostProvisioningController - removed-by-user latch", () => {
   // `reinstall()`, or calling `run()` before `clearRemoval()` resolves
   // instead of after.
   it("reinstall() optimistically drops removed, then clears the sentinel and re-runs convergeReady with force:false", async () => {
-    const convergeReady = vi.fn(
-      (): Promise<MutationOutcome<ConvergeReadyOk>> =>
-        Promise.resolve({ kind: "ok", value: { running: false, version: null } }),
+    const convergeReady = vi.fn((): Promise<MutationOutcome<ConvergeReadyOk>> =>
+      Promise.resolve({ kind: "ok", value: { running: false, version: null } }),
     );
     const baseManagement = makeHostManagement(convergeReady);
     let resolveClearRemoval: () => void = () => {
@@ -615,9 +617,8 @@ describe("HostProvisioningController - removed-by-user latch", () => {
   // failed clear - the arm most likely to rot silently, since the happy path
   // never exercises it.
   it("a rejected clearRemoval() restores removed and its cache mirror instead of leaving a resolved spinner", async () => {
-    const convergeReady = vi.fn(
-      (): Promise<MutationOutcome<ConvergeReadyOk>> =>
-        Promise.resolve({ kind: "ok", value: { running: false, version: null } }),
+    const convergeReady = vi.fn((): Promise<MutationOutcome<ConvergeReadyOk>> =>
+      Promise.resolve({ kind: "ok", value: { running: false, version: null } }),
     );
     const baseManagement = makeHostManagement(convergeReady);
     const clearRemovalRejection = new Error("clearRemoval failed");

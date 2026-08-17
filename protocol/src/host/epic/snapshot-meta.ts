@@ -23,7 +23,9 @@ import {
 
 const permissionRoleSchema = getRecordSchema(
   commonRecordRegistry,
-  "permission-role", "latest");
+  "permission-role",
+  "latest",
+);
 
 export const localRepoMappingEntrySchema = z.object({
   repoIdentifier: z.string(),

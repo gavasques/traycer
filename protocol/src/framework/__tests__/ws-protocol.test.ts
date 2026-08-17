@@ -456,9 +456,9 @@ describe("ws-protocol canonical Zod schemas", () => {
       const parsed = fatalErrorDetailsSchema.safeParse(details);
       expect(parsed.success).toBe(true);
       if (parsed.success) {
-        expect(
-          "someFutureFieldThisSchemaHasNeverHeardOf" in parsed.data,
-        ).toBe(false);
+        expect("someFutureFieldThisSchemaHasNeverHeardOf" in parsed.data).toBe(
+          false,
+        );
         expect(parsed.data).toEqual({
           code: "UNAUTHORIZED",
           reason: "Invalid token",
@@ -471,7 +471,10 @@ describe("ws-protocol canonical Zod schemas", () => {
 
   describe("hostRestartIntentSchema", () => {
     it("accepts a tombstone with a numeric `expiresAt`", () => {
-      const intent = { tombstoneId: "tombstone-1", expiresAt: 1_700_000_000_000 };
+      const intent = {
+        tombstoneId: "tombstone-1",
+        expiresAt: 1_700_000_000_000,
+      };
       const parsed = hostRestartIntentSchema.safeParse(intent);
       expect(parsed.success).toBe(true);
       if (parsed.success) {

@@ -176,7 +176,8 @@ describe("<HostSwitcher /> empty vs failed", () => {
             health: {
               state: "local-only",
               label: "Local only",
-              detail: "Not reachable from here — remote access needs a paid plan.",
+              detail:
+                "Not reachable from here — remote access needs a paid plan.",
               tone: "idle",
               live: false,
             },

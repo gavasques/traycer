@@ -230,7 +230,7 @@ function makeClient(options: {
     dialTimeoutMs: options.dialTimeoutMs,
     frameTimeoutMs: options.frameTimeoutMs,
     hostAttestationWindowMs: options.hostAttestationWindowMs ?? 0,
-      evidence: NO_TRANSPORT_EVIDENCE,
+    evidence: NO_TRANSPORT_EVIDENCE,
   });
   return new BoundWsRpcClient(inner, authorityForToken(options.authToken));
 }
@@ -248,7 +248,7 @@ async function expectPostOpenTimeoutRecovery(fatal: HostFrame): Promise<void> {
     dialTimeoutMs: 1_000,
     frameTimeoutMs: 1_000,
     hostAttestationWindowMs: 0,
-      evidence: NO_TRANSPORT_EVIDENCE,
+    evidence: NO_TRANSPORT_EVIDENCE,
   });
   const authCalls = { count: 0 };
   const authAware = createAuthAwareMessenger<typeof testRegistry>(raw, {
@@ -425,7 +425,6 @@ type RecordedEvidenceCall =
       readonly expiresAt: number | null;
     };
 
-
 /**
  * Records every call a transport makes into a `TransportEvidenceReporter`, in
  * arrival order, so a test can assert on sequences and per-method counts
@@ -452,7 +451,12 @@ class RecordingEvidence implements TransportEvidenceReporter {
     sessionId: string,
     transportKind: SelectionTransportKind,
   ): void {
-    this.calls.push({ method: "sessionLost", hostId, sessionId, transportKind });
+    this.calls.push({
+      method: "sessionLost",
+      hostId,
+      sessionId,
+      transportKind,
+    });
   }
 
   reportDialSuccess(
@@ -610,7 +614,7 @@ describe("WsRpcClient", () => {
       dialTimeoutMs: 1000,
       frameTimeoutMs: 1000,
       hostAttestationWindowMs: 0,
-          evidence: NO_TRANSPORT_EVIDENCE,
+      evidence: NO_TRANSPORT_EVIDENCE,
     });
     const lifetime = new AbortController();
     const pending = client.request(
@@ -815,7 +819,7 @@ describe("WsRpcClient", () => {
         dialTimeoutMs: 1000,
         frameTimeoutMs: 1000,
         hostAttestationWindowMs: 0,
-              evidence: NO_TRANSPORT_EVIDENCE,
+        evidence: NO_TRANSPORT_EVIDENCE,
       }),
       authorityForBearer(ctx.credentials),
     );
@@ -1316,7 +1320,7 @@ describe("WsRpcClient", () => {
         dialTimeoutMs: 1_000,
         frameTimeoutMs: options.frameTimeoutMs,
         hostAttestationWindowMs: options.hostAttestationWindowMs,
-              evidence: NO_TRANSPORT_EVIDENCE,
+        evidence: NO_TRANSPORT_EVIDENCE,
       });
       const authCalls = { count: 0 };
       const authAware = createAuthAwareMessenger<typeof testRegistry>(raw, {
@@ -2068,7 +2072,7 @@ describe("WsRpcClient", () => {
         dialTimeoutMs: 1_000,
         frameTimeoutMs: CLI_FRAME_TIMEOUT_MS,
         hostAttestationWindowMs: HOST_ATTESTATION_WINDOW_MS,
-              evidence: NO_TRANSPORT_EVIDENCE,
+        evidence: NO_TRANSPORT_EVIDENCE,
       });
       const pending = client.request(
         "host.echo",
@@ -2109,7 +2113,7 @@ describe("WsRpcClient", () => {
         dialTimeoutMs: 1_000,
         frameTimeoutMs: CLI_FRAME_TIMEOUT_MS,
         hostAttestationWindowMs: HOST_ATTESTATION_WINDOW_MS,
-              evidence: NO_TRANSPORT_EVIDENCE,
+        evidence: NO_TRANSPORT_EVIDENCE,
       });
       const pending = client.request(
         "host.echo",
@@ -2437,7 +2441,7 @@ describe("WsRpcClient", () => {
         dialTimeoutMs: 1000,
         frameTimeoutMs: 1000,
         hostAttestationWindowMs: 0,
-              evidence: NO_TRANSPORT_EVIDENCE,
+        evidence: NO_TRANSPORT_EVIDENCE,
       }),
       authorityForBearer(ctx.credentials),
     );
@@ -2527,7 +2531,7 @@ describe("WsRpcClient", () => {
         dialTimeoutMs: 1000,
         frameTimeoutMs: 1000,
         hostAttestationWindowMs: 0,
-              evidence: NO_TRANSPORT_EVIDENCE,
+        evidence: NO_TRANSPORT_EVIDENCE,
       }),
       authorityForBearer(ctx.credentials),
     );
@@ -2644,7 +2648,7 @@ describe("WsRpcClient", () => {
           dialTimeoutMs: 1000,
           frameTimeoutMs: 1000,
           hostAttestationWindowMs: 0,
-                  evidence: NO_TRANSPORT_EVIDENCE,
+          evidence: NO_TRANSPORT_EVIDENCE,
         }),
         authorityForBearer(ctx.credentials),
       );
@@ -2943,7 +2947,7 @@ describe("WsRpcClient", () => {
           dialTimeoutMs: 1000,
           frameTimeoutMs: 1000,
           hostAttestationWindowMs: 0,
-                  evidence: NO_TRANSPORT_EVIDENCE,
+          evidence: NO_TRANSPORT_EVIDENCE,
         }),
         authorityForBearer(ctx.credentials),
       );

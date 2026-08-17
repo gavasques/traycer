@@ -209,4 +209,3 @@ function isOriginUnavailable(input: {
   // this phase deletes, so keeping it would have made the move PERMANENT.
   return true;
 }
-

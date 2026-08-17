@@ -698,7 +698,6 @@ function provisioningErrorFallback(
   };
 }
 
-
 function useHostDirectoryEntries(
   directory: {
     readonly onChange: (

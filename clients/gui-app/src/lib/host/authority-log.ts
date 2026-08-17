@@ -25,7 +25,9 @@ export const selectionAuthorityLog: AuthorityLog = {
  * kernel's details are plain objects, which stringify to `[object Object]`
  * and would take the field's meaning with them.
  */
-function loggable(detail: Record<string, unknown>): Record<string, AppLogValue> {
+function loggable(
+  detail: Record<string, unknown>,
+): Record<string, AppLogValue> {
   const fields: Record<string, AppLogValue> = {};
   for (const [key, value] of Object.entries(detail)) {
     if (

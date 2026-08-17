@@ -537,7 +537,8 @@ export class SelectionEvidenceKernel implements TransportEvidenceReporter {
    * kernel's claim, not about authority state.
    */
   private installSnapshot(snapshot: SelectionAuthoritySnapshot): void {
-    const selectionIsFresher = this.appliedSelectionRevision < snapshot.revision;
+    const selectionIsFresher =
+      this.appliedSelectionRevision < snapshot.revision;
     const leasesAreFresher = this.appliedLeasesRevision < snapshot.revision;
     if (selectionIsFresher) this.appliedSelectionRevision = snapshot.revision;
     if (leasesAreFresher) this.appliedLeasesRevision = snapshot.revision;

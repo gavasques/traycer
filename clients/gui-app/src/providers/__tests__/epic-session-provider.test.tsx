@@ -31,12 +31,10 @@ import {
 // SEPARATE axis from `id`: the pair (attached: false, id: null) is bootstrap,
 // while (attached: true, id: null) is the real ∅. Defaults to attached so every
 // pre-existing case here reads exactly as it did before that axis existed.
-const hostState = vi.hoisted(
-  (): { id: string | null; attached: boolean } => ({
-    id: "host-a",
-    attached: true,
-  }),
-);
+const hostState = vi.hoisted((): { id: string | null; attached: boolean } => ({
+  id: "host-a",
+  attached: true,
+}));
 const authServiceStub = vi.hoisted(() => ({
   revalidateCurrentContext: () => Promise.resolve({ kind: "valid" as const }),
 }));
@@ -822,7 +820,10 @@ describe("<EpicSessionProvider />", () => {
       rotateRow("host-b", "pubkey-b0");
 
       const body = () => (
-        <EpicSessionProvider epicId="epic-session-test" tabId="epic-session-test">
+        <EpicSessionProvider
+          epicId="epic-session-test"
+          tabId="epic-session-test"
+        >
           <HandleProbe onHandle={(handle) => seenHandles.push(handle)} />
           <PresentationProbe
             onPresentation={(presentation) => presentations.push(presentation)}

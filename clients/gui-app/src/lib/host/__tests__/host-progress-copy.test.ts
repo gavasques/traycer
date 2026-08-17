@@ -60,9 +60,7 @@ describe("hostProgressHeading", () => {
 describe("hostProgressShortLabel", () => {
   it("download stage wins regardless of kind", () => {
     expect(hostProgressShortLabel("ensure", "download")).toBe("Downloading…");
-    expect(hostProgressShortLabel("install", "download")).toBe(
-      "Downloading…",
-    );
+    expect(hostProgressShortLabel("install", "download")).toBe("Downloading…");
   });
 
   it("ensure (non-download) is 'Setting up…'; every other kind is 'Working…'", () => {

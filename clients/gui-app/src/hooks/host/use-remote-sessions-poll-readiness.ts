@@ -31,7 +31,8 @@ export function useRemoteSessionsPollReadiness(
   // stamp below is unchanged, so a wake that moved no listed host still
   // re-renders nothing.
   const subscribe = useCallback(
-    (onStoreChange: () => void) => subscribeRemoteSessionReadiness(onStoreChange),
+    (onStoreChange: () => void) =>
+      subscribeRemoteSessionReadiness(onStoreChange),
     [],
   );
   const getSnapshot = useCallback(

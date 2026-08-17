@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { hostRpcRegistry } from "@traycer/protocol/host/registry";
-import {
-  epicGetTaskContextsUpgradeV10ToV11,
-} from "@traycer/protocol/host/epic/contracts";
+import { epicGetTaskContextsUpgradeV10ToV11 } from "@traycer/protocol/host/epic/contracts";
 import {
   GET_TASK_CONTEXTS_MAX_IDS,
   getTaskContextsRequestSchema,

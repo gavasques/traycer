@@ -133,7 +133,11 @@ export function deriveHostPresence(
       return { reading: "local-only", label: "Local only", showLiveDot: false };
     case "unknown":
       // The cloud could not read liveness. Blind is not the same as absent.
-      return { reading: "unknown", label: "Status unknown", showLiveDot: false };
+      return {
+        reading: "unknown",
+        label: "Status unknown",
+        showLiveDot: false,
+      };
     case "offline":
       return { reading: "offline", label: "Offline", showLiveDot: false };
   }

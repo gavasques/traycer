@@ -19,7 +19,9 @@ import { toast } from "sonner";
 
 const NO_SUB: SelectionSubscription = { dispose: () => undefined };
 
-function fakeAuthority(activate: (hostId: string) => Promise<ActivateResult>): SelectionAuthorityClient {
+function fakeAuthority(
+  activate: (hostId: string) => Promise<ActivateResult>,
+): SelectionAuthorityClient {
   return {
     attach: () => Promise.resolve({ ok: false, kind: "superseded" }),
     reportEvidence: () => Promise.resolve(),
@@ -37,7 +39,9 @@ afterEach(() => {
 describe("requestActivate (Settings ▸ Activate, the only preferred-host write path)", () => {
   it("ok:true tracks exactly one HostSelected, following the option's host_kind, and toasts nothing", async () => {
     const trackSpy = vi.spyOn(Analytics.getInstance(), "track");
-    const activate = vi.fn((): Promise<ActivateResult> => Promise.resolve({ ok: true }));
+    const activate = vi.fn((): Promise<ActivateResult> =>
+      Promise.resolve({ ok: true }),
+    );
     const localOption = hostScopeOptionFixture({
       hostId: "local-1",
       isLocalMachine: true,
@@ -60,7 +64,9 @@ describe("requestActivate (Settings ▸ Activate, the only preferred-host write 
 
   it("ok:true reports host_kind: remote for a non-local option", async () => {
     const trackSpy = vi.spyOn(Analytics.getInstance(), "track");
-    const activate = vi.fn((): Promise<ActivateResult> => Promise.resolve({ ok: true }));
+    const activate = vi.fn((): Promise<ActivateResult> =>
+      Promise.resolve({ ok: true }),
+    );
     const remoteOption = hostScopeOptionFixture({
       hostId: "remote-1",
       isLocalMachine: false,
@@ -76,10 +82,13 @@ describe("requestActivate (Settings ▸ Activate, the only preferred-host write 
 
   it("reason unknown-host: no analytics, toasts that the host is no longer registered", async () => {
     const trackSpy = vi.spyOn(Analytics.getInstance(), "track");
-    const activate = vi.fn(
-      (): Promise<ActivateResult> => Promise.resolve({ ok: false, reason: "unknown-host" }),
+    const activate = vi.fn((): Promise<ActivateResult> =>
+      Promise.resolve({ ok: false, reason: "unknown-host" }),
     );
-    const option = hostScopeOptionFixture({ hostId: "gone-1", name: "Gone Machine" });
+    const option = hostScopeOptionFixture({
+      hostId: "gone-1",
+      name: "Gone Machine",
+    });
 
     await requestActivate(fakeAuthority(activate), "gone-1", option);
 
@@ -92,10 +101,13 @@ describe("requestActivate (Settings ▸ Activate, the only preferred-host write 
 
   it("reason incompatible: no analytics, toasts that the host needs an update", async () => {
     const trackSpy = vi.spyOn(Analytics.getInstance(), "track");
-    const activate = vi.fn(
-      (): Promise<ActivateResult> => Promise.resolve({ ok: false, reason: "incompatible" }),
+    const activate = vi.fn((): Promise<ActivateResult> =>
+      Promise.resolve({ ok: false, reason: "incompatible" }),
     );
-    const option = hostScopeOptionFixture({ hostId: "old-1", name: "Old Machine" });
+    const option = hostScopeOptionFixture({
+      hostId: "old-1",
+      name: "Old Machine",
+    });
 
     await requestActivate(fakeAuthority(activate), "old-1", option);
 
@@ -108,10 +120,13 @@ describe("requestActivate (Settings ▸ Activate, the only preferred-host write 
 
   it("reason not-attached: no analytics, toasts the reload-and-retry copy (option-independent)", async () => {
     const trackSpy = vi.spyOn(Analytics.getInstance(), "track");
-    const activate = vi.fn(
-      (): Promise<ActivateResult> => Promise.resolve({ ok: false, reason: "not-attached" }),
+    const activate = vi.fn((): Promise<ActivateResult> =>
+      Promise.resolve({ ok: false, reason: "not-attached" }),
     );
-    const option = hostScopeOptionFixture({ hostId: "any-1", name: "Any Machine" });
+    const option = hostScopeOptionFixture({
+      hostId: "any-1",
+      name: "Any Machine",
+    });
 
     await requestActivate(fakeAuthority(activate), "any-1", option);
 
@@ -132,11 +147,13 @@ describe("requestActivate (Settings ▸ Activate, the only preferred-host write 
     // Asserting the literal string (not just "no host name substring")
     // catches a future edit that starts interpolating the label in here.
     const trackSpy = vi.spyOn(Analytics.getInstance(), "track");
-    const activate = vi.fn(
-      (): Promise<ActivateResult> =>
-        Promise.resolve({ ok: false, reason: "persist-failed" }),
+    const activate = vi.fn((): Promise<ActivateResult> =>
+      Promise.resolve({ ok: false, reason: "persist-failed" }),
     );
-    const option = hostScopeOptionFixture({ hostId: "any-1", name: "Any Machine" });
+    const option = hostScopeOptionFixture({
+      hostId: "any-1",
+      name: "Any Machine",
+    });
 
     await requestActivate(fakeAuthority(activate), "any-1", option);
 
@@ -149,31 +166,42 @@ describe("requestActivate (Settings ▸ Activate, the only preferred-host write 
 
   it("reason unrecognized: no analytics, toasts the generic couldn't-activate copy naming the host", async () => {
     const trackSpy = vi.spyOn(Analytics.getInstance(), "track");
-    const activate = vi.fn(
-      (): Promise<ActivateResult> => Promise.resolve({ ok: false, reason: "unrecognized" }),
+    const activate = vi.fn((): Promise<ActivateResult> =>
+      Promise.resolve({ ok: false, reason: "unrecognized" }),
     );
-    const option = hostScopeOptionFixture({ hostId: "weird-1", name: "Weird Machine" });
+    const option = hostScopeOptionFixture({
+      hostId: "weird-1",
+      name: "Weird Machine",
+    });
 
     await requestActivate(fakeAuthority(activate), "weird-1", option);
 
     expect(trackSpy).not.toHaveBeenCalled();
     expect(toast.error).toHaveBeenCalledTimes(1);
-    expect(toast.error).toHaveBeenCalledWith("Couldn't activate Weird Machine.");
+    expect(toast.error).toHaveBeenCalledWith(
+      "Couldn't activate Weird Machine.",
+    );
   });
 
   it("a null option still produces sensible copy ('That host' / 'remote')", async () => {
     const trackSpy = vi.spyOn(Analytics.getInstance(), "track");
-    const okActivate = vi.fn((): Promise<ActivateResult> => Promise.resolve({ ok: true }));
+    const okActivate = vi.fn((): Promise<ActivateResult> =>
+      Promise.resolve({ ok: true }),
+    );
     await requestActivate(fakeAuthority(okActivate), "unknown-to-panel", null);
     expect(trackSpy).toHaveBeenCalledWith(AnalyticsEvent.HostSelected, {
       source: "direct_ui",
       host_kind: "remote",
     });
 
-    const refusingActivate = vi.fn(
-      (): Promise<ActivateResult> => Promise.resolve({ ok: false, reason: "unknown-host" }),
+    const refusingActivate = vi.fn((): Promise<ActivateResult> =>
+      Promise.resolve({ ok: false, reason: "unknown-host" }),
     );
-    await requestActivate(fakeAuthority(refusingActivate), "unknown-to-panel", null);
+    await requestActivate(
+      fakeAuthority(refusingActivate),
+      "unknown-to-panel",
+      null,
+    );
     expect(toast.error).toHaveBeenCalledWith(
       "That host is no longer registered to this account.",
     );
@@ -181,10 +209,13 @@ describe("requestActivate (Settings ▸ Activate, the only preferred-host write 
 
   it("a REJECTING activate call is caught: no analytics, generic toast, does not throw", async () => {
     const trackSpy = vi.spyOn(Analytics.getInstance(), "track");
-    const activate = vi.fn(
-      (): Promise<ActivateResult> => Promise.reject(new Error("transport exploded")),
+    const activate = vi.fn((): Promise<ActivateResult> =>
+      Promise.reject(new Error("transport exploded")),
     );
-    const option = hostScopeOptionFixture({ hostId: "boom-1", name: "Boom Machine" });
+    const option = hostScopeOptionFixture({
+      hostId: "boom-1",
+      name: "Boom Machine",
+    });
 
     await expect(
       requestActivate(fakeAuthority(activate), "boom-1", option),

@@ -480,7 +480,9 @@ interface LocalHostStartupState {
  * custom host that breaks the contract) this stays in `loading` rather than
  * invent a snapshot.
  */
-function useLocalHostStartupState(runnerHost: IRunnerHost): LocalHostStartupState {
+function useLocalHostStartupState(
+  runnerHost: IRunnerHost,
+): LocalHostStartupState {
   const [state, setState] = useState<LocalHostState | null>(null);
   const [stage, setStage] = useState<LocalHostStartupStage>("loading");
   const wasReadyRef = useRef(false);

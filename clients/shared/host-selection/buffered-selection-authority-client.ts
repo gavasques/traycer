@@ -474,9 +474,12 @@ export class RotatingSelectionAuthorityClient implements SelectionAuthorityClien
       .attach(callerContractVersion, liveSessions)
       .then((result) => {
         if (this.instance === delegate) return result;
-        this.log.debug("[selection-client] attach completed on a retired generation", {
-          ok: result.ok,
-        });
+        this.log.debug(
+          "[selection-client] attach completed on a retired generation",
+          {
+            ok: result.ok,
+          },
+        );
         const superseded: SelectionAttachResult = {
           ok: false,
           kind: "superseded",

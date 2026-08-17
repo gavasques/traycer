@@ -34,7 +34,8 @@ class FakeAuthorityClient implements SelectionAuthorityClient {
   attachImpl: (
     callerContractVersion: number,
     liveSessions: readonly LiveSessionAnnouncement[],
-  ) => Promise<SelectionAttachResult> = () => Promise.resolve({ ok: false, kind: "superseded" });
+  ) => Promise<SelectionAttachResult> = () =>
+    Promise.resolve({ ok: false, kind: "superseded" });
 
   private readonly selectionListeners = new Set<
     (event: SelectionRevisioned<SelectionChange>) => void
@@ -42,7 +43,9 @@ class FakeAuthorityClient implements SelectionAuthorityClient {
   private readonly leaseListeners = new Set<
     (event: SelectionRevisioned<readonly HostLeaseSnapshot[]>) => void
   >();
-  private readonly reattachListeners = new Set<(event: SelectionReattachRequired) => void>();
+  private readonly reattachListeners = new Set<
+    (event: SelectionReattachRequired) => void
+  >();
 
   attach(
     callerContractVersion: number,
@@ -72,7 +75,9 @@ class FakeAuthorityClient implements SelectionAuthorityClient {
   }
 
   onLeasesChanged(
-    listener: (event: SelectionRevisioned<readonly HostLeaseSnapshot[]>) => void,
+    listener: (
+      event: SelectionRevisioned<readonly HostLeaseSnapshot[]>,
+    ) => void,
   ): SelectionSubscription {
     this.callOrder.push("onLeasesChanged");
     this.leaseListeners.add(listener);
@@ -118,7 +123,11 @@ function okAttach(revision: number): SelectionAttachResult {
 describe("SelectionEvidenceKernel - start choreography", () => {
   it("registers the three listeners before calling attach", () => {
     const client = new FakeAuthorityClient();
-    const kernel = new SelectionEvidenceKernel({ client, now: () => 0, log: silentAuthorityLog });
+    const kernel = new SelectionEvidenceKernel({
+      client,
+      now: () => 0,
+      log: silentAuthorityLog,
+    });
     void kernel.start();
     expect(client.callOrder.slice(0, 4)).toEqual([
       "onSelectionChanged",
@@ -131,7 +140,11 @@ describe("SelectionEvidenceKernel - start choreography", () => {
   it("sessions established before start() are carried in the attach inventory", async () => {
     const client = new FakeAuthorityClient();
     client.attachImpl = () => Promise.resolve(okAttach(0));
-    const kernel = new SelectionEvidenceKernel({ client, now: () => 0, log: silentAuthorityLog });
+    const kernel = new SelectionEvidenceKernel({
+      client,
+      now: () => 0,
+      log: silentAuthorityLog,
+    });
 
     kernel.sessionEstablished("H", "s1", "local-ws");
     await kernel.start();
@@ -146,11 +159,17 @@ describe("SelectionEvidenceKernel - session evidence", () => {
   it("sessionEstablished/sessionLost update the inventory and report the matching evidence", async () => {
     const client = new FakeAuthorityClient();
     client.attachImpl = () => Promise.resolve(okAttach(0));
-    const kernel = new SelectionEvidenceKernel({ client, now: () => 0, log: silentAuthorityLog });
+    const kernel = new SelectionEvidenceKernel({
+      client,
+      now: () => 0,
+      log: silentAuthorityLog,
+    });
     await kernel.start();
 
     kernel.sessionEstablished("H", "s1", "local-ws");
-    expect(client.reportEvidenceCalls[client.reportEvidenceCalls.length - 1]).toEqual({
+    expect(
+      client.reportEvidenceCalls[client.reportEvidenceCalls.length - 1],
+    ).toEqual({
       kind: "session",
       hostId: "H",
       sessionId: "s1",
@@ -161,7 +180,9 @@ describe("SelectionEvidenceKernel - session evidence", () => {
     expect(kernel.localSessionCount("H")).toBe(1);
 
     kernel.sessionLost("H", "s1", "local-ws");
-    expect(client.reportEvidenceCalls[client.reportEvidenceCalls.length - 1]).toEqual({
+    expect(
+      client.reportEvidenceCalls[client.reportEvidenceCalls.length - 1],
+    ).toEqual({
       kind: "session",
       hostId: "H",
       sessionId: "s1",
@@ -177,7 +198,11 @@ describe("SelectionEvidenceKernel - dial evidence shapes", () => {
   it("each reportDial* produces the exact contract shape; confirmed-refusal only comes from reportDialRefusal", async () => {
     const client = new FakeAuthorityClient();
     client.attachImpl = () => Promise.resolve(okAttach(0));
-    const kernel = new SelectionEvidenceKernel({ client, now: () => 42, log: silentAuthorityLog });
+    const kernel = new SelectionEvidenceKernel({
+      client,
+      now: () => 42,
+      log: silentAuthorityLog,
+    });
     await kernel.start();
     client.reportEvidenceCalls.length = 0;
 
@@ -188,8 +213,22 @@ describe("SelectionEvidenceKernel - dial evidence shapes", () => {
     kernel.reportDialRefusal("H", "a5", "local-ws", null);
 
     expect(client.reportEvidenceCalls).toEqual([
-      { kind: "dial", hostId: "H", attemptId: "a1", outcome: "success", transportKind: "local-ws", at: 42 },
-      { kind: "dial", hostId: "H", attemptId: "a2", outcome: "timeout", transportKind: "local-ws", at: 42 },
+      {
+        kind: "dial",
+        hostId: "H",
+        attemptId: "a1",
+        outcome: "success",
+        transportKind: "local-ws",
+        at: 42,
+      },
+      {
+        kind: "dial",
+        hostId: "H",
+        attemptId: "a2",
+        outcome: "timeout",
+        transportKind: "local-ws",
+        at: 42,
+      },
       {
         kind: "dial",
         hostId: "H",
@@ -227,7 +266,11 @@ describe("SelectionEvidenceKernel - compat evidence", () => {
   it("reportCompatVerdict emits the compatible arm with incompatibility null and the incompatible arm with its detail", async () => {
     const client = new FakeAuthorityClient();
     client.attachImpl = () => Promise.resolve(okAttach(0));
-    const kernel = new SelectionEvidenceKernel({ client, now: () => 7, log: silentAuthorityLog });
+    const kernel = new SelectionEvidenceKernel({
+      client,
+      now: () => 7,
+      log: silentAuthorityLog,
+    });
     await kernel.start();
     client.reportEvidenceCalls.length = 0;
 
@@ -279,7 +322,11 @@ describe("SelectionEvidenceKernel - reattach", () => {
   it("re-attaches carrying the current inventory on reattachRequired", async () => {
     const client = new FakeAuthorityClient();
     client.attachImpl = () => Promise.resolve(okAttach(0));
-    const kernel = new SelectionEvidenceKernel({ client, now: () => 0, log: silentAuthorityLog });
+    const kernel = new SelectionEvidenceKernel({
+      client,
+      now: () => 0,
+      log: silentAuthorityLog,
+    });
     await kernel.start();
 
     kernel.sessionEstablished("H", "s1", "local-ws");
@@ -288,9 +335,9 @@ describe("SelectionEvidenceKernel - reattach", () => {
     client.emitReattach({ revision: 1 });
 
     expect(client.attachCalls.length).toBe(attachCallsBefore + 1);
-    expect(client.attachCalls[client.attachCalls.length - 1]?.liveSessions).toEqual([
-      { hostId: "H", sessionId: "s1", transportKind: "local-ws" },
-    ]);
+    expect(
+      client.attachCalls[client.attachCalls.length - 1]?.liveSessions,
+    ).toEqual([{ hostId: "H", sessionId: "s1", transportKind: "local-ws" }]);
   });
 });
 
@@ -298,7 +345,11 @@ describe("SelectionEvidenceKernel - render surface", () => {
   it("selection and leases events update snapshot() and fire onChange", async () => {
     const client = new FakeAuthorityClient();
     client.attachImpl = () => Promise.resolve(okAttach(0));
-    const kernel = new SelectionEvidenceKernel({ client, now: () => 0, log: silentAuthorityLog });
+    const kernel = new SelectionEvidenceKernel({
+      client,
+      now: () => 0,
+      log: silentAuthorityLog,
+    });
     const changes: SelectionKernelSnapshot[] = [];
     kernel.onChange((snapshot) => changes.push(snapshot));
     await kernel.start();
@@ -317,16 +368,26 @@ describe("SelectionEvidenceKernel - render surface", () => {
     expect(kernel.snapshot().targetHostId).toBe("H");
     expect(kernel.snapshot().effectiveHostId).toBe("H");
 
-    client.emitLeases({ revision: 2, change: [{ hostId: "H", status: "ready", dead: null }] });
-    expect(kernel.snapshot().leases).toEqual([{ hostId: "H", status: "ready", dead: null }]);
+    client.emitLeases({
+      revision: 2,
+      change: [{ hostId: "H", status: "ready", dead: null }],
+    });
+    expect(kernel.snapshot().leases).toEqual([
+      { hostId: "H", status: "ready", dead: null },
+    ]);
 
     expect(changes.length).toBeGreaterThan(0);
   });
 
   it("a failed attach leaves attached:false and does not retry", async () => {
     const client = new FakeAuthorityClient();
-    client.attachImpl = () => Promise.resolve({ ok: false, kind: "superseded" });
-    const kernel = new SelectionEvidenceKernel({ client, now: () => 0, log: silentAuthorityLog });
+    client.attachImpl = () =>
+      Promise.resolve({ ok: false, kind: "superseded" });
+    const kernel = new SelectionEvidenceKernel({
+      client,
+      now: () => 0,
+      log: silentAuthorityLog,
+    });
     await kernel.start();
 
     expect(kernel.snapshot().attached).toBe(false);
@@ -337,7 +398,10 @@ describe("SelectionEvidenceKernel - render surface", () => {
 // --------------------------------------------------- P1.1 fixup round (cold
 // review blockers C1-C3).
 
-function okAttachWithTarget(revision: number, targetHostId: string): SelectionAttachResult {
+function okAttachWithTarget(
+  revision: number,
+  targetHostId: string,
+): SelectionAttachResult {
   return {
     ok: true,
     incarnationId: `inc-${targetHostId}`,
@@ -355,18 +419,25 @@ function okAttachWithTarget(revision: number, targetHostId: string): SelectionAt
 describe("SelectionEvidenceKernel - C1: applied-revision ordering", () => {
   it("a leases event at R+1 delivered before the pending attach resolves with snapshot R is never overwritten by R", async () => {
     const client = new FakeAuthorityClient();
-    let resolveAttach: (result: SelectionAttachResult) => void = () => undefined;
+    let resolveAttach: (result: SelectionAttachResult) => void = () =>
+      undefined;
     client.attachImpl = () =>
       new Promise<SelectionAttachResult>((resolve) => {
         resolveAttach = resolve;
       });
-    const kernel = new SelectionEvidenceKernel({ client, now: () => 0, log: silentAuthorityLog });
+    const kernel = new SelectionEvidenceKernel({
+      client,
+      now: () => 0,
+      log: silentAuthorityLog,
+    });
 
     const startPromise = kernel.start();
 
     // Exactly the real order: the client replays buffered events before its
     // attach promise settles.
-    const laterLeases: readonly HostLeaseSnapshot[] = [{ hostId: "H", status: "ready", dead: null }];
+    const laterLeases: readonly HostLeaseSnapshot[] = [
+      { hostId: "H", status: "ready", dead: null },
+    ];
     client.emitLeases({ revision: 6, change: laterLeases });
 
     resolveAttach({
@@ -396,7 +467,11 @@ describe("SelectionEvidenceKernel - C2: only the latest attach attempt may publi
       new Promise<SelectionAttachResult>((resolve) => {
         resolvers.push(resolve);
       });
-    const kernel = new SelectionEvidenceKernel({ client, now: () => 0, log: silentAuthorityLog });
+    const kernel = new SelectionEvidenceKernel({
+      client,
+      now: () => 0,
+      log: silentAuthorityLog,
+    });
 
     const startPromise = kernel.start(); // attempt #1, left pending
     client.emitReattach({ revision: 1 }); // starts attempt #2, also pending
@@ -445,12 +520,17 @@ function attachSnapshot(input: {
 describe("SelectionEvidenceKernel - closure round: per-slice snapshot merge", () => {
   it("a lease-only replay before the pending attach resolves still gets the snapshot's selection tuple", async () => {
     const client = new FakeAuthorityClient();
-    let resolveAttach: (result: SelectionAttachResult) => void = () => undefined;
+    let resolveAttach: (result: SelectionAttachResult) => void = () =>
+      undefined;
     client.attachImpl = () =>
       new Promise<SelectionAttachResult>((resolve) => {
         resolveAttach = resolve;
       });
-    const kernel = new SelectionEvidenceKernel({ client, now: () => 0, log: silentAuthorityLog });
+    const kernel = new SelectionEvidenceKernel({
+      client,
+      now: () => 0,
+      log: silentAuthorityLog,
+    });
 
     const startPromise = kernel.start();
 
@@ -491,12 +571,17 @@ describe("SelectionEvidenceKernel - closure round: per-slice snapshot merge", ()
 
   it("a selection-only replay before the pending attach resolves still gets the snapshot's leases", async () => {
     const client = new FakeAuthorityClient();
-    let resolveAttach: (result: SelectionAttachResult) => void = () => undefined;
+    let resolveAttach: (result: SelectionAttachResult) => void = () =>
+      undefined;
     client.attachImpl = () =>
       new Promise<SelectionAttachResult>((resolve) => {
         resolveAttach = resolve;
       });
-    const kernel = new SelectionEvidenceKernel({ client, now: () => 0, log: silentAuthorityLog });
+    const kernel = new SelectionEvidenceKernel({
+      client,
+      now: () => 0,
+      log: silentAuthorityLog,
+    });
 
     const startPromise = kernel.start();
 
@@ -546,7 +631,11 @@ describe("SelectionEvidenceKernel - closure round: per-slice snapshot merge", ()
       new Promise<SelectionAttachResult>((resolve) => {
         resolvers.push(resolve);
       });
-    const kernel = new SelectionEvidenceKernel({ client, now: () => 0, log: silentAuthorityLog });
+    const kernel = new SelectionEvidenceKernel({
+      client,
+      now: () => 0,
+      log: silentAuthorityLog,
+    });
 
     const startPromise = kernel.start();
     expect(resolvers.length).toBe(1);
@@ -608,12 +697,17 @@ describe("SelectionEvidenceKernel - closure round: per-slice snapshot merge", ()
 describe("SelectionEvidenceKernel - C3: nothing publishes after dispose", () => {
   it("an attach that resolves ok:true after dispose triggers no onChange notification and leaves the snapshot detached", async () => {
     const client = new FakeAuthorityClient();
-    let resolveAttach: (result: SelectionAttachResult) => void = () => undefined;
+    let resolveAttach: (result: SelectionAttachResult) => void = () =>
+      undefined;
     client.attachImpl = () =>
       new Promise<SelectionAttachResult>((resolve) => {
         resolveAttach = resolve;
       });
-    const kernel = new SelectionEvidenceKernel({ client, now: () => 0, log: silentAuthorityLog });
+    const kernel = new SelectionEvidenceKernel({
+      client,
+      now: () => 0,
+      log: silentAuthorityLog,
+    });
     const changes: SelectionKernelSnapshot[] = [];
     kernel.onChange((snapshot) => changes.push(snapshot));
 

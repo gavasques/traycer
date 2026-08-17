@@ -90,7 +90,10 @@ export function useBoundedHostLoad(
     // window's kernel may not have attached), which reads as connecting -
     // bounded by the same deadline, since invariant 6 does not exempt a
     // bridge that never attaches.
-    if (lease !== null && (lease.status === "ready" || lease.status === "degraded")) {
+    if (
+      lease !== null &&
+      (lease.status === "ready" || lease.status === "degraded")
+    ) {
       return { kind: "loading", hostLabel };
     }
     return { kind: "connecting", hostLabel };

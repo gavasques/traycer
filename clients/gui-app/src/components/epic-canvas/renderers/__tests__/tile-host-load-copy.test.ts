@@ -11,7 +11,11 @@ const DEAD_REASONS: readonly HostLeaseDeadState[] = [
   { reason: "removed" },
   {
     reason: "incompatible",
-    detail: { code: "protocol-major-behind", hostVersion: null, minSupportedVersion: null },
+    detail: {
+      code: "protocol-major-behind",
+      hostVersion: null,
+      minSupportedVersion: null,
+    },
   },
 ];
 

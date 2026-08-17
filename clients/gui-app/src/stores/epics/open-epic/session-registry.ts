@@ -171,11 +171,7 @@ export class OpenEpicSessionRegistry {
     if (previous === undefined || previous.handle !== previousHandle) {
       return false;
     }
-    const next = this.createEntry(
-      epicId,
-      nextHandle,
-      previous.mountedRefs,
-    );
+    const next = this.createEntry(epicId, nextHandle, previous.mountedRefs);
     this.entries.set(epicId, next);
     this.disposeEntry(previous, false);
     this.prune();

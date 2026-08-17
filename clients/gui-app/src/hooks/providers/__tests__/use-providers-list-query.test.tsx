@@ -238,9 +238,7 @@ describe("useProvidersListForClient table cadence", () => {
     // special-cases that property to a fresh closure over the spine's method
     // on every access, so a spy installed on the requester itself is never
     // consulted - the spine's method is the one actually invoked underneath.
-    const originalList = fixture.spine.requestForWithSignal.bind(
-      fixture.spine,
-    );
+    const originalList = fixture.spine.requestForWithSignal.bind(fixture.spine);
     vi.spyOn(fixture.spine, "requestForWithSignal").mockImplementation(
       async (entry, method, params, signal) => {
         if (method === "providers.list") {

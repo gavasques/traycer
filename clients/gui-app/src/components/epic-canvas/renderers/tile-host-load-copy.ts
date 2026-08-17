@@ -11,12 +11,7 @@ import type { BoundedHostLoad } from "@/hooks/host/use-bounded-host-load";
  */
 
 export type TileLoadSubject =
-  | "agent"
-  | "terminal"
-  | "shell-output"
-  | "diff"
-  | "pull-request"
-  | "document";
+  "agent" | "terminal" | "shell-output" | "diff" | "pull-request" | "document";
 
 /**
  * The noun each subject is called in copy. A table rather than the union

@@ -18,8 +18,10 @@ import {
 // directly, the same test-double strategy `active-remote-sessions.test.ts`
 // uses for the cache's ref-count/linger lifecycle.
 
-interface FakeSession
-  extends IRemoteSession<VersionedRpcRegistry, VersionedStreamRpcRegistry> {
+interface FakeSession extends IRemoteSession<
+  VersionedRpcRegistry,
+  VersionedStreamRpcRegistry
+> {
   readonly closeCalls: number;
   ready: boolean;
   closedUnderneath: boolean;
@@ -131,8 +133,14 @@ describe("subscribeRemoteSessionReadiness — which transitions notify", () => {
 
   it("fires on supersession — a NEW identity's acquire retiring an old FREE entry for the same host", async () => {
     const base = freshIdentity();
-    const identityKeyA: RemoteSessionIdentity = { ...base, hostPublicKey: "pubkey-a" };
-    const identityKeyB: RemoteSessionIdentity = { ...base, hostPublicKey: "pubkey-b" };
+    const identityKeyA: RemoteSessionIdentity = {
+      ...base,
+      hostPublicKey: "pubkey-a",
+    };
+    const identityKeyB: RemoteSessionIdentity = {
+      ...base,
+      hostPublicKey: "pubkey-b",
+    };
     const staleSession = fakeSession();
     acquireRemoteSession(identityKeyA, () => staleSession).close();
 

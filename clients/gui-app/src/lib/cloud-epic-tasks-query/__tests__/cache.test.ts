@@ -377,9 +377,8 @@ function taskTitleAt(
   queryKey: readonly unknown[],
   taskId: string,
 ): string | undefined {
-  const resolution = queryClient.getQueryData<GetTaskContextsResponse>(
-    queryKey,
-  )?.tasks[taskId];
+  const resolution =
+    queryClient.getQueryData<GetTaskContextsResponse>(queryKey)?.tasks[taskId];
   return isFoundTaskContext(resolution)
     ? resolution.task.epic?.light?.title
     : undefined;
@@ -390,8 +389,7 @@ function taskPinnedAt(
   queryKey: readonly unknown[],
   taskId: string,
 ): boolean | undefined {
-  const resolution = queryClient.getQueryData<GetTaskContextsResponse>(
-    queryKey,
-  )?.tasks[taskId];
+  const resolution =
+    queryClient.getQueryData<GetTaskContextsResponse>(queryKey)?.tasks[taskId];
   return isFoundTaskContext(resolution) ? resolution.task.pinned : undefined;
 }

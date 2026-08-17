@@ -849,7 +849,9 @@ function GitBundleDiffTileBody(props: GitBundleDiffTileBodyProps): ReactNode {
         subject="diff"
         onRetry={null}
         testId={`git-diff-tile-load-${props.node.id}`}
-        fallback={<DiffBundleLoadingSkeleton mode={diffViewerPreferences.mode} />}
+        fallback={
+          <DiffBundleLoadingSkeleton mode={diffViewerPreferences.mode} />
+        }
       />
     );
   }

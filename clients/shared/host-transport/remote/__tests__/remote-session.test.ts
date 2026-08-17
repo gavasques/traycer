@@ -610,7 +610,6 @@ type RecordedEvidenceCall =
       readonly expiresAt: number | null;
     };
 
-
 /**
  * Records every call a transport makes into a `TransportEvidenceReporter`, in
  * arrival order, so a test can assert on sequences and per-method counts
@@ -637,7 +636,12 @@ class RecordingEvidence implements TransportEvidenceReporter {
     sessionId: string,
     transportKind: SelectionTransportKind,
   ): void {
-    this.calls.push({ method: "sessionLost", hostId, sessionId, transportKind });
+    this.calls.push({
+      method: "sessionLost",
+      hostId,
+      sessionId,
+      transportKind,
+    });
   }
 
   reportDialSuccess(

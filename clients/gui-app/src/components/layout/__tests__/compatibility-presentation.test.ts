@@ -171,7 +171,11 @@ describe("compatibilityPresentation — every arm of the probe verdict", () => {
         status: "compatible",
         retry: () => undefined,
         degraded: false,
-        hostStatus: { busy: false, busySessionCount: null, hostVersion: "1.0.0" },
+        hostStatus: {
+          busy: false,
+          busySessionCount: null,
+          hostVersion: "1.0.0",
+        },
       },
       failed: {
         status: "failed",
@@ -205,7 +209,11 @@ describe("compatibilityPresentation — every arm of the probe verdict", () => {
         error: rpcError("nope"),
         unreachable: true,
       },
-      { status: "incompatible", retry: () => undefined, error: rpcError("nope") },
+      {
+        status: "incompatible",
+        retry: () => undefined,
+        error: rpcError("nope"),
+      },
     ];
 
     for (const compatibility of withoutAnswer) {

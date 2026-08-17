@@ -386,7 +386,8 @@ function registryHealth(options: DeriveHostHealthOptions): HostHealth {
       return {
         state: "reported-reachable",
         label: "Reported reachable",
-        detail: "Your account last heard from this host. Nothing has connected to it from here yet.",
+        detail:
+          "Your account last heard from this host. Nothing has connected to it from here yet.",
         tone: HOST_HEALTH_TONE["reported-reachable"],
         live: false,
       };

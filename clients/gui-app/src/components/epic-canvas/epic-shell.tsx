@@ -103,7 +103,9 @@ function EpicShellSessionBody(
         }
         canvas={
           <div
-            className={props.readOnly ? "pointer-events-none select-none" : undefined}
+            className={
+              props.readOnly ? "pointer-events-none select-none" : undefined
+            }
             data-epic-repoint-read-only={props.readOnly ? "true" : "false"}
             inert={props.readOnly}
           >

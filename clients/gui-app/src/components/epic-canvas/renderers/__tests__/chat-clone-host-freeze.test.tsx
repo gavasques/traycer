@@ -53,9 +53,11 @@ vi.mock("@/hooks/host/use-host-client-for-host-id", () => ({
 }));
 
 vi.mock("@/hooks/epic/use-epic-chat-mutations", () => ({
-  useEpicCreateChatForHostClient: (client: {
-    readonly getActiveHostId: () => string;
-  } | null) => {
+  useEpicCreateChatForHostClient: (
+    client: {
+      readonly getActiveHostId: () => string;
+    } | null,
+  ) => {
     mocks.boundCreateClients.push(client?.getActiveHostId() ?? null);
     return { mutate: vi.fn() };
   },

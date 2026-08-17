@@ -71,16 +71,18 @@ describe("<WindowHostModal />", () => {
     renderModal(
       baseProps({ cause: "cold-start", variant: { kind: "offline" } }),
     );
-    const coldStartTitle = screen.getByTestId("window-host-modal-title")
-      .textContent;
+    const coldStartTitle = screen.getByTestId(
+      "window-host-modal-title",
+    ).textContent;
 
     cleanup();
 
     renderModal(
       baseProps({ cause: "no-usable-host", variant: { kind: "offline" } }),
     );
-    const noUsableHostTitle = screen.getByTestId("window-host-modal-title")
-      .textContent;
+    const noUsableHostTitle = screen.getByTestId(
+      "window-host-modal-title",
+    ).textContent;
 
     expect(coldStartTitle).not.toBe(noUsableHostTitle);
   });

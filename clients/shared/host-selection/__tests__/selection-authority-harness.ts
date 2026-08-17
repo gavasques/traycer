@@ -90,7 +90,11 @@ export function createFakeAuthorityClock(startAt: number): FakeAuthorityClock {
 
 /** One emitted event, flattened for ordering/revision assertions. */
 export type RecordedEngineEvent =
-  | { readonly kind: "selection"; readonly revision: number; readonly change: SelectionChange }
+  | {
+      readonly kind: "selection";
+      readonly revision: number;
+      readonly change: SelectionChange;
+    }
   | {
       readonly kind: "leases";
       readonly revision: number;
@@ -105,15 +109,13 @@ export function recordEngineEvents(engine: SelectionAuthorityEngine): {
 } {
   const events: RecordedEngineEvent[] = [];
   const subscriptions: SelectionSubscription[] = [
-    engine.onSelectionChanged(
-      (event: SelectionRevisioned<SelectionChange>) => {
-        events.push({
-          kind: "selection",
-          revision: event.revision,
-          change: event.change,
-        });
-      },
-    ),
+    engine.onSelectionChanged((event: SelectionRevisioned<SelectionChange>) => {
+      events.push({
+        kind: "selection",
+        revision: event.revision,
+        change: event.change,
+      });
+    }),
     engine.onLeasesChanged(
       (event: SelectionRevisioned<readonly HostLeaseSnapshot[]>) => {
         events.push({

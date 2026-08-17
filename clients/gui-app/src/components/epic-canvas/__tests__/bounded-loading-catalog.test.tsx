@@ -260,6 +260,8 @@ describe("S2 — host-starting is bounded, and Clone arrives AT the deadline", (
       screen.getByTestId(`chat-dead-tile-${CHAT_ARTIFACT.id}`),
     ).not.toBeNull();
     // The affordance that was withheld forever.
-    expect(screen.queryByRole("button", { name: "Clone agent" })).not.toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Clone agent" }),
+    ).not.toBeNull();
   });
 });

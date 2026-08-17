@@ -149,12 +149,18 @@ describe("useHostReachability - starting-deadline basis", () => {
       "unreachable (host not listed)",
       { data: [entry({ hostId: "other" })], fetchStatus: "idle" },
     ],
-    ["checking (query in flight)", { data: undefined, fetchStatus: "fetching" }],
-  ] as const)("every other verdict keeps basis directory: %s", (_label, state) => {
-    list.value = state;
-    const { result } = renderHook(() => useHostReachability("host-a"));
-    expect(result.current.basis).toBe("directory");
-  });
+    [
+      "checking (query in flight)",
+      { data: undefined, fetchStatus: "fetching" },
+    ],
+  ] as const)(
+    "every other verdict keeps basis directory: %s",
+    (_label, state) => {
+      list.value = state;
+      const { result } = renderHook(() => useHostReachability("host-a"));
+      expect(result.current.basis).toBe("directory");
+    },
+  );
 
   // S4(a): `indeterminate` connectivity means the cloud could not read
   // liveness - we learned NOTHING - and the cost of guessing wrong is

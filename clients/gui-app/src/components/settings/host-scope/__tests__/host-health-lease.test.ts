@@ -340,7 +340,12 @@ describe("deriveHostHealth — precedence above the lease", () => {
     const health = deriveHostHealth({
       ...BASE,
       isLocalMachine: true,
-      service: { state: "stopped", version: "1.4.2", listenUrl: null, pid: null },
+      service: {
+        state: "stopped",
+        version: "1.4.2",
+        listenUrl: null,
+        pid: null,
+      },
       lease: lease("ready"),
       authorityAttached: true,
     });

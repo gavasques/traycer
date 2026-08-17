@@ -140,7 +140,9 @@ export function formatHostTransfer(
   return null;
 }
 
-export function clampHostProgressPercent(percent: number | null): number | null {
+export function clampHostProgressPercent(
+  percent: number | null,
+): number | null {
   if (percent === null) return null;
   return Math.min(100, Math.max(0, Math.round(percent)));
 }

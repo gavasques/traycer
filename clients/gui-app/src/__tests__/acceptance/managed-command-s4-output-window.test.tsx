@@ -63,8 +63,10 @@ vi.mock("@/hooks/agent/use-host-reachability", () => ({
     status: mocks.reachability.value,
     hostLabel: `host ${hostId}`,
   }),
-  resolvedHostLabel: (r: { readonly status: string; readonly hostLabel: string }) =>
-    r.status === "checking" ? null : r.hostLabel,
+  resolvedHostLabel: (r: {
+    readonly status: string;
+    readonly hostLabel: string;
+  }) => (r.status === "checking" ? null : r.hostLabel),
 }));
 
 vi.mock(

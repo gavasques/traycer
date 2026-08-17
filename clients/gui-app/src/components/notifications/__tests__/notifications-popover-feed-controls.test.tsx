@@ -136,13 +136,17 @@ function openGlobalStream(): {
   readonly seed: (entries: ReadonlyArray<NotificationEntry>) => void;
 } {
   let current: NotificationsStreamCallbacks | null = null;
-  openNotificationsStream(reconnectEngine, (callbacks) => {
-    current = callbacks;
-    return {
-      applyUpdate: () => {},
-      close: () => {},
-    };
-  }, null);
+  openNotificationsStream(
+    reconnectEngine,
+    (callbacks) => {
+      current = callbacks;
+      return {
+        applyUpdate: () => {},
+        close: () => {},
+      };
+    },
+    null,
+  );
   return {
     seed: (entries) => {
       if (current === null) throw new Error("stream factory not invoked");

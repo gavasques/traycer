@@ -155,9 +155,7 @@ function isFiniteNumber(value: unknown): value is number {
 
 /** Revisions and contract versions: non-negative safe integers, nothing else. */
 function isSafeCount(value: unknown): value is number {
-  return (
-    typeof value === "number" && Number.isSafeInteger(value) && value >= 0
-  );
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
 /**
@@ -396,7 +394,14 @@ export function parseSelectionEvidenceReport(
       const transition = record["transition"];
       if (typeof sessionId !== "string") return null;
       if (transition !== "established" && transition !== "lost") return null;
-      return { kind: "session", hostId, sessionId, transition, transportKind, at };
+      return {
+        kind: "session",
+        hostId,
+        sessionId,
+        transition,
+        transportKind,
+        at,
+      };
     }
     case "compat": {
       const probedOnSessionId =
@@ -404,7 +409,9 @@ export function parseSelectionEvidenceReport(
           ? record["probedOnSessionId"]
           : null;
       const hostVersion =
-        typeof record["hostVersion"] === "string" ? record["hostVersion"] : null;
+        typeof record["hostVersion"] === "string"
+          ? record["hostVersion"]
+          : null;
       if (record["verdict"] === "compatible") {
         return {
           kind: "compat",
@@ -465,11 +472,7 @@ export function parseSelectionEvidenceReport(
  * this - no surface reads sockets, probe caches, or the cloud DTO directly.
  */
 export type HostLeaseStatus =
-  | "connecting"
-  | "ready"
-  | "degraded"
-  | "restarting-expected"
-  | "dead";
+  "connecting" | "ready" | "degraded" | "restarting-expected" | "dead";
 
 /**
  * Why a lease is dead, as a discriminated union so `incompatible` carries
@@ -543,7 +546,9 @@ export function parseLeaseSnapshot(raw: unknown): HostLeaseSnapshot | null {
     return { hostId, status: "dead", dead: { reason: safeReason } };
   }
   const safeStatus =
-    status === "ready" || status === "degraded" || status === "restarting-expected"
+    status === "ready" ||
+    status === "degraded" ||
+    status === "restarting-expected"
       ? status
       : "connecting";
   return { hostId, status: safeStatus, dead: null };
@@ -560,11 +565,7 @@ export function parseLeaseSnapshot(raw: unknown): HostLeaseSnapshot | null {
  * `failover` (over-narrating beats hiding a move).
  */
 export type SelectionChangeCause =
-  | "activate"
-  | "deregister-clear"
-  | "failover"
-  | "recovery"
-  | "fleet-shift";
+  "activate" | "deregister-clear" | "failover" | "recovery" | "fleet-shift";
 
 /**
  * THE selection event (authority → windows): one composite, revisioned,
@@ -661,8 +662,7 @@ export type ActivateRefusalReason =
 
 /** Result of an Activate request. */
 export type ActivateResult =
-  | { ok: true }
-  | { ok: false; reason: ActivateRefusalReason };
+  { ok: true } | { ok: false; reason: ActivateRefusalReason };
 
 /** Raw-boundary parser for {@link ActivateResult}; malformed → refusal. */
 export function parseActivateResult(raw: unknown): ActivateResult {

@@ -24,9 +24,7 @@ function seedDeadLease(): void {
     preferredHostId: "host-1",
     targetHostId: "host-1",
     effectiveHostId: "host-1",
-    leases: [
-      { hostId: "host-1", status: "dead", dead: { reason: "offline" } },
-    ],
+    leases: [{ hostId: "host-1", status: "dead", dead: { reason: "offline" } }],
     selectionRevision: 1,
   });
 }
@@ -197,7 +195,11 @@ describe("useBoundedHostLoad", () => {
       effectiveHostId: "host-other",
       leases: [
         { hostId: "host-other", status: "ready", dead: null },
-        { hostId: "host-1", status: "dead", dead: { reason: "plan-restricted" } },
+        {
+          hostId: "host-1",
+          status: "dead",
+          dead: { reason: "plan-restricted" },
+        },
       ],
       selectionRevision: 1,
     });

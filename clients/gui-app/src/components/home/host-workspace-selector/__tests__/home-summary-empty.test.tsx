@@ -379,7 +379,7 @@ function useTestPlacementTarget(): LandingPlacementTarget {
     client: useHostClient(),
     hostLabel: "Home Mac",
     isPinned: false,
-    pinnedHostDead: false,
+    namedHostDead: false,
   };
 }
 

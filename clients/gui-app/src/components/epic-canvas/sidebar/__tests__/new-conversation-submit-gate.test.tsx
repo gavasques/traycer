@@ -109,7 +109,7 @@ vi.mock("@/hooks/host/use-composer-placement", () => {
     client: { getActiveHostId: () => "host-1" },
     hostLabel: "Local",
     isPinned: false,
-    pinnedHostDead: false,
+    namedHostDead: false,
   };
   return {
     useComposerPlacement: () => ({
@@ -119,7 +119,6 @@ vi.mock("@/hooks/host/use-composer-placement", () => {
         resolvedHostId: "host-1",
         isPinned: false,
         latchOnFirstUse: () => undefined,
-        followEffective: () => undefined,
       },
       target,
       submitTarget: target,

@@ -29,7 +29,7 @@ const READ_TARGET: LandingPlacementTarget = {
   client: null,
   hostLabel: "read-client-target",
   isPinned: false,
-  pinnedHostDead: false,
+  namedHostDead: false,
 };
 
 const SUBMIT_TARGET: LandingPlacementTarget = {
@@ -37,7 +37,7 @@ const SUBMIT_TARGET: LandingPlacementTarget = {
   client: null,
   hostLabel: "frozen-submit-target",
   isPinned: false,
-  pinnedHostDead: false,
+  namedHostDead: false,
 };
 
 const testState = vi.hoisted(() => ({
@@ -75,7 +75,6 @@ vi.mock("@/hooks/host/use-composer-placement", () => ({
       resolvedHostId: "host-a",
       isPinned: false,
       latchOnFirstUse: () => undefined,
-      followEffective: () => undefined,
     },
     target: READ_TARGET,
     submitTarget: SUBMIT_TARGET,
@@ -264,7 +263,6 @@ vi.mock(
 vi.mock("@/hooks/providers/use-refresh-providers-list-on-turn", () => ({
   useRefreshProvidersListOnTurn: () => undefined,
 }));
-
 
 afterEach(() => {
   cleanup();

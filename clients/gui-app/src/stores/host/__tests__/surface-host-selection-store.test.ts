@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { CURRENT_PERSIST_VERSION, surfaceHostSelectionKey } from "@/lib/persist";
+import {
+  CURRENT_PERSIST_VERSION,
+  surfaceHostSelectionKey,
+} from "@/lib/persist";
 import {
   composerSurfaceKey,
   gitDiffPanelSurfaceKey,
@@ -27,7 +30,12 @@ describe("useSurfaceHostSelectionStore", () => {
     expect(useSurfaceHostSelectionStore.getState().selections[GIT_KEY]).toBe(
       undefined,
     );
-    expect(resolvedSurfaceHostId(null, "host-active")).toBe("host-active");
+    expect(
+      resolvedSurfaceHostId(null, "host-active", {
+        authorityAttached: false,
+        leases: [],
+      }),
+    ).toBe("host-active");
   });
 
   it("pins one instance without touching a sibling", () => {
@@ -41,7 +49,12 @@ describe("useSurfaceHostSelectionStore", () => {
     expect(useSurfaceHostSelectionStore.getState().selections[TREE_KEY]).toBe(
       "host-c",
     );
-    expect(resolvedSurfaceHostId("host-b", "host-active")).toBe("host-b");
+    expect(
+      resolvedSurfaceHostId("host-b", "host-active", {
+        authorityAttached: false,
+        leases: [],
+      }),
+    ).toBe("host-b");
   });
 
   it("setSelection(null) returns the instance to following", () => {

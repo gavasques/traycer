@@ -63,7 +63,7 @@ interface PlacementTargetShape {
   readonly client: { readonly getActiveHostId: () => string | null } | null;
   readonly hostLabel: string;
   readonly isPinned: boolean;
-  readonly pinnedHostDead: boolean;
+  readonly namedHostDead: boolean;
 }
 
 /**
@@ -78,7 +78,7 @@ function placementHolder(): { current: PlacementTargetShape } {
       client: { getActiveHostId: () => "host-a" },
       hostLabel: "Studio Mac",
       isPinned: false,
-      pinnedHostDead: false,
+      namedHostDead: false,
     },
   };
 }
@@ -142,7 +142,6 @@ vi.mock("@/hooks/host/use-composer-placement", () => ({
       resolvedHostId: testState.placement.current.resolvedHostId,
       isPinned: testState.pinIsPinned.current,
       latchOnFirstUse: () => undefined,
-      followEffective: () => undefined,
     },
     target: testState.placement.current,
     submitTarget: testState.placement.current,
@@ -330,9 +329,8 @@ function noticeText(): string {
 }
 
 function draftSurvived(): boolean {
-  const patch = useNewConversationModalStore.getState().draftPatchesByEpicId[
-    "epic-1"
-  ];
+  const patch =
+    useNewConversationModalStore.getState().draftPatchesByEpicId["epic-1"];
   return patch?.content !== undefined && patch.content !== null;
 }
 
@@ -346,7 +344,7 @@ beforeEach(() => {
     client: { getActiveHostId: () => "host-a" },
     hostLabel: "Studio Mac",
     isPinned: false,
-    pinnedHostDead: false,
+    namedHostDead: false,
   };
   testState.pinIsPinned.current = false;
 });
@@ -375,22 +373,29 @@ describe("new-conversation modal shares the composer's placement semantics", () 
     );
   });
 
-  it("refuses a dead PINNED host inline, and creates nothing", () => {
+  // A pin never sets `namedHostDead` (D6): by the time `useComposerPlacement`
+  // resolves, a pinned host that died has already auto-followed to the
+  // effective host - `resolvedHostId` names the LIVE host, and the create
+  // must land there instead of being refused.
+  it("creates on the effective host once a pinned host has auto-followed through death", () => {
     testState.pinIsPinned.current = true;
     testState.placement.current = {
-      resolvedHostId: "host-b",
-      client: { getActiveHostId: () => "host-b" },
-      hostLabel: "Build Box",
+      resolvedHostId: "host-effective",
+      client: { getActiveHostId: () => "host-effective" },
+      hostLabel: "Home Mac",
       isPinned: true,
-      pinnedHostDead: true,
+      namedHostDead: false,
     };
     renderModal();
     act(() => {
       testState.bodySubmit?.();
     });
 
-    expect(testState.createChat).not.toHaveBeenCalled();
-    expect(noticeText()).toContain("Build Box is offline");
+    expect(testState.createChat).toHaveBeenCalledTimes(1);
+    expect(testState.createChat).toHaveBeenCalledWith(
+      expect.objectContaining({ hostId: "host-effective" }),
+      expect.anything(),
+    );
   });
 
   // The ordering finding: a refusal that lands after `cleanupAfterSubmit` has
@@ -404,7 +409,7 @@ describe("new-conversation modal shares the composer's placement semantics", () 
       client: null,
       hostLabel: "Build Box",
       isPinned: false,
-      pinnedHostDead: false,
+      namedHostDead: false,
     };
     renderModal();
     act(() => {
@@ -424,7 +429,7 @@ describe("new-conversation modal shares the composer's placement semantics", () 
       client: { getActiveHostId: () => "host-a" },
       hostLabel: "Build Box",
       isPinned: false,
-      pinnedHostDead: false,
+      namedHostDead: false,
     };
     renderModal();
     act(() => {
@@ -444,7 +449,7 @@ describe("new-conversation modal shares the composer's placement semantics", () 
       client: null,
       hostLabel: "Build Box",
       isPinned: false,
-      pinnedHostDead: false,
+      namedHostDead: false,
     };
     renderModal();
     act(() => {

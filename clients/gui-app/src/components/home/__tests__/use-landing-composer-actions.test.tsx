@@ -73,7 +73,7 @@ function useTestPlacementTarget(): LandingPlacementTarget {
     client: useHostClient(),
     hostLabel: "Local",
     isPinned: false,
-    pinnedHostDead: false,
+    namedHostDead: false,
   };
 }
 
@@ -222,9 +222,12 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
-      wrapper: queryClientWrapper(queryClient),
-    });
+    const { result } = renderHook(
+      () => useLandingComposerActions(useTestPlacementTarget()),
+      {
+        wrapper: queryClientWrapper(queryClient),
+      },
+    );
 
     act(() => {
       result.current.submit({
@@ -265,9 +268,12 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
-      wrapper: queryClientWrapper(queryClient),
-    });
+    const { result } = renderHook(
+      () => useLandingComposerActions(useTestPlacementTarget()),
+      {
+        wrapper: queryClientWrapper(queryClient),
+      },
+    );
 
     act(() => {
       result.current.submit({
@@ -329,9 +335,12 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
-      wrapper: queryClientWrapper(queryClient),
-    });
+    const { result } = renderHook(
+      () => useLandingComposerActions(useTestPlacementTarget()),
+      {
+        wrapper: queryClientWrapper(queryClient),
+      },
+    );
 
     act(() => {
       result.current.submit({
@@ -353,9 +362,12 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
-      wrapper: queryClientWrapper(queryClient),
-    });
+    const { result } = renderHook(
+      () => useLandingComposerActions(useTestPlacementTarget()),
+      {
+        wrapper: queryClientWrapper(queryClient),
+      },
+    );
 
     act(() => {
       result.current.submit({
@@ -392,9 +404,12 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
-      wrapper: queryClientWrapper(queryClient),
-    });
+    const { result } = renderHook(
+      () => useLandingComposerActions(useTestPlacementTarget()),
+      {
+        wrapper: queryClientWrapper(queryClient),
+      },
+    );
 
     act(() => {
       result.current.selectTerminalAgent(
@@ -442,9 +457,12 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
-      wrapper: queryClientWrapper(queryClient),
-    });
+    const { result } = renderHook(
+      () => useLandingComposerActions(useTestPlacementTarget()),
+      {
+        wrapper: queryClientWrapper(queryClient),
+      },
+    );
 
     act(() => {
       result.current.selectTerminalAgent(
@@ -484,9 +502,12 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
-      wrapper: queryClientWrapper(queryClient),
-    });
+    const { result } = renderHook(
+      () => useLandingComposerActions(useTestPlacementTarget()),
+      {
+        wrapper: queryClientWrapper(queryClient),
+      },
+    );
 
     act(() => {
       result.current.submit({
@@ -525,9 +546,12 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
-      wrapper: queryClientWrapper(queryClient),
-    });
+    const { result } = renderHook(
+      () => useLandingComposerActions(useTestPlacementTarget()),
+      {
+        wrapper: queryClientWrapper(queryClient),
+      },
+    );
 
     act(() => {
       result.current.submit({
@@ -601,9 +625,12 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
-      wrapper: queryClientWrapper(queryClient),
-    });
+    const { result } = renderHook(
+      () => useLandingComposerActions(useTestPlacementTarget()),
+      {
+        wrapper: queryClientWrapper(queryClient),
+      },
+    );
 
     act(() => {
       result.current.submit({
@@ -638,9 +665,12 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
-      wrapper: queryClientWrapper(queryClient),
-    });
+    const { result } = renderHook(
+      () => useLandingComposerActions(useTestPlacementTarget()),
+      {
+        wrapper: queryClientWrapper(queryClient),
+      },
+    );
 
     act(() => {
       result.current.submit({
@@ -680,9 +710,12 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
-      wrapper: queryClientWrapper(queryClient),
-    });
+    const { result } = renderHook(
+      () => useLandingComposerActions(useTestPlacementTarget()),
+      {
+        wrapper: queryClientWrapper(queryClient),
+      },
+    );
 
     act(() => {
       result.current.submit({
@@ -716,9 +749,12 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
-      wrapper: queryClientWrapper(queryClient),
-    });
+    const { result } = renderHook(
+      () => useLandingComposerActions(useTestPlacementTarget()),
+      {
+        wrapper: queryClientWrapper(queryClient),
+      },
+    );
 
     act(() => {
       result.current.submit({
@@ -751,9 +787,12 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
-      wrapper: queryClientWrapper(queryClient),
-    });
+    const { result } = renderHook(
+      () => useLandingComposerActions(useTestPlacementTarget()),
+      {
+        wrapper: queryClientWrapper(queryClient),
+      },
+    );
 
     // Two synchronous submits before the async IndexedDB read resolves. The second
     // hits the in-flight guard; without it, both would resolve and finalize → two
@@ -821,9 +860,12 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
-      wrapper: queryClientWrapper(queryClient),
-    });
+    const { result } = renderHook(
+      () => useLandingComposerActions(useTestPlacementTarget()),
+      {
+        wrapper: queryClientWrapper(queryClient),
+      },
+    );
 
     act(() => {
       result.current.submit({
@@ -908,9 +950,12 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
-      wrapper: queryClientWrapper(queryClient),
-    });
+    const { result } = renderHook(
+      () => useLandingComposerActions(useTestPlacementTarget()),
+      {
+        wrapper: queryClientWrapper(queryClient),
+      },
+    );
 
     act(() => {
       result.current.submit({
@@ -1007,9 +1052,12 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
-      wrapper: queryClientWrapper(queryClient),
-    });
+    const { result } = renderHook(
+      () => useLandingComposerActions(useTestPlacementTarget()),
+      {
+        wrapper: queryClientWrapper(queryClient),
+      },
+    );
 
     act(() => {
       result.current.submit({
@@ -1099,9 +1147,12 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
-      wrapper: queryClientWrapper(queryClient),
-    });
+    const { result } = renderHook(
+      () => useLandingComposerActions(useTestPlacementTarget()),
+      {
+        wrapper: queryClientWrapper(queryClient),
+      },
+    );
 
     act(() => {
       result.current.submit({
@@ -1177,9 +1228,12 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
-      wrapper: queryClientWrapper(queryClient),
-    });
+    const { result } = renderHook(
+      () => useLandingComposerActions(useTestPlacementTarget()),
+      {
+        wrapper: queryClientWrapper(queryClient),
+      },
+    );
 
     act(() => {
       result.current.submit({
@@ -1231,9 +1285,12 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
-      wrapper: queryClientWrapper(queryClient),
-    });
+    const { result } = renderHook(
+      () => useLandingComposerActions(useTestPlacementTarget()),
+      {
+        wrapper: queryClientWrapper(queryClient),
+      },
+    );
 
     act(() => {
       result.current.submit({
@@ -1279,9 +1336,12 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
-      wrapper: queryClientWrapper(queryClient),
-    });
+    const { result } = renderHook(
+      () => useLandingComposerActions(useTestPlacementTarget()),
+      {
+        wrapper: queryClientWrapper(queryClient),
+      },
+    );
 
     act(() => {
       result.current.submit({
@@ -1345,9 +1405,12 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
-      wrapper: queryClientWrapper(queryClient),
-    });
+    const { result } = renderHook(
+      () => useLandingComposerActions(useTestPlacementTarget()),
+      {
+        wrapper: queryClientWrapper(queryClient),
+      },
+    );
 
     act(() => {
       result.current.submit({
@@ -1396,9 +1459,12 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
-      wrapper: queryClientWrapper(queryClient),
-    });
+    const { result } = renderHook(
+      () => useLandingComposerActions(useTestPlacementTarget()),
+      {
+        wrapper: queryClientWrapper(queryClient),
+      },
+    );
 
     act(() => {
       result.current.submit({
@@ -1461,9 +1527,12 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
-      wrapper: queryClientWrapper(queryClient),
-    });
+    const { result } = renderHook(
+      () => useLandingComposerActions(useTestPlacementTarget()),
+      {
+        wrapper: queryClientWrapper(queryClient),
+      },
+    );
 
     act(() => {
       result.current.submit({
@@ -1517,9 +1586,12 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
-      wrapper: queryClientWrapper(queryClient),
-    });
+    const { result } = renderHook(
+      () => useLandingComposerActions(useTestPlacementTarget()),
+      {
+        wrapper: queryClientWrapper(queryClient),
+      },
+    );
 
     act(() => {
       result.current.submit({
@@ -1581,9 +1653,12 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
-      wrapper: queryClientWrapper(queryClient),
-    });
+    const { result } = renderHook(
+      () => useLandingComposerActions(useTestPlacementTarget()),
+      {
+        wrapper: queryClientWrapper(queryClient),
+      },
+    );
 
     act(() => {
       result.current.submit({
@@ -1648,9 +1723,12 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
-      wrapper: queryClientWrapper(queryClient),
-    });
+    const { result } = renderHook(
+      () => useLandingComposerActions(useTestPlacementTarget()),
+      {
+        wrapper: queryClientWrapper(queryClient),
+      },
+    );
 
     act(() => {
       result.current.submit({
@@ -1722,9 +1800,12 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
-      wrapper: queryClientWrapper(queryClient),
-    });
+    const { result } = renderHook(
+      () => useLandingComposerActions(useTestPlacementTarget()),
+      {
+        wrapper: queryClientWrapper(queryClient),
+      },
+    );
 
     act(() => {
       result.current.submit({
@@ -1793,9 +1874,12 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
-      wrapper: queryClientWrapper(queryClient),
-    });
+    const { result } = renderHook(
+      () => useLandingComposerActions(useTestPlacementTarget()),
+      {
+        wrapper: queryClientWrapper(queryClient),
+      },
+    );
 
     act(() => {
       result.current.submit({
@@ -1857,9 +1941,12 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
-      wrapper: queryClientWrapper(queryClient),
-    });
+    const { result } = renderHook(
+      () => useLandingComposerActions(useTestPlacementTarget()),
+      {
+        wrapper: queryClientWrapper(queryClient),
+      },
+    );
 
     act(() => {
       result.current.selectTerminalAgent(
@@ -1904,9 +1991,12 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
-      wrapper: queryClientWrapper(queryClient),
-    });
+    const { result } = renderHook(
+      () => useLandingComposerActions(useTestPlacementTarget()),
+      {
+        wrapper: queryClientWrapper(queryClient),
+      },
+    );
 
     act(() => {
       result.current.submit({
@@ -1944,9 +2034,12 @@ describe("useLandingComposerActions", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { result } = renderHook(() => useLandingComposerActions(useTestPlacementTarget()), {
-      wrapper: queryClientWrapper(queryClient),
-    });
+    const { result } = renderHook(
+      () => useLandingComposerActions(useTestPlacementTarget()),
+      {
+        wrapper: queryClientWrapper(queryClient),
+      },
+    );
 
     act(() => {
       result.current.submit({

@@ -104,17 +104,15 @@ vi.mock("@/hooks/host/use-addressable-host-id", () => ({
 }));
 
 // The surface pin (`useSurfaceHostPin` -> `useEffectiveHostId`, redesign
-// P1.2) is what `usePinnedSurfaceDead` resolves against, not the directory's
-// active-host hook.
+// P1.2) resolves against this, not the directory's active-host hook.
 vi.mock("@/hooks/host/use-effective-host-id", () => ({
   useEffectiveHostId: () => "host-1",
 }));
 
-// `usePinnedSurfaceDead` unconditionally reaches `useHostReachability` ->
-// `useHostDirectoryList` -> `useHostBinding` (pre-dates this epic, P0.2) -
-// this suite's `@/lib/host/runtime` mock below never carried `useHostBinding`,
-// so that chain has always been unexercised here until a wider run reached
-// it; stub reachability directly, the same way the sibling picker suites do.
+// `usePinnedSurfaceDead`/its dead-state screen are gone (D6: a pinned host
+// that dies auto-follows to `effective` instead). These two mocks are now
+// vestigial for this suite's own render tree, but are left in place as
+// harmless stubs in case a sibling hook in the chain still reaches them.
 vi.mock("@/hooks/agent/use-host-reachability", () => ({
   useHostReachability: () => ({
     status: "reachable",
@@ -123,8 +121,6 @@ vi.mock("@/hooks/agent/use-host-reachability", () => ({
   }),
 }));
 
-// `usePinnedSurfaceDead` also calls `useHostDirectoryList` directly (not only
-// through `useHostReachability` above) - same chain, same reason.
 vi.mock("@/hooks/host/use-host-directory-list-query", () => ({
   useHostDirectoryList: () => ({
     data: [{ hostId: "host-1" }],

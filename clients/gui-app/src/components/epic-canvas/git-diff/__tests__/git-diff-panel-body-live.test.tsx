@@ -28,6 +28,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { GitDiffPanelBodyLive } from "../git-diff-panel-body-live";
 import { useSurfaceHostSelectionStore } from "@/stores/host/surface-host-selection-store";
 import { gitDiffPanelSurfaceKey } from "@/stores/host/surface-host-selection-store";
+import { useSelectionAuthorityStore } from "@/stores/host/selection-authority-store";
 import { expectModuleHeaderPreview } from "./git-module-header-test-utils";
 
 const testState = vi.hoisted(() => ({
@@ -76,18 +77,16 @@ interface PinTestState {
   directory: Array<{ readonly hostId: string }>;
 }
 
-const pinTestState = vi.hoisted(
-  (): PinTestState => ({
-    activeHostId: "host-1",
-    lastClientHostId: null,
-    reachability: {
-      status: "reachable",
-      hostLabel: "Host One",
-      unavailability: null,
-    },
-    directory: [{ hostId: "host-1" }],
-  }),
-);
+const pinTestState = vi.hoisted((): PinTestState => ({
+  activeHostId: "host-1",
+  lastClientHostId: null,
+  reachability: {
+    status: "reachable",
+    hostLabel: "Host One",
+    unavailability: null,
+  },
+  directory: [{ hostId: "host-1" }],
+}));
 
 vi.mock("@/hooks/host/use-addressable-host-id", () => ({
   useAddressableHostId: () => pinTestState.activeHostId,
@@ -400,6 +399,7 @@ describe("<GitDiffPanelBodyLive /> workspace switcher integration", () => {
     window.localStorage.clear();
     useGitPanelStore.setState({ stateByEpicId: {} });
     useSurfaceHostSelectionStore.getState().resetForTests();
+    useSelectionAuthorityStore.getState().reset();
     pinTestState.activeHostId = "host-1";
     pinTestState.lastClientHostId = null;
     pinTestState.reachability = {
@@ -412,6 +412,7 @@ describe("<GitDiffPanelBodyLive /> workspace switcher integration", () => {
 
   afterEach(() => {
     cleanup();
+    useSelectionAuthorityStore.getState().reset();
   });
 
   it("renders the compact selector and removes the persistent repo tree", () => {
@@ -984,13 +985,14 @@ describe("<GitDiffPanelBodyLive /> workspace switcher integration", () => {
 
   it("writes the pin when a repo is picked in the switcher", () => {
     renderPanel(rootSelected);
-    useSurfaceHostSelectionStore.getState().setSelection(
-      gitDiffPanelSurfaceKey(TAB_ID),
-      null,
-    );
+    useSurfaceHostSelectionStore
+      .getState()
+      .setSelection(gitDiffPanelSurfaceKey(TAB_ID), null);
 
     openSwitcher();
-    fireEvent.click(screen.getByTestId("git-diff-repo-switcher-root-other-repo"));
+    fireEvent.click(
+      screen.getByTestId("git-diff-repo-switcher-root-other-repo"),
+    );
 
     expect(
       useSurfaceHostSelectionStore.getState().selections[
@@ -999,23 +1001,43 @@ describe("<GitDiffPanelBodyLive /> workspace switcher integration", () => {
     ).toBe("host-1");
   });
 
-  it("renders the D6 dead state instead of the changes list", () => {
-    useSurfaceHostSelectionStore.getState().setSelection(
-      gitDiffPanelSurfaceKey(TAB_ID),
-      "host-1",
-    );
-    pinTestState.reachability = {
-      status: "unreachable",
-      hostLabel: "Host One",
-      unavailability: "offline",
-    };
+  it("auto-follows to the effective host and renders normal content when the pinned host is dead (D6 sticky return, no dead-state screen)", async () => {
+    useSurfaceHostSelectionStore
+      .getState()
+      .setSelection(gitDiffPanelSurfaceKey(TAB_ID), "host-1");
+    // host-1 (the pin) is dead; host-2 is the effective host and can serve.
+    pinTestState.activeHostId = "host-2";
+    testState.rows = [row({ hostId: "host-2" })];
+    testState.snapshots = new Map([["/repo", response({})]]);
+    useSelectionAuthorityStore.setState({
+      attached: true,
+      effectiveHostId: "host-2",
+      leases: [
+        { hostId: "host-1", status: "dead", dead: { reason: "offline" } },
+        { hostId: "host-2", status: "ready", dead: null },
+      ],
+    });
 
     renderPanel(rootSelected);
 
-    expect(screen.getByTestId("git-diff-panel-pinned-host-dead")).toBeDefined();
-    expect(screen.getByText(/Host One is unreachable/)).toBeDefined();
-    expect(screen.getByTestId("git-diff-panel-pinned-host-dead-use-active")).toBeDefined();
-    expect(screen.queryByText("Loading workspaces…")).toBeNull();
-    expect(screen.queryByTestId("git-diff-repo-switcher-trigger")).toBeNull();
+    // The pin is deposed, so the surface resolves to the effective host and the
+    // requester it asks for is host-2, never the dead host-1 - there is no
+    // separate dead-state screen to fall back to (D6 deleted it).
+    await waitFor(() => {
+      expect(pinTestState.lastClientHostId).toBe("host-2");
+    });
+    expect(screen.queryByTestId("git-diff-panel-pinned-host-dead")).toBeNull();
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("git-diff-repo-switcher-trigger"),
+      ).toBeDefined();
+    });
+    // The pin ITSELF survives the death - only the resolution moved. This is
+    // what makes the return sticky once host-1 is usable again.
+    expect(
+      useSurfaceHostSelectionStore.getState().selections[
+        gitDiffPanelSurfaceKey(TAB_ID)
+      ],
+    ).toBe("host-1");
   });
 });

@@ -97,7 +97,7 @@ function useTestPlacementTarget(): LandingPlacementTarget {
     client: useHostClient(),
     hostLabel: "Local",
     isPinned: false,
-    pinnedHostDead: false,
+    namedHostDead: false,
   };
 }
 

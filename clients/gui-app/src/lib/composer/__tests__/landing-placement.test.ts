@@ -39,7 +39,7 @@ function targetWith(
     client: clientAddressing("host-a"),
     hostLabel: "Studio Mac",
     isPinned: false,
-    pinnedHostDead: false,
+    namedHostDead: false,
     ...overrides,
   };
 }
@@ -73,11 +73,14 @@ describe("resolveLandingPlacement", () => {
     );
   });
 
-  it("refuses a pinned host that went offline, and names it", () => {
+  // `namedHostDead` is ONLY ever set for a caller-NAMED host (the row-scoped
+  // modal's `overrideHostId`) - never for a pin. Naming a device IS the
+  // request, so a dead one is refused rather than silently substituted.
+  it("refuses a named (override) host that is dead, and names it", () => {
     const placement = resolveLandingPlacement(
       targetWith({
         isPinned: true,
-        pinnedHostDead: true,
+        namedHostDead: true,
         hostLabel: "Build Box",
       }),
     );
@@ -124,11 +127,14 @@ describe("resolveLandingPlacement", () => {
     expect(placement.kind).toBe("refused");
   });
 
-  // `pinnedHostDead` is only ever set for a pin (D6); a following surface must
-  // not be blocked by a stale reachability answer about a host it left.
-  it("ignores a dead-host verdict when the composer is following", () => {
+  // D6: a pin is never blocked by the `namedHostDead` arm. A pinned host that
+  // dies has already auto-followed to `effective` by the time this runs -
+  // `resolvedHostId` names the live host, `namedHostDead` stays false, and a
+  // good client for it resolves ready, exactly like an unpinned target.
+  it("does not refuse a pinned target through the namedHostDead arm", () => {
+    const client = clientAddressing("host-a");
     const placement = resolveLandingPlacement(
-      targetWith({ isPinned: false, pinnedHostDead: true }),
+      targetWith({ isPinned: true, namedHostDead: false, client }),
     );
     expect(placement.kind).toBe("ready");
   });

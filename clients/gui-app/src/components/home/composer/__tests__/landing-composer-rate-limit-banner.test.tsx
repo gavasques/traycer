@@ -116,12 +116,9 @@ vi.mock("@/stores/composer/commit-selection", () => ({
   },
 }));
 
-vi.mock(
-  "@/hooks/providers/use-refresh-providers-list-on-turn",
-  () => ({
-    useRefreshProvidersListOnTurn: vi.fn(),
-  }),
-);
+vi.mock("@/hooks/providers/use-refresh-providers-list-on-turn", () => ({
+  useRefreshProvidersListOnTurn: vi.fn(),
+}));
 
 vi.mock("@/stores/settings/settings-store", () => {
   const state = { composerMode: "chat", setComposerMode: vi.fn() };
@@ -248,14 +245,13 @@ vi.mock("@/hooks/host/use-composer-placement", () => ({
       resolvedHostId: "host-test",
       isPinned: false,
       latchOnFirstUse: () => undefined,
-      followEffective: () => undefined,
     },
     target: {
       resolvedHostId: "host-test",
       client: null,
       hostLabel: "Local",
       isPinned: false,
-      pinnedHostDead: false,
+      namedHostDead: false,
     },
     hostLabelFor: () => "Local",
   }),

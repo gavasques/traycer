@@ -319,19 +319,17 @@ vi.mock("@/hooks/host/use-composer-placement", () => ({
       resolvedHostId: "host-test",
       isPinned: false,
       latchOnFirstUse: () => undefined,
-      followEffective: () => undefined,
     },
     target: {
       resolvedHostId: "host-test",
       client: null,
       hostLabel: "Local",
       isPinned: false,
-      pinnedHostDead: false,
+      namedHostDead: false,
     },
     hostLabelFor: () => "Local",
   }),
 }));
-
 
 // Keep the toolbar thin so catalog/query noise does not obscure attachmentPending.
 vi.mock("@/components/home/toolbar/composer-toolbar", () => ({

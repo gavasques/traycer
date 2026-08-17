@@ -182,6 +182,12 @@ export class HostDirectoryService implements IHostDirectoryService {
   private refreshIntervalId: number | null = null;
   private visibilityDocument: Document | null = null;
   /**
+   * The shell's own registry cadence, when it has one (desktop's main process
+   * — redesign P4.1/F22). Non-null means this window arms NO interval of its
+   * own: the push IS the tick.
+   */
+  private registrySubscription: Disposable | null = null;
+  /**
    * Coalesces concurrent `refresh()` callers onto a single in-flight fetch
    * (T20 / audit P4) - a foundation for T21's interval + open-time triggers,
    * which would otherwise stack requests.
@@ -494,12 +500,70 @@ export class HostDirectoryService implements IHostDirectoryService {
     if (typeof window === "undefined") {
       return;
     }
+    // WHO OWNS THE CADENCE (redesign P4.1/F22, connection registry §1b).
+    //
+    // When the shell polls the registry for the whole app - desktop's main
+    // process does, so N windows make ONE `GET /api/v3/hosts` instead of N -
+    // this window arms no timer at all and rides the push instead. When it
+    // does not (browser/dev, the single-window topology D16 names, and every
+    // test shell), the interval below is still THE app's one liveness timer,
+    // exactly as before.
+    //
+    // Deliberately not "both": arming the interval as a safety net alongside
+    // the push would recreate the twin timer F22 exists to collapse, and it
+    // would do it invisibly, because two sources of the same refresh look
+    // identical from every consumer downstream.
+    if (this.subscribeToShellRegistryPushes()) {
+      return;
+    }
     this.visibilityDocument = typeof document === "undefined" ? null : document;
     this.armPollInterval();
     this.visibilityDocument?.addEventListener(
       "visibilitychange",
       this.handleVisibilityChange,
     );
+  }
+
+  /**
+   * Rides the shell's registry cadence when it has one. Returns whether it
+   * took ownership, so the caller knows not to arm a second source.
+   *
+   * A push drives the SAME two things the interval drives, through the same
+   * paths: `refresh()`, whose projection and emit gate are untouched by this
+   * change, and `onRegistryPollTick()`, which INVALIDATES the registry query
+   * rather than seeding it. Seeding is what the pushed rows might seem to
+   * enable, and it stays wrong for a reason this move strengthens rather than
+   * weakens: that query reaches the registry through
+   * `AuthService.fetchRegisteredHosts(era)`, whose issue-time credential fence
+   * exists to refuse a fetch whose bearer belongs to a different era - and
+   * these rows were fetched with the SHELL's bearer, one process over.
+   * Invalidating lets it refetch through its own fence, and costs nothing when
+   * nothing is observing.
+   *
+   * The account fence: a push carries the identity it was FETCHED under, and a
+   * window showing another account drops it. Same key on both sides - a user
+   * id - because a main-process generation counter means nothing here.
+   */
+  private subscribeToShellRegistryPushes(): boolean {
+    const subscription = this.runnerHost.onRegisteredHostsChange((push) => {
+      const currentContext = this.authContextId();
+      if (push.identityKey !== currentContext) {
+        appLogger.debug("[host-directory] dropped a push for another account", {
+          pushed: push.identityKey,
+          current: currentContext,
+        });
+        return;
+      }
+      void this.refresh();
+      if (this.onRegistryPollTick !== null) {
+        this.onRegistryPollTick();
+      }
+    });
+    if (subscription === null) {
+      return false;
+    }
+    this.registrySubscription = subscription;
+    return true;
   }
 
   /**
@@ -545,6 +609,8 @@ export class HostDirectoryService implements IHostDirectoryService {
   }
 
   private stopRefreshPolling(): void {
+    this.registrySubscription?.dispose();
+    this.registrySubscription = null;
     if (this.refreshIntervalId !== null && typeof window !== "undefined") {
       window.clearInterval(this.refreshIntervalId);
     }

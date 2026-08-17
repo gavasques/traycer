@@ -42,6 +42,7 @@ import type {
   IZoomHost,
   LocalHostSnapshot,
   MigrationRunningSnapshot,
+  RegisteredHostsChange,
   TrayEpic,
   TrayIndicatorState,
   TraycerHostStatusSnapshot,
@@ -204,6 +205,9 @@ export interface DesktopPreloadBridge {
     ): { dispose: () => void };
   };
   onLocalHostChange(handler: (snapshot: LocalHostSnapshot | null) => void): {
+    dispose: () => void;
+  };
+  onRegisteredHostsChange(handler: (push: RegisteredHostsChange) => void): {
     dispose: () => void;
   };
   onSystemResumed(handler: () => void): { dispose: () => void };
@@ -795,6 +799,16 @@ export class DesktopRunnerHost implements IRunnerHost {
     return this.refreshSelectionFleet();
   }
 
+  /**
+   * Desktop OWNS the registry cadence, so this is never null here: main runs
+   * one `GET /api/v3/hosts` for the whole app and fans the rows out (P4.1/F22).
+   */
+  onRegisteredHostsChange(
+    handler: (push: RegisteredHostsChange) => void,
+  ): Disposable | null {
+    return toDisposable(this.bridge.onRegisteredHostsChange(handler));
+  }
+
   openMicrophoneSettings(): Promise<void> {
     return this.bridge.openMicrophoneSettings();
   }
@@ -927,7 +941,6 @@ export class DesktopRunnerHost implements IRunnerHost {
     this.localHostHandlers.clear();
     this.systemResumedHandlers.clear();
   }
-
 }
 
 /**

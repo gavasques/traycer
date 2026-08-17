@@ -19,6 +19,7 @@ import type {
   ITraycerCli,
   IWorkspaceFoldersHost,
   LocalHostSnapshot,
+  RegisteredHostsChange,
   StoredAuthTokens,
   StoredCredentials,
   StoredCredentialsIdentity,
@@ -213,6 +214,26 @@ export class MockRunnerHost implements IRunnerHost {
    * rather than making it a lie: a caller that says "membership changed" still
    * gets one atomic fleet transaction out of it.
    */
+  /**
+   * `null`: this shell owns no registry cadence, so a consumer keeps its own
+   * timer - the same answer the browser/dev topology gives, and the reason the
+   * capability is nullable rather than assumed.
+   *
+   * The handler parameter is declared even though this implementation ignores
+   * it, and that is not decoration: dropping it makes the MEMBER's type
+   * `() => Disposable | null`, which no longer accepts a handler-taking
+   * function, so a test that installs a pushing shell on the instance - the
+   * only way to exercise the push path against this mock - fails to type-check
+   * at the assignment. Matching the interface's arity keeps the substitution
+   * legal.
+   */
+  onRegisteredHostsChange(
+    handler: (push: RegisteredHostsChange) => void,
+  ): Disposable | null {
+    void handler;
+    return null;
+  }
+
   refreshHostFleet(): Promise<void> {
     const current = this.selectionFleet.snapshot();
     this.selectionFleet.publish(
@@ -1186,4 +1207,3 @@ export class MockDeviceFlowSession implements DeviceFlowSession {
     this.handlers.clear();
   }
 }
-

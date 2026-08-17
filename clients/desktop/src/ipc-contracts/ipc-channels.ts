@@ -327,6 +327,14 @@ export const RunnerHostEvent = {
   // active (see `host-controller-status-broadcast.ts`), so every open
   // window's gate/banner/Settings/tray stay in lockstep.
   hostControllerStatusChange: "runnerHost:event:host:controllerStatusChange",
+  // ONE registry read per app, fanned out to every window (redesign P4.1/F22,
+  // connection registry §1b/§6). The 60s `GET /api/v3/hosts` cadence used to
+  // be a per-window renderer timer, so N windows meant N timers and N fetches
+  // against one endpoint; main owns the cadence now and pushes the rows it
+  // already fetches for the selection authority's fleet port. The renderer
+  // keeps its own timer ONLY where there is no main process to own one
+  // (browser/dev, the single-window topology D16 names).
+  registeredHostsChange: "runnerHost:event:host:registeredHostsChange",
   zoomChange: "runnerHost:event:zoom:change",
   globalShortcutsChange: "runnerHost:event:globalShortcuts:change",
   // Selection-authority broadcasts. THREE kinds, each emission carrying its

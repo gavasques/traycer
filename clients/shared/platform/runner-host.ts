@@ -10,6 +10,7 @@ import type {
 } from "../auth/devices-sessions-fetcher";
 import type { MintHostCredentialRequest } from "@traycer/protocol/auth/devices-sessions";
 import type { HostListFetchResult } from "../host-client/remote-fetcher";
+import type { HostListResponse } from "@traycer/protocol/host/host-status";
 import type { LiveHostAvailability } from "../host-client/host-directory";
 import type {
   UpdateHostVersionPolicyFetchResult,
@@ -443,6 +444,31 @@ export interface IRunnerHost {
   refreshHostFleet(): Promise<void>;
 
   /**
+   * Subscribes to the shell's own registry reads, when the shell OWNS the
+   * registry cadence (redesign P4.1/F22, connection registry §1b/§6).
+   *
+   * `null` means "this shell does not poll for you" and is the honest answer
+   * for the browser/dev topology, which has no main process to own a cadence -
+   * a consumer that gets `null` keeps its own timer. On desktop the main
+   * process runs ONE `GET /api/v3/hosts` for the whole app and pushes the rows
+   * here, so N windows stop meaning N timers and N requests against one
+   * endpoint.
+   *
+   * A capability, NOT an authority surface. The payload is registry rows for
+   * display; it says nothing about which host is selected and nothing about
+   * whether a host is usable - leases come from transport evidence through the
+   * selection authority and never from these bytes (invariant 5). Consumers
+   * treat a push exactly as they treat their own completed fetch.
+   *
+   * `identityKey` on the payload is the account the rows were FETCHED under;
+   * a consumer showing another account must drop the push rather than commit
+   * it.
+   */
+  onRegisteredHostsChange(
+    handler: (push: RegisteredHostsChange) => void,
+  ): Disposable | null;
+
+  /**
    * Tray-side host command channel forwarded from the shell tray to the
    * renderer. Present on shells that surface a native tray (desktop) and
    * `null` everywhere else. The renderer keeps a subscription mounted so
@@ -450,6 +476,16 @@ export interface IRunnerHost {
    * tray clicks route through the same host-management surface as Settings.
    */
   readonly hostTray: IHostTray | null;
+}
+
+/**
+ * One shell-owned registry read, delivered to a consumer that would otherwise
+ * have fetched it itself. See `IRunnerHost.onRegisteredHostsChange`.
+ */
+export interface RegisteredHostsChange {
+  /** The account these rows were FETCHED under; `null` when signed out. */
+  readonly identityKey: string | null;
+  readonly response: HostListResponse;
 }
 
 /** Outcome of `IRunnerHost.requestMicrophoneAccess()`. */

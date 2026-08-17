@@ -48,6 +48,10 @@ import {
   DesktopPreferredHostStore,
   resolvePreferredHostFilePath,
 } from "../selection/preferred-host-store";
+import {
+  createRegisteredHostsPublisher,
+  registerRegisteredHostsBroadcast,
+} from "./registered-hosts-broadcast";
 import { onHostControllerStatusBroadcast } from "./host-controller-status-broadcast";
 import type { RunnerIpcBridge } from "./runner-ipc-bridge";
 
@@ -88,6 +92,9 @@ export function registerSelectionAuthorityIpc(bridge: RunnerIpcBridge): void {
     authSession: bridge.authSession,
     host: bridge.options.host,
     listRegisteredHosts: fetchRegisteredHostsViaHttp,
+    // Every window hears the rows this port just fetched, so the app makes ONE
+    // registry request per tick instead of one per window (P4.1/F22).
+    publishRegistryResponse: createRegisteredHostsPublisher(bridge),
     log: authorityLog,
   });
   const localOutage = new DesktopLocalHostOutageSignal({
@@ -116,6 +123,9 @@ export function registerSelectionAuthorityIpc(bridge: RunnerIpcBridge): void {
   registerFleetRefresh(bridge, fleet);
   registerFanOut(bridge, engine);
   registerDetachSignals(bridge, engine);
+  // The app's one registry cadence. Registered here, beside the fleet source
+  // it drives, because that source is what owns the fetch's race rules.
+  registerRegisteredHostsBroadcast(bridge, fleet);
 
   // Seed real membership. The engine already read the (empty) startup
   // snapshot; this publishes the account's fleet at a higher revision.

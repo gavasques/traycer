@@ -25,6 +25,7 @@ import type {
   SelectionSubscription,
 } from "@traycer-clients/shared/host-selection/selection-authority-contract";
 import type { AuthorityLog } from "@traycer-clients/shared/host-selection/selection-authority-engine";
+import type { RegisteredHostsPush } from "../../ipc-contracts/host-types";
 import type { DesktopAuthSessionSnapshot } from "../../ipc-contracts/window-types";
 import type { HostControllerStatus } from "../host/host-controller-types";
 import { readLastKnownLocalHostId } from "../host/local-host-identity";
@@ -114,6 +115,26 @@ export interface DesktopHostFleetSourceOptions {
     authnBaseUrl: string,
     bearerToken: string,
   ) => Promise<HostListFetchResult>;
+  /**
+   * Hands the FULL registry rows to whoever needs them for display, once per
+   * successful fetch.
+   *
+   * This is what makes main's cadence serve both consumers from ONE request.
+   * The authority needs ids; every window needs the rows (names, connectivity,
+   * update state) it used to fetch for itself. Rather than stand up a second
+   * poll - the exact duplication connection registry §6 says to collapse -
+   * this port publishes what it has already read, and the two projections
+   * diverge AFTER the single fetch.
+   *
+   * The snapshot half below is deliberately NOT widened to carry these rows:
+   * `HostFleetSnapshot` has no channel for a status DTO, which is invariant 5
+   * enforced by construction, and that stays true.
+   *
+   * Required rather than optional: a composition that forgets it produces an
+   * app whose windows silently stop learning about registry changes, which is
+   * not a failure anything reports.
+   */
+  readonly publishRegistryResponse: (push: RegisteredHostsPush) => void;
   readonly log: AuthorityLog;
 }
 
@@ -139,12 +160,14 @@ export interface DesktopHostFleetSourceOptions {
  *    FETCH STARTED, so a late account-A completion is rejected by the engine
  *    however high its revision is.
  *
- * INTERIM BACKING (P4.1 - registry completion): there is no poller here. A
- * host registered on ANOTHER machine appears on the next identity change,
- * local-host change, or explicit {@link DesktopHostFleetSource.refresh}. A
- * second 60 s poll in main is exactly what connection registry §6 says to
- * collapse, so this port waits for the consolidated one rather than adding a
- * competitor to it.
+ * The 60 s cadence that drives {@link DesktopHostFleetSource.refresh} lives in
+ * `ipc/registered-hosts-broadcast.ts` rather than here, and that split is the
+ * point: this port owns HOW a registry read becomes a fleet snapshot, and the
+ * broadcast module owns WHEN one happens and who else hears it. The earlier
+ * interim ("there is no poller here") is discharged - the consolidated timer
+ * this port was waiting for is that module, not a competitor to it, and every
+ * race rule above applies to its ticks unchanged because they arrive through
+ * `refresh()` like every other caller.
  */
 export class DesktopHostFleetSource implements HostFleetSource {
   private readonly options: DesktopHostFleetSourceOptions;
@@ -236,8 +259,12 @@ export class DesktopHostFleetSource implements HostFleetSource {
   private async refreshOrThrow(): Promise<void> {
     // Stamped at fetch START (contract: "the generation this snapshot was
     // FETCHED under"), so a completion that lands after an account switch is
-    // recognisably stale.
-    const generation = this.options.identity.current().generation;
+    // recognisably stale. The identity KEY is captured in the same read for
+    // the same reason: it is the account stamp the renderer push is fenced on,
+    // and reading it again after the await would name whoever is signed in
+    // when the response happens to land.
+    const identity = this.options.identity.current();
+    const generation = identity.generation;
     const bearerToken = this.options.authSession.get().token;
     if (bearerToken === null) {
       // Signed out: the account fleet is empty, and the local host is not
@@ -256,6 +283,16 @@ export class DesktopHostFleetSource implements HostFleetSource {
       });
       return;
     }
+    // Published BEFORE the id projection is adopted, and published even when
+    // `applyFetched` declines to adopt (a late completion for a retired
+    // identity). Both are deliberate: the push carries the identity it was
+    // FETCHED under, so a renderer on another account drops it by the same
+    // rule the engine rejects the snapshot by - one stamp, two readers, no
+    // second staleness policy.
+    this.options.publishRegistryResponse({
+      identityKey: identity.identityKey,
+      response: result.response,
+    });
     this.applyFetched(
       generation,
       localHostId,

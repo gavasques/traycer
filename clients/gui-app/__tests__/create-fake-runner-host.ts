@@ -66,6 +66,9 @@ export function createFakeRunnerHost(
     // the inert default is the honest one; a test that cares overrides it to
     // republish its own snapshot, exactly as a real shell does.
     refreshHostFleet: () => Promise.resolve(),
+    // `null` = this shell owns no registry cadence, so a consumer keeps its own
+    // timer. The same answer the browser/dev topology gives.
+    onRegisteredHostsChange: () => null,
     listUserSessions: () => Promise.resolve({ kind: "network-error" as const }),
     revokeUserSession: () =>
       Promise.resolve({ kind: "network-error" as const }),
@@ -138,9 +141,7 @@ export function createFakeRunnerHost(
     // host instead of silently binding nothing. A test that wants NO
     // authority (e.g. to assert the detached/superseded UI) passes
     // `createInertSelectionAuthorityClient()` through `overrides` instead.
-    selectionAuthority: createDefaultLocalSelectionAuthority(
-      "fake-local-host",
-    ),
+    selectionAuthority: createDefaultLocalSelectionAuthority("fake-local-host"),
     zoom: null,
   };
   return { ...base, ...overrides };

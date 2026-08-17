@@ -28,7 +28,10 @@ import type {
   ServiceRegistrationOk,
   UninstallOk,
 } from "../../host/host-controller-types";
-import type { DesktopPublishedHostSnapshot } from "../../../ipc-contracts/host-types";
+import type {
+  DesktopPublishedHostSnapshot,
+  RegisteredHostsPush,
+} from "../../../ipc-contracts/host-types";
 import { DesktopAuthSession } from "../../auth/desktop-auth-session";
 import {
   createDesktopLocalHostEnsurePort,
@@ -78,6 +81,64 @@ function flushIo(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 10));
 }
 
+/**
+ * A `listRegisteredHosts` double that hands every caller its OWN deferred and
+ * announces when each call STARTS.
+ *
+ * ## Why the obvious shape is a deadlock
+ *
+ * The natural double for "two overlapping refreshes" is one keyed on call
+ * order - `calls.length === 1 ? firstCall : secondCall`. It encodes an
+ * assumption that is not true: WHICH refresh arrives first is decided by an
+ * async race, not by the order the test started them. `refreshOrThrow` awaits
+ * `readLocalHostId()` - a REAL filesystem read - before it ever calls this
+ * double, so two overlapping refreshes are both suspended in libuv's
+ * threadpool, and under a saturated pool their reads complete out of
+ * submission order. When the second refresh wins, it receives `firstCall`, the
+ * test resolves `firstCall` believing it belongs to the first refresh, and
+ * `await inFlight` then waits on a deferred the test only resolves AFTER that
+ * await. That is a HANG, not slowness - no timeout budget can fix an await
+ * that never settles, which is why this is a fixture bug and not a timing one.
+ *
+ * ## What this replaces it with
+ *
+ * Per-call deferreds (so no call can be mistaken for another) plus a start
+ * signal per call, so a test can WAIT for the fact it needs - "refresh #1 is
+ * now inside the fetch" - instead of assuming it. The signal is resolved from
+ * inside the double itself, so it is exact under any load. `flushIo`'s 10ms
+ * sleep is the weaker form of the same barrier and is deliberately not used
+ * for this: a sleep long enough today is a sleep too short on a busier
+ * machine.
+ */
+function recordingRegistryFetch(): {
+  readonly fetch: () => Promise<HostListFetchResult>;
+  readonly calls: Array<Deferred<HostListFetchResult>>;
+  readonly started: (index: number) => Promise<void>;
+} {
+  const calls: Array<Deferred<HostListFetchResult>> = [];
+  const startSignals: Array<Deferred<void>> = [];
+  const signalAt = (index: number): Deferred<void> => {
+    while (startSignals.length <= index) {
+      startSignals.push(deferred<void>());
+    }
+    const signal = startSignals[index];
+    if (signal === undefined) {
+      throw new Error(`no start signal for call ${index}`);
+    }
+    return signal;
+  };
+  return {
+    calls,
+    started: (index) => signalAt(index).promise,
+    fetch: () => {
+      const call = deferred<HostListFetchResult>();
+      calls.push(call);
+      signalAt(calls.length - 1).resolve();
+      return call.promise;
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // DesktopAuthorityIdentitySource
 // ---------------------------------------------------------------------------
@@ -92,8 +153,7 @@ describe("DesktopAuthorityIdentitySource", () => {
       generation: 0,
     });
 
-    const seen: Array<{ identityKey: string | null; generation: number }> =
-      [];
+    const seen: Array<{ identityKey: string | null; generation: number }> = [];
     identity.onChanged((next) => seen.push(next));
 
     authSession.set(signedInSnapshot("user-a", "token-2"));
@@ -111,8 +171,7 @@ describe("DesktopAuthorityIdentitySource", () => {
     authSession.set(signedInSnapshot("user-a", "token-1"));
     const identity = new DesktopAuthorityIdentitySource(authSession);
 
-    const seen: Array<{ identityKey: string | null; generation: number }> =
-      [];
+    const seen: Array<{ identityKey: string | null; generation: number }> = [];
     identity.onChanged((next) => seen.push(next));
 
     authSession.set(signedInSnapshot("user-b", "token-2"));
@@ -130,8 +189,7 @@ describe("DesktopAuthorityIdentitySource", () => {
     authSession.set(signedInSnapshot("user-a", "token-1"));
     const identity = new DesktopAuthorityIdentitySource(authSession);
 
-    const seen: Array<{ identityKey: string | null; generation: number }> =
-      [];
+    const seen: Array<{ identityKey: string | null; generation: number }> = [];
     identity.onChanged((next) => seen.push(next));
 
     authSession.set({ status: "signed-out", token: null, profile: null });
@@ -159,8 +217,7 @@ describe("DesktopAuthorityIdentitySource", () => {
       generation: 0,
     });
 
-    const seen: Array<{ identityKey: string | null; generation: number }> =
-      [];
+    const seen: Array<{ identityKey: string | null; generation: number }> = [];
     identity.onChanged((next) => seen.push(next));
 
     identity.dispose();
@@ -285,14 +342,55 @@ function buildFleetSource(overrides: {
     bearerToken: string,
   ) => Promise<HostListFetchResult>;
 }): DesktopHostFleetSource {
+  // A recording fake, not a no-op: `publishRegistryResponse` is a required
+  // option (P4.1/F22), and callers that don't care what lands here still need
+  // a real sink rather than a silently-dropping one. Tests that DO care what
+  // was published use `buildFleetSourceWithPublisher` below instead.
+  const published: RegisteredHostsPush[] = [];
   return new DesktopHostFleetSource({
     authnBaseUrl: "http://localhost:5005",
     identity: overrides.identity,
     authSession: overrides.authSession,
     host: overrides.host,
     listRegisteredHosts: overrides.listRegisteredHosts,
+    publishRegistryResponse: (push) => {
+      published.push(push);
+    },
     log: silentLog,
   });
+}
+
+/**
+ * Same composition as {@link buildFleetSource}, but hands back the recording
+ * array too - for the P4.1/F22 `publishRegistryResponse` assertions, which
+ * need to inspect what actually got published rather than just that the
+ * option was wired.
+ */
+function buildFleetSourceWithPublisher(overrides: {
+  identity: AuthorityIdentitySource;
+  authSession: DesktopAuthSession;
+  host: FakeHostLifecycle;
+  listRegisteredHosts: (
+    authnBaseUrl: string,
+    bearerToken: string,
+  ) => Promise<HostListFetchResult>;
+}): {
+  readonly fleet: DesktopHostFleetSource;
+  readonly published: RegisteredHostsPush[];
+} {
+  const published: RegisteredHostsPush[] = [];
+  const fleet = new DesktopHostFleetSource({
+    authnBaseUrl: "http://localhost:5005",
+    identity: overrides.identity,
+    authSession: overrides.authSession,
+    host: overrides.host,
+    listRegisteredHosts: overrides.listRegisteredHosts,
+    publishRegistryResponse: (push) => {
+      published.push(push);
+    },
+    log: silentLog,
+  });
+  return { fleet, published };
 }
 
 describe("DesktopHostFleetSource", () => {
@@ -425,17 +523,12 @@ describe("DesktopHostFleetSource", () => {
     const host = new FakeHostLifecycle();
     host.identityEnrollmentFile = enrollmentFile;
 
-    const firstCall = deferred<HostListFetchResult>();
-    const secondCall = deferred<HostListFetchResult>();
-    const calls: number[] = [];
+    const registry = recordingRegistryFetch();
     const fleet = buildFleetSource({
       identity,
       authSession,
       host,
-      listRegisteredHosts: async () => {
-        calls.push(calls.length);
-        return calls.length === 1 ? firstCall.promise : secondCall.promise;
-      },
+      listRegisteredHosts: registry.fetch,
     });
 
     const publishedGenerations: number[] = [];
@@ -444,15 +537,20 @@ describe("DesktopHostFleetSource", () => {
     });
 
     const inFlight = fleet.refresh();
+    // Wait for the FACT this case depends on - refresh #1 is past its
+    // filesystem read and inside the fetch - so the identity change below
+    // cannot race ahead of it and take call #0 for itself.
+    await registry.started(0);
     // Identity moves on WHILE the first fetch is in flight.
     identity.set("user-b", 1);
+    await registry.started(1);
 
-    firstCall.resolve({
+    registry.calls[0]?.resolve({
       kind: "ok",
       response: { hosts: [buildHostListItem("local-host")] },
     });
     await inFlight;
-    secondCall.resolve({ kind: "ok", response: { hosts: [] } });
+    registry.calls[1]?.resolve({ kind: "ok", response: { hosts: [] } });
     await Promise.resolve();
 
     // The publish produced by the FIRST (stale) fetch must still carry
@@ -730,7 +828,11 @@ describe("DesktopHostFleetSource", () => {
   it("captures the generation at read START: a late enrollment read for a RETIRED account is never adopted under the CURRENT generation (A1)", async () => {
     const dir = await makeTempDir();
     const enrollmentFile = join(dir, "enrollment.json");
-    await writeFile(enrollmentFile, JSON.stringify({ hostId: "local-a" }), "utf8");
+    await writeFile(
+      enrollmentFile,
+      JSON.stringify({ hostId: "local-a" }),
+      "utf8",
+    );
     const authSession = new DesktopAuthSession();
     // Signed out throughout: this isolates `refreshLocalIdentity` from
     // `refresh()`'s own auto-triggered fetch (which would need a bearer
@@ -844,7 +946,10 @@ describe("DesktopHostFleetSource", () => {
       identity,
       authSession,
       host,
-      listRegisteredHosts: async () => ({ kind: "ok", response: { hosts: [] } }),
+      listRegisteredHosts: async () => ({
+        kind: "ok",
+        response: { hosts: [] },
+      }),
     });
     await fleet.refresh();
 
@@ -868,6 +973,220 @@ describe("DesktopHostFleetSource", () => {
 
     expect(snapshots).toHaveLength(1);
     expect(snapshots[0].localHostId).toBe("local-host-2");
+    fleet.dispose();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DesktopHostFleetSource / publishRegistryResponse (redesign P4.1/F22)
+// ---------------------------------------------------------------------------
+
+describe("DesktopHostFleetSource publishRegistryResponse", () => {
+  it("publishes ONCE per successful refresh, carrying the FULL response rows and the identityKey captured at fetch start", async () => {
+    const dir = await makeTempDir();
+    const enrollmentFile = await writeEnrollment(dir, "local-host");
+    const authSession = new DesktopAuthSession();
+    authSession.set(signedInSnapshot("user-a", "token-1"));
+    const identity = new FakeIdentitySource("user-a", 0);
+    const host = new FakeHostLifecycle();
+    host.identityEnrollmentFile = enrollmentFile;
+    const rows = [
+      buildHostListItem("local-host"),
+      buildHostListItem("remote-host"),
+    ];
+    const { fleet, published } = buildFleetSourceWithPublisher({
+      identity,
+      authSession,
+      host,
+      listRegisteredHosts: async () => ({
+        kind: "ok",
+        response: { hosts: rows },
+      }),
+    });
+
+    await fleet.refresh();
+
+    expect(published).toHaveLength(1);
+    expect(published[0]).toEqual({
+      identityKey: "user-a",
+      response: { hosts: rows },
+    });
+    // The FULL rows, not just ids: every field `buildHostListItem` sets
+    // (the status DTO, publicKey, createdAt, ...) must survive intact - this
+    // is what lets every window skip its own fetch.
+    expect(published[0]?.response.hosts[0]).toMatchObject({
+      hostId: "local-host",
+      publicKey: "pub-key",
+      status: expect.objectContaining({ connectivity: "connectable" }),
+    });
+    fleet.dispose();
+  });
+
+  /**
+   * ONE fetch per refresh - the arithmetic the whole move rests on.
+   *
+   * Added after a probe: doubling the fetch inside `refreshOrThrow` DID turn
+   * this suite red, but for the wrong reason. The arm it broke drives
+   * `listRegisteredHosts` with a CALL-ORDERED fake (`calls.length === 1 ? … : …`),
+   * so an extra call shifts which promise each caller gets and the failure is
+   * the fixture's sequencing, not a statement about how many requests the app
+   * makes. Nothing asserted the count itself.
+   *
+   * That distinction matters here more than usual: "N windows now produce ONE
+   * poll" is this change's entire claim, and a claim whose only guard is a
+   * fixture's call ordering would survive any refactor that kept the ordering
+   * and doubled the requests.
+   */
+  it("issues exactly ONE registry request per refresh - the claim the move rests on", async () => {
+    const dir = await makeTempDir();
+    const enrollmentFile = await writeEnrollment(dir, "local-host");
+    const authSession = new DesktopAuthSession();
+    authSession.set(signedInSnapshot("user-a", "token-1"));
+    const identity = new FakeIdentitySource("user-a", 0);
+    const host = new FakeHostLifecycle();
+    host.identityEnrollmentFile = enrollmentFile;
+    let fetchCount = 0;
+    const { fleet } = buildFleetSourceWithPublisher({
+      identity,
+      authSession,
+      host,
+      listRegisteredHosts: async () => {
+        fetchCount += 1;
+        return { kind: "ok", response: { hosts: [] } };
+      },
+    });
+
+    await fleet.refresh();
+    expect(fetchCount).toBe(1);
+
+    // ...and a second refresh is a second request, not a cached answer - the
+    // count has to track calls, or "exactly one" above would also be satisfied
+    // by a source that never fetches again.
+    await fleet.refresh();
+    expect(fetchCount).toBe(2);
+
+    fleet.dispose();
+  });
+
+  it("publishes NOTHING when the fetch returns a non-ok result (network-error, unauthorized)", async () => {
+    const dir = await makeTempDir();
+    const enrollmentFile = await writeEnrollment(dir, "local-host");
+    const authSession = new DesktopAuthSession();
+    authSession.set(signedInSnapshot("user-a", "token-1"));
+    const identity = new FakeIdentitySource("user-a", 0);
+    const host = new FakeHostLifecycle();
+    host.identityEnrollmentFile = enrollmentFile;
+
+    for (const kind of ["network-error", "unauthorized"] as const) {
+      const { fleet, published } = buildFleetSourceWithPublisher({
+        identity,
+        authSession,
+        host,
+        listRegisteredHosts: async () => ({ kind }),
+      });
+
+      await fleet.refresh();
+
+      expect(published).toEqual([]);
+      fleet.dispose();
+    }
+  });
+
+  it("publishes NOTHING on a signed-out refresh (no bearer)", async () => {
+    const authSession = new DesktopAuthSession();
+    const identity = new FakeIdentitySource(null, 0);
+    const host = new FakeHostLifecycle();
+    const { fleet, published } = buildFleetSourceWithPublisher({
+      identity,
+      authSession,
+      host,
+      listRegisteredHosts: async () => {
+        throw new Error("must not be called when signed out");
+      },
+    });
+
+    await fleet.refresh();
+
+    expect(published).toEqual([]);
+    fleet.dispose();
+  });
+
+  it("stamps the push with the identityKey captured at fetch START - a late completion still publishes, under the OLD identity", async () => {
+    const dir = await makeTempDir();
+    const enrollmentFile = await writeEnrollment(dir, "local-host");
+    const authSession = new DesktopAuthSession();
+    authSession.set(signedInSnapshot("user-a", "token-1"));
+    const identity = new FakeIdentitySource("user-a", 0);
+    const host = new FakeHostLifecycle();
+    host.identityEnrollmentFile = enrollmentFile;
+
+    const registry = recordingRegistryFetch();
+    const { fleet, published } = buildFleetSourceWithPublisher({
+      identity,
+      authSession,
+      host,
+      listRegisteredHosts: registry.fetch,
+    });
+
+    const inFlight = fleet.refresh();
+    // Wait for the FACT this case depends on - refresh #1 is past its
+    // filesystem read and inside the fetch - rather than assuming the
+    // refreshes reach the registry in the order the test started them.
+    await registry.started(0);
+    // Identity moves on WHILE the first fetch is in flight - this fires the
+    // port's own identity-change subscription, which starts a SECOND fetch
+    // (account B's own refresh) immediately.
+    identity.set("user-b", 1);
+    await registry.started(1);
+
+    registry.calls[0]?.resolve({
+      kind: "ok",
+      response: { hosts: [buildHostListItem("local-host")] },
+    });
+    await inFlight;
+    registry.calls[1]?.resolve({ kind: "ok", response: { hosts: [] } });
+    await Promise.resolve();
+
+    // The FIRST (stale) fetch's completion is still published - a late
+    // completion is published so the renderer can drop it by its own stamp -
+    // but stamped with the identity it was FETCHED under, "user-a", never
+    // the "user-b" that was current when it happened to resolve.
+    const stalePush = published.find((push) => push.identityKey === "user-a");
+    expect(stalePush).toBeDefined();
+    expect(stalePush?.response.hosts.map((row) => row.hostId)).toEqual([
+      "local-host",
+    ]);
+    fleet.dispose();
+  });
+
+  it("keeps the authority snapshot ids-only even though the publish carries the full status DTO (invariant 5)", async () => {
+    const dir = await makeTempDir();
+    const enrollmentFile = await writeEnrollment(dir, "local-host");
+    const authSession = new DesktopAuthSession();
+    authSession.set(signedInSnapshot("user-a", "token-1"));
+    const identity = new FakeIdentitySource("user-a", 0);
+    const host = new FakeHostLifecycle();
+    host.identityEnrollmentFile = enrollmentFile;
+    const { fleet, published } = buildFleetSourceWithPublisher({
+      identity,
+      authSession,
+      host,
+      listRegisteredHosts: async () => ({
+        kind: "ok",
+        response: { hosts: [buildHostListItem("local-host")] },
+      }),
+    });
+
+    await fleet.refresh();
+
+    // The push carries the full row - status DTO and all.
+    expect(published[0]?.response.hosts[0]).toHaveProperty("status");
+    // The snapshot the authority itself reads carries ONLY hostId/kind -
+    // unchanged by this port gaining a second consumer of the same fetch.
+    expect(fleet.snapshot().hosts).toHaveLength(1);
+    for (const entry of fleet.snapshot().hosts) {
+      expect(Object.keys(entry).sort()).toEqual(["hostId", "kind"]);
+    }
     fleet.dispose();
   });
 });
@@ -929,12 +1248,14 @@ describe("DesktopLocalHostOutageSignal", () => {
 
     expect(signal.inExpectedOutage()).toBe(false);
 
-    for (const listener of tickListeners) listener(buildControllerStatus(activeMutation));
+    for (const listener of tickListeners)
+      listener(buildControllerStatus(activeMutation));
     expect(signal.inExpectedOutage()).toBe(true);
     expect(seen).toEqual([true]);
 
     // Repeated identical ticks: no duplicate notifications.
-    for (const listener of tickListeners) listener(buildControllerStatus(activeMutation));
+    for (const listener of tickListeners)
+      listener(buildControllerStatus(activeMutation));
     expect(seen).toEqual([true]);
 
     for (const listener of tickListeners) listener(buildControllerStatus(null));
@@ -945,8 +1266,7 @@ describe("DesktopLocalHostOutageSignal", () => {
   });
 
   it("leaves inExpectedOutage() false when the initial read rejects, and a later tick still corrects it", async () => {
-    const readStatus = () =>
-      Promise.reject(new Error("initial read failed"));
+    const readStatus = () => Promise.reject(new Error("initial read failed"));
     const tickListeners = new Set<(status: HostControllerStatus) => void>();
     const subscribe = (listener: (status: HostControllerStatus) => void) => {
       tickListeners.add(listener);
@@ -963,7 +1283,8 @@ describe("DesktopLocalHostOutageSignal", () => {
 
     expect(signal.inExpectedOutage()).toBe(false);
 
-    for (const listener of tickListeners) listener(buildControllerStatus(activeMutation));
+    for (const listener of tickListeners)
+      listener(buildControllerStatus(activeMutation));
     expect(signal.inExpectedOutage()).toBe(true);
 
     signal.dispose();
@@ -1061,7 +1382,10 @@ class FakeHostController implements IpcHostController {
     _trigger: ApplyStagedTrigger,
     _force: boolean,
   ): Promise<MutationOutcome<ApplyStagedOk>> {
-    return { kind: "ok", value: { appliedVersion: "1.0.0", runningActivated: true } };
+    return {
+      kind: "ok",
+      value: { appliedVersion: "1.0.0", runningActivated: true },
+    };
   }
   async activateInstalled(
     _force: boolean,
@@ -1072,7 +1396,10 @@ class FakeHostController implements IpcHostController {
     pin: string,
     _force: boolean,
   ): Promise<MutationOutcome<InstallVersionOk>> {
-    return { kind: "ok", value: { installedVersion: pin, runningActivated: true } };
+    return {
+      kind: "ok",
+      value: { installedVersion: pin, runningActivated: true },
+    };
   }
   async registerService(): Promise<MutationOutcome<ServiceRegistrationOk>> {
     return { kind: "ok", value: { registered: true } };
@@ -1095,12 +1422,19 @@ class FakeHostController implements IpcHostController {
     return { kind: "ok", value: { activated: true } };
   }
   async uninstallHost(_all: boolean): Promise<MutationOutcome<UninstallOk>> {
-    return { kind: "ok", value: { removedInstallDir: true, deregisteredService: true } };
+    return {
+      kind: "ok",
+      value: { removedInstallDir: true, deregisteredService: true },
+    };
   }
   async removeTraycer(): Promise<MutationOutcome<RemoveTraycerOk>> {
     return {
       kind: "ok",
-      value: { removedHost: true, deregisteredService: true, removedLoginItem: false },
+      value: {
+        removedHost: true,
+        deregisteredService: true,
+        removedLoginItem: false,
+      },
     };
   }
   isPendingRevisionRefreshQuarantined(): boolean {
@@ -1116,7 +1450,10 @@ class FakeHostController implements IpcHostController {
 describe("createDesktopLocalHostEnsurePort", () => {
   it("maps an ok outcome to {ok: true}", async () => {
     const controller = new FakeHostController();
-    controller.outcome = { kind: "ok", value: { running: true, version: "1.0.0" } };
+    controller.outcome = {
+      kind: "ok",
+      value: { running: true, version: "1.0.0" },
+    };
     const port = createDesktopLocalHostEnsurePort(controller);
 
     await expect(port.ensureReady()).resolves.toEqual({ ok: true });

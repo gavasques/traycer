@@ -204,7 +204,8 @@ function createSupportBridgeHarness(overrides: {
 function createBaseRunnerHost(): IRunnerHost {
   return {
     selectionAuthority: createInertSelectionAuthorityClient(),
-  refreshHostFleet: () => Promise.resolve(),
+    refreshHostFleet: () => Promise.resolve(),
+    onRegisteredHostsChange: () => null,
     signInUrl: "https://auth.example.invalid/sign-in",
     authnBaseUrl: "https://auth.example.invalid",
     relayBaseUrl: "wss://relay.example.invalid/attach",

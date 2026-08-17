@@ -4,6 +4,7 @@ import type {
   HostRegistryUpdateState,
   ITokenStore,
   LocalHostSnapshot,
+  RegisteredHostsChange,
   StoredCredentials,
   TrayEpic,
   TrayIndicatorState,
@@ -60,6 +61,9 @@ function buildFakeBridge(
   let lastEmitted: LocalHostSnapshot | null = initialSnapshot;
   let firstSubscriberServed = false;
   const handlers = new Set<(snapshot: LocalHostSnapshot | null) => void>();
+  const registeredHostsHandlers = new Set<
+    (push: RegisteredHostsChange) => void
+  >();
   const systemResumedHandlers = new Set<() => void>();
 
   const tokenSlot = { value: null as string | null };
@@ -143,6 +147,20 @@ function buildFakeBridge(
       return {
         dispose: () => {
           handlers.delete(handler);
+        },
+      };
+    },
+    // Matches `onLocalHostChange` above structurally (a `Set` of handlers
+    // plus a dispose closure), but WITHOUT the replay: production has no
+    // cache to replay from either (`host-bridge.ts` - "nothing for a cache
+    // or a first-subscribe pull to repair").
+    onRegisteredHostsChange: (
+      handler: (push: RegisteredHostsChange) => void,
+    ) => {
+      registeredHostsHandlers.add(handler);
+      return {
+        dispose: () => {
+          registeredHostsHandlers.delete(handler);
         },
       };
     },

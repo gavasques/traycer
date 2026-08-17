@@ -3,7 +3,10 @@ import { DefaultRequestContextProvider } from "@traycer-clients/shared/auth/requ
 import { createAuthenticatedUserFixture } from "@traycer-clients/shared/test-fixtures/authenticated-user";
 import { MockRunnerHost } from "@traycer-clients/shared/host-client/mock/mock-runner-host";
 import { mockRemoteHostEntry } from "@traycer-clients/shared/host-client/mock/mock-host-directory";
-import type { LocalHostSnapshot } from "@traycer-clients/shared/platform/runner-host";
+import type {
+  LocalHostSnapshot,
+  RegisteredHostsChange,
+} from "@traycer-clients/shared/platform/runner-host";
 import type { HostDirectoryEntry } from "@traycer-clients/shared/host-client/host-directory";
 import {
   hostListItemToDirectoryEntry,
@@ -63,6 +66,44 @@ function makeHost(localHost: LocalHostSnapshot | null): MockRunnerHost {
     hasLocalHost: undefined,
     traycerCli: undefined,
   });
+}
+
+/**
+ * `MockRunnerHost.onRegisteredHostsChange` always answers `null` (it models
+ * no shell registry cadence - see the mock's own doc comment), which is
+ * exactly right for every OTHER test in this file but wrong for the P4.1/F22
+ * push-cadence arms below, which need to drive a real subscription. The
+ * override matches how other tests in this codebase substitute a single
+ * bridge method on an otherwise-real double (e.g.
+ * `desktop-runner-host.test.ts`'s `fake.bridge.listUserSessions = ...`)
+ * rather than hand-rolling a whole second `IRunnerHost`.
+ */
+function makeHostWithRegistryPush(localHost: LocalHostSnapshot | null): {
+  readonly host: MockRunnerHost;
+  readonly push: (change: RegisteredHostsChange) => void;
+  readonly disposeCount: () => number;
+} {
+  const host = makeHost(localHost);
+  const handlers = new Set<(push: RegisteredHostsChange) => void>();
+  let disposeCalls = 0;
+  host.onRegisteredHostsChange = (
+    handler: (push: RegisteredHostsChange) => void,
+  ): { dispose: () => void } => {
+    handlers.add(handler);
+    return {
+      dispose: () => {
+        handlers.delete(handler);
+        disposeCalls += 1;
+      },
+    };
+  };
+  return {
+    host,
+    push: (change) => {
+      for (const handler of handlers) handler(change);
+    },
+    disposeCount: () => disposeCalls,
+  };
 }
 
 const directories: HostDirectoryService[] = [];
@@ -1724,6 +1765,135 @@ describe("HostDirectoryService", () => {
 
       expect(directory.getLocalHostId()).toBe("re-enrolled-host-id");
       expect(directory.getLocalHostId()).not.toBe(localSnapshot.hostId);
+    });
+  });
+
+  describe("registry push cadence (redesign P4.1/F22 - shell owns the registry cadence)", () => {
+    it("arms NO interval of its own when the shell offers a registry push subscription - F22's one-timer deliverable", async () => {
+      const { host } = makeHostWithRegistryPush(null);
+      const setIntervalSpy = vi.spyOn(window, "setInterval");
+      const directory = makeDirectory({
+        authContextId: () => "user-a",
+        credentialGeneration: null,
+        runnerHost: host,
+        localHostIdSeeder: null,
+        remoteFetcher: () => Promise.resolve({ kind: "hosts", entries: [] }),
+      });
+
+      await directory.start();
+
+      expect(setIntervalSpy).not.toHaveBeenCalled();
+    });
+
+    it("arms the poll interval exactly as before when the shell has no registry cadence (onRegisteredHostsChange returns null - browser/dev, and the mock shell by default)", async () => {
+      const host = makeHost(null);
+      const setIntervalSpy = vi.spyOn(window, "setInterval");
+      const directory = makeDirectory({
+        authContextId: null,
+        credentialGeneration: null,
+        runnerHost: host,
+        localHostIdSeeder: null,
+        remoteFetcher: () => Promise.resolve({ kind: "hosts", entries: [] }),
+      });
+
+      await directory.start();
+
+      expect(setIntervalSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("a push with a MATCHING identityKey drives both refresh() and onRegistryPollTick()", async () => {
+      const { host, push } = makeHostWithRegistryPush(null);
+      let fetchCalls = 0;
+      const fetcher: RemoteHostFetcher = () => {
+        fetchCalls += 1;
+        return Promise.resolve({ kind: "hosts", entries: [] });
+      };
+      const onRegistryPollTick = vi.fn();
+      const directory = makeDirectory({
+        authContextId: () => "user-a",
+        credentialGeneration: null,
+        runnerHost: host,
+        localHostIdSeeder: null,
+        remoteFetcher: fetcher,
+        onRegistryPollTick,
+      });
+      await directory.start();
+      const fetchCallsAfterStart = fetchCalls;
+
+      push({ identityKey: "user-a", response: { hosts: [] } });
+      await flushPromises();
+
+      expect(fetchCalls).toBe(fetchCallsAfterStart + 1);
+      expect(onRegistryPollTick).toHaveBeenCalledTimes(1);
+    });
+
+    it("a push whose identityKey does NOT match authContextId() drives NEITHER refresh() nor onRegistryPollTick() (cross-account fence)", async () => {
+      const { host, push } = makeHostWithRegistryPush(null);
+      let fetchCalls = 0;
+      const fetcher: RemoteHostFetcher = () => {
+        fetchCalls += 1;
+        return Promise.resolve({ kind: "hosts", entries: [] });
+      };
+      const onRegistryPollTick = vi.fn();
+      const directory = makeDirectory({
+        authContextId: () => "user-a",
+        credentialGeneration: null,
+        runnerHost: host,
+        localHostIdSeeder: null,
+        remoteFetcher: fetcher,
+        onRegistryPollTick,
+      });
+      await directory.start();
+      const fetchCallsAfterStart = fetchCalls;
+
+      push({ identityKey: "user-b", response: { hosts: [] } });
+      await flushPromises();
+
+      expect(fetchCalls).toBe(fetchCallsAfterStart);
+      expect(onRegistryPollTick).not.toHaveBeenCalled();
+    });
+
+    it("a push with identityKey: null while signed out (authContextId() returns null) IS accepted - null is a real account state, not unknown", async () => {
+      const { host, push } = makeHostWithRegistryPush(null);
+      let fetchCalls = 0;
+      const fetcher: RemoteHostFetcher = () => {
+        fetchCalls += 1;
+        return Promise.resolve({ kind: "signed-out" });
+      };
+      const onRegistryPollTick = vi.fn();
+      const directory = makeDirectory({
+        authContextId: () => null,
+        credentialGeneration: null,
+        runnerHost: host,
+        localHostIdSeeder: null,
+        remoteFetcher: fetcher,
+        onRegistryPollTick,
+      });
+      await directory.start();
+      const fetchCallsAfterStart = fetchCalls;
+
+      push({ identityKey: null, response: { hosts: [] } });
+      await flushPromises();
+
+      expect(fetchCalls).toBe(fetchCallsAfterStart + 1);
+      expect(onRegistryPollTick).toHaveBeenCalledTimes(1);
+    });
+
+    it("dispose() disposes the shell registry-push subscription", async () => {
+      const { host, disposeCount } = makeHostWithRegistryPush(null);
+      const directory = makeDirectory({
+        authContextId: null,
+        credentialGeneration: null,
+        runnerHost: host,
+        localHostIdSeeder: null,
+        remoteFetcher: () => Promise.resolve({ kind: "hosts", entries: [] }),
+      });
+      await directory.start();
+      expect(disposeCount()).toBe(0);
+
+      directory.dispose();
+
+      expect(disposeCount()).toBe(1);
     });
   });
 });

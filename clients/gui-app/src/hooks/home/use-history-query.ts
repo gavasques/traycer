@@ -35,6 +35,7 @@ import { patchHistorySearch } from "@/lib/history-search";
 import { filterHistoryItemsForProject } from "@/lib/workspace/history-item-matches-project";
 import {
   selectActiveProjectProfile,
+  selectProjectProfilesBucket,
   useProjectProfilesStore,
 } from "@/stores/workspace/project-profiles-store";
 import Fuse, { type IFuseOptions } from "fuse.js";
@@ -180,9 +181,12 @@ export function useHistoryQuery(
   const activeProfile = useProjectProfilesStore((state) =>
     selectActiveProjectProfile(state, hostId),
   );
+  const projectProfiles = useProjectProfilesStore(
+    (state) => selectProjectProfilesBucket(state, hostId).profiles,
+  );
   const projectItems = useMemo(
-    () => filterHistoryItemsForProject(allItems, activeProfile),
-    [activeProfile, allItems],
+    () => filterHistoryItemsForProject(allItems, activeProfile, projectProfiles),
+    [activeProfile, allItems, projectProfiles],
   );
 
   const data = useMemo<HistoryFetchResult | undefined>(() => {
